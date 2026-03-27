@@ -1,0 +1,11 @@
+[Unit]
+Description=identree weekly break-glass rotation
+Requires=identree-rotate.service
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=3600
+
+[Install]
+WantedBy=timers.target
