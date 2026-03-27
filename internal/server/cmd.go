@@ -179,7 +179,7 @@ func runServer() {
 	// Start LDAP server if enabled.
 	var ldapCancel context.CancelFunc
 	if cfg.LDAPEnabled {
-		um, err := uidmap.NewUIDMap(cfg.LDAPUIDMapFile)
+		um, err := uidmap.NewUIDMap(cfg.LDAPUIDMapFile, cfg.LDAPUIDBase, cfg.LDAPGIDBase)
 		if err != nil {
 			slog.Error("uid map load error", "err", err)
 			os.Exit(1)
@@ -196,7 +196,7 @@ func runServer() {
 			if ferr != nil {
 				slog.Warn("ldap: initial directory fetch failed (will retry)", "err", ferr)
 			} else {
-				ldapSrv.Refresh(dir)
+				ldapSrv.Refresh(dir, "poll")
 			}
 		}
 
@@ -224,14 +224,14 @@ func runServer() {
 							slog.Warn("ldap: directory refresh failed", "err", ferr)
 							continue
 						}
-						ldapSrv.Refresh(dir)
+						ldapSrv.Refresh(dir, "poll")
 					case <-srv.ldapRefreshCh:
 						dir, ferr := srv.pocketIDClient.FetchDirectory()
 						if ferr != nil {
 							slog.Warn("ldap: webhook-triggered refresh failed", "err", ferr)
 							continue
 						}
-						ldapSrv.Refresh(dir)
+						ldapSrv.Refresh(dir, "webhook")
 					}
 				}
 			}()

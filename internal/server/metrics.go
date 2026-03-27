@@ -68,17 +68,6 @@ var (
 		Help:      "Number of hosts registered in the host registry.",
 	})
 
-	ldapRefreshTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "identree",
-		Name:      "ldap_refresh_total",
-		Help:      "Total LDAP directory refresh operations.",
-	}, []string{"trigger"}) // poll, webhook
-
-	ldapQueryTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "identree",
-		Name:      "ldap_queries_total",
-		Help:      "Total LDAP search queries served.",
-	}, []string{"base"}) // people, groups, sudoers, root
 )
 
 func init() {
@@ -88,6 +77,4 @@ func init() {
 	challengesDenied.WithLabelValues("nonce_mismatch")
 	challengesDenied.WithLabelValues("identity_mismatch")
 	challengesDenied.WithLabelValues("user_rejected")
-	ldapRefreshTotal.WithLabelValues("poll")
-	ldapRefreshTotal.WithLabelValues("webhook")
 }

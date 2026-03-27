@@ -320,12 +320,13 @@ func (c *PocketIDClient) apiGet(url string) ([]byte, error) {
 
 // PocketIDAdminUser is a user from the admin API (richer than the regular API).
 type PocketIDAdminUser struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	Email     string `json:"email"`
-	FirstName string `json:"firstName"`
-	LastName  string `json:"lastName"`
-	IsAdmin   bool   `json:"isAdmin"`
+	ID           string          `json:"id"`
+	Username     string          `json:"username"`
+	Email        string          `json:"email"`
+	FirstName    string          `json:"firstName"`
+	LastName     string          `json:"lastName"`
+	IsAdmin      bool            `json:"isAdmin"`
+	CustomClaims []pocketIDClaim `json:"customClaims"`
 }
 
 // PocketIDAdminGroup is a group from the admin API.

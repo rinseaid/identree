@@ -535,7 +535,7 @@ func TestNewLDAPServer(t *testing.T) {
 		LDAPListenAddr:      "127.0.0.1:0",
 		LDAPRefreshInterval: 0,
 	}
-	um, err := uidmap.NewUIDMap(t.TempDir() + "/uidmap.json")
+	um, err := uidmap.NewUIDMap(t.TempDir()+"/uidmap.json", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +555,7 @@ func TestRefresh(t *testing.T) {
 		LDAPRefreshInterval: 0,
 		LDAPUIDMapFile:      t.TempDir() + "/uidmap.json",
 	}
-	um, err := uidmap.NewUIDMap(cfg.LDAPUIDMapFile)
+	um, err := uidmap.NewUIDMap(cfg.LDAPUIDMapFile, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +570,7 @@ func TestRefresh(t *testing.T) {
 	_ = json.Unmarshal([]byte(`[{"id":"g1","name":"sysadmins","customClaims":[],"members":[{"id":"u1"}]}]`), &groups)
 	dir := pocketid.NewUserDirectory(users, groups)
 
-	srv.Refresh(dir)
+	srv.Refresh(dir, "")
 
 	srv.mu.RLock()
 	got := srv.dir
@@ -588,7 +588,7 @@ func TestNewLDAPServer_BridgeMode(t *testing.T) {
 		LDAPBaseDN:     "dc=example,dc=com",
 		LDAPListenAddr: "127.0.0.1:0",
 	}
-	um, err := uidmap.NewUIDMap(t.TempDir() + "/uidmap.json")
+	um, err := uidmap.NewUIDMap(t.TempDir()+"/uidmap.json", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

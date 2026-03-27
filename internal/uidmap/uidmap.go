@@ -34,14 +34,20 @@ const (
 )
 
 // NewUIDMap loads (or creates) a UID map from the given path.
-func NewUIDMap(path string) (*UIDMap, error) {
+func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
+	if firstUID <= 0 {
+		firstUID = defaultFirstUID
+	}
+	if firstGID <= 0 {
+		firstGID = defaultFirstGID
+	}
 	m := &UIDMap{
 		path: path,
 		data: uidMapData{
 			UIDs:    make(map[string]int),
 			GIDs:    make(map[string]int),
-			NextUID: defaultFirstUID,
-			NextGID: defaultFirstGID,
+			NextUID: firstUID,
+			NextGID: firstGID,
 		},
 	}
 	data, err := os.ReadFile(path)

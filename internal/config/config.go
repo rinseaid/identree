@@ -81,6 +81,16 @@ type ServerConfig struct {
 	// Rules are managed via the admin UI at /admin/sudo-rules.
 	SudoRulesFile string
 
+	// LDAPUIDBase is the first UID to assign (default 200000).
+	LDAPUIDBase int
+	// LDAPGIDBase is the first GID to assign (default 200000).
+	LDAPGIDBase int
+	// LDAPDefaultShell is the default loginShell for LDAP user entries (default /bin/bash).
+	LDAPDefaultShell string
+	// LDAPDefaultHome is a fmt.Sprintf pattern for homeDirectory (default /home/%s).
+	// The single %s is replaced with the username.
+	LDAPDefaultHome string
+
 	// ── Admin access ──────────────────────────────────────────────────────────
 	AdminGroups        []string // OIDC groups granting admin dashboard access
 	AdminApprovalHosts []string // hostnames requiring admin approval (glob patterns)
@@ -100,6 +110,7 @@ type ServerConfig struct {
 	EscrowURL            string
 	EscrowAuthID         string
 	EscrowAuthSecret     string
+	EscrowAuthSecretFile string
 	EscrowPath           string
 	EscrowWebURL         string
 	EscrowVaultMap       map[string]string
@@ -230,6 +241,10 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/var/lib/identree/uidmap.json"),
 		LDAPSudoNoAuthenticate: stringDefault(get("IDENTREE_SUDO_NO_AUTHENTICATE"), "false"),
 		SudoRulesFile:          stringDefault(get("IDENTREE_SUDO_RULES_FILE"), "/var/lib/identree/sudorules.json"),
+		LDAPUIDBase:            getInt("IDENTREE_LDAP_UID_BASE", 0),
+		LDAPGIDBase:            getInt("IDENTREE_LDAP_GID_BASE", 0),
+		LDAPDefaultShell:       get("IDENTREE_LDAP_DEFAULT_SHELL"),
+		LDAPDefaultHome:        get("IDENTREE_LDAP_DEFAULT_HOME"),
 
 		AdminGroups:        getSlice("IDENTREE_ADMIN_GROUPS"),
 		AdminApprovalHosts: getSlice("IDENTREE_ADMIN_APPROVAL_HOSTS"),
@@ -245,6 +260,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		EscrowURL:            get("IDENTREE_ESCROW_URL"),
 		EscrowAuthID:         get("IDENTREE_ESCROW_AUTH_ID"),
 		EscrowAuthSecret:     get("IDENTREE_ESCROW_AUTH_SECRET"),
+		EscrowAuthSecretFile: get("IDENTREE_ESCROW_AUTH_SECRET_FILE"),
 		EscrowPath:           get("IDENTREE_ESCROW_PATH"),
 		EscrowWebURL:         get("IDENTREE_ESCROW_WEB_URL"),
 
@@ -289,6 +305,21 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if v := get("IDENTREE_BREAKGLASS_ROTATE_BEFORE"); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			cfg.BreakglassRotateBefore = t
+		}
+	}
+
+	// Clamp ChallengeTTL to sane bounds (10s–600s).
+	if cfg.ChallengeTTL < 10*time.Second {
+		cfg.ChallengeTTL = 10 * time.Second
+	}
+	if cfg.ChallengeTTL > 600*time.Second {
+		cfg.ChallengeTTL = 600 * time.Second
+	}
+
+	// Load escrow auth secret from file if EscrowAuthSecretFile is set and EscrowAuthSecret is empty.
+	if cfg.EscrowAuthSecretFile != "" && cfg.EscrowAuthSecret == "" {
+		if data, err := os.ReadFile(cfg.EscrowAuthSecretFile); err == nil {
+			cfg.EscrowAuthSecret = strings.TrimSpace(string(data))
 		}
 	}
 

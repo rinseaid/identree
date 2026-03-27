@@ -19,6 +19,9 @@ import (
 	"github.com/rinseaid/identree/internal/uidmap"
 )
 
+// sshKeyClaimRe matches sshPublicKey, sshPublicKey1, sshPublicKey2, etc.
+var sshKeyClaimRe = regexp.MustCompile(`^sshPublicKey\d*$`)
+
 // LDAPServer embeds an RFC 4519 LDAP server.
 //
 // Full mode (sudoRules == nil): serves a complete directory from PocketID.
@@ -54,7 +57,8 @@ func NewLDAPServer(cfg *config.ServerConfig, um *uidmap.UIDMap, store *sudorules
 
 // Refresh replaces the cached directory snapshot atomically.
 // It eagerly assigns UIDs/GIDs for all entries so the map stays current.
-func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory) {
+// trigger, if non-empty, is used to label the ldap_refresh_total metric (e.g. "poll", "webhook").
+func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory, trigger string) {
 	for _, u := range dir.Users {
 		s.uidmap.UID(u.ID)
 	}
@@ -73,6 +77,10 @@ func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory) {
 		"users", len(dir.Users),
 		"groups", len(dir.Groups),
 	)
+
+	if trigger != "" {
+		ldapRefreshTotal.WithLabelValues(trigger).Inc()
+	}
 }
 
 // Start launches the LDAP listener. It blocks until ctx is cancelled.
@@ -149,6 +157,18 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 	sudoersDN := strings.ToLower("ou=sudoers," + base)
 	baseLower := strings.ToLower(base)
 	filter := msg.Filter
+
+	// Determine query base label for metrics.
+	queryBase := "root"
+	switch {
+	case scope == peopleDN || strings.HasSuffix(scope, ","+peopleDN):
+		queryBase = "people"
+	case scope == groupsDN || strings.HasSuffix(scope, ","+groupsDN):
+		queryBase = "groups"
+	case scope == sudoersDN || strings.HasSuffix(scope, ","+sudoersDN):
+		queryBase = "sudoers"
+	}
+	ldapQueryTotal.WithLabelValues(queryBase).Inc()
 
 	// Bridge mode: serve only ou=sudoers from the local rules store.
 	if s.sudoRules != nil {
@@ -241,6 +261,37 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			sn = u.Username
 		}
 
+		// Determine shell and home directory, with per-user claim overrides.
+		shell := s.cfg.LDAPDefaultShell
+		if shell == "" {
+			shell = "/bin/bash"
+		}
+		homePattern := s.cfg.LDAPDefaultHome
+		if homePattern == "" {
+			homePattern = "/home/%s"
+		}
+		home := fmt.Sprintf(homePattern, u.Username)
+		for _, cl := range u.CustomClaims {
+			switch cl.Key {
+			case "loginShell":
+				if cl.Value != "" {
+					shell = cl.Value
+				}
+			case "homeDirectory":
+				if cl.Value != "" {
+					home = cl.Value
+				}
+			}
+		}
+
+		// Collect SSH public keys from claims.
+		var sshKeys []string
+		for _, cl := range u.CustomClaims {
+			if sshKeyClaimRe.MatchString(cl.Key) && cl.Value != "" {
+				sshKeys = append(sshKeys, cl.Value)
+			}
+		}
+
 		attrs := map[string][]string{
 			"objectClass":      {"top", "posixAccount", "shadowAccount", "inetOrgPerson"},
 			"uid":              {u.Username},
@@ -250,8 +301,8 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			"mail":             {u.Email},
 			"uidNumber":        {fmt.Sprintf("%d", uid)},
 			"gidNumber":        {fmt.Sprintf("%d", gid)},
-			"homeDirectory":    {fmt.Sprintf("/home/%s", u.Username)},
-			"loginShell":       {"/bin/bash"},
+			"homeDirectory":    {home},
+			"loginShell":       {shell},
 			"gecos":            {fullName},
 			"shadowLastChange": {"0"},
 			"shadowMax":        {"99999"},
@@ -261,6 +312,12 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 		// Populate host attribute from accessHosts claim for pam_access.
 		if hosts, ok := userHosts[u.Username]; ok && len(hosts) > 0 {
 			attrs["host"] = hosts
+		}
+
+		// Add SSH public keys if present.
+		if len(sshKeys) > 0 {
+			attrs["objectClass"] = append(attrs["objectClass"], "ldapPublicKey")
+			attrs["sshPublicKey"] = sshKeys
 		}
 
 		if !matchesFilter(filter, dn, attrs) {
