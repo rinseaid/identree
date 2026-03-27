@@ -46,6 +46,7 @@ services:
       IDENTREE_LDAP_UID_MAP_FILE: "/data/uidmap.json"
       IDENTREE_SUDO_RULES_FILE: "/data/sudorules.json"
       IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "true"
       IDENTREE_CHALLENGE_TTL: "120s"
     volumes:
       - identree-data:/data

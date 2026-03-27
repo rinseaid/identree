@@ -45,9 +45,26 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 // handleSignOut clears the session cookie and redirects to OIDC login.
 // GET /signout
 func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: "identree_session", Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
 	loginURL := strings.TrimRight(s.cfg.ExternalURL, "/") + "/sessions/login"
 	http.Redirect(w, r, loginURL, http.StatusSeeOther)
+}
+
+// handleDevLogin bypasses OIDC and sets a session cookie directly.
+// Only registered when IDENTREE_DEV_LOGIN=true. Never use in production.
+// GET /dev/login?user=alice&role=admin
+func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
+	user := r.URL.Query().Get("user")
+	role := r.URL.Query().Get("role")
+	if user == "" || !validUsername.MatchString(user) {
+		http.Error(w, "missing or invalid user param", http.StatusBadRequest)
+		return
+	}
+	if role != "admin" && role != "user" {
+		role = "user"
+	}
+	s.setSessionCookie(w, user, role)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // handleDashboard renders the main dashboard page.

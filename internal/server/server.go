@@ -188,6 +188,11 @@ func (s *Server) registerRoutes() {
 		http.Redirect(w, r, "/admin/info", http.StatusMovedPermanently)
 	})
 
+	// Dev login bypass (IDENTREE_DEV_LOGIN=true only — never for production).
+	if s.cfg.DevLoginEnabled {
+		s.mux.HandleFunc("/dev/login", s.handleDevLogin)
+	}
+
 	// Dashboard is the catch-all — must be registered last.
 	s.mux.HandleFunc("/", s.handleDashboard)
 }

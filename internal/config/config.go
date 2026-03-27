@@ -133,6 +133,11 @@ type ServerConfig struct {
 
 	// ── Webhook receiver (PocketID → identree) ────────────────────────────────
 	WebhookSecret string // validates incoming PocketID webhook signatures
+
+	// ── Development / testing ─────────────────────────────────────────────────
+	// DevLoginEnabled enables /dev/login?user=X&role=Y for bypassing OIDC in
+	// local test environments. NEVER enable in production.
+	DevLoginEnabled bool
 }
 
 // ClientConfig holds all configuration for identree in PAM client mode.
@@ -273,7 +278,8 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ClientBreakglassPasswordType: get("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"),
 		ClientBreakglassRotationDays: getInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", 0),
 
-		WebhookSecret: get("IDENTREE_WEBHOOK_SECRET"),
+		WebhookSecret:   get("IDENTREE_WEBHOOK_SECRET"),
+		DevLoginEnabled: getBool("IDENTREE_DEV_LOGIN", false),
 	}
 
 	// APIURL defaults to IssuerURL
