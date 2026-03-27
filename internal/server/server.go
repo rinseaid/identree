@@ -78,6 +78,13 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	defer cancel()
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, discoveryClient)
 
+	// When IssuerPublicURL is set, PocketID's APP_URL (and thus OIDC issuer) is
+	// the public hostname (e.g. localhost) while IssuerURL is the internal Docker
+	// hostname used for network reachability. Tell go-oidc to accept the public
+	// issuer in tokens while still fetching discovery from the internal URL.
+	if cfg.IssuerPublicURL != "" {
+		ctx = oidc.InsecureIssuerURLContext(ctx, cfg.IssuerPublicURL)
+	}
 	provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("OIDC discovery: %w", err)
