@@ -1,4 +1,4 @@
-identree
+/identree
 *.env
 .env
 *.test
