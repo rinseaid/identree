@@ -67,6 +67,12 @@ type ServerConfig struct {
 	LDAPRefreshInterval time.Duration // how often to poll PocketID API (default 300s)
 	LDAPUIDMapFile     string        // path to UID/GID persistence file
 
+	// LDAPSudoNoAuthenticate controls the !authenticate sudoOption in generated sudoRole entries.
+	//   "false"  (default) — !authenticate never added; sudo invokes PAM (passkey auth via pam-pocketid).
+	//   "true"   — !authenticate added to all sudo rules; PAM is never invoked.
+	//   "claims" — per-group: IDP admins set sudoOptions=!authenticate on specific groups.
+	LDAPSudoNoAuthenticate string
+
 	// ── Admin access ──────────────────────────────────────────────────────────
 	AdminGroups        []string // OIDC groups granting admin dashboard access
 	AdminApprovalHosts []string // hostnames requiring admin approval (glob patterns)
@@ -204,13 +210,14 @@ func LoadServerConfig() (*ServerConfig, error) {
 		GracePeriod:  getDuration("IDENTREE_GRACE_PERIOD", 0),
 		OneTapMaxAge: getDuration("IDENTREE_ONE_TAP_MAX_AGE", 24*time.Hour),
 
-		LDAPEnabled:         getBool("IDENTREE_LDAP_ENABLED", true),
-		LDAPListenAddr:      stringDefault(get("IDENTREE_LDAP_LISTEN_ADDR"), ":389"),
-		LDAPBaseDN:          get("IDENTREE_LDAP_BASE_DN"),
-		LDAPBindDN:          get("IDENTREE_LDAP_BIND_DN"),
-		LDAPBindPassword:    get("IDENTREE_LDAP_BIND_PASSWORD"),
-		LDAPRefreshInterval: getDuration("IDENTREE_LDAP_REFRESH_INTERVAL", 300*time.Second),
-		LDAPUIDMapFile:      stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/var/lib/identree/uidmap.json"),
+		LDAPEnabled:            getBool("IDENTREE_LDAP_ENABLED", true),
+		LDAPListenAddr:         stringDefault(get("IDENTREE_LDAP_LISTEN_ADDR"), ":389"),
+		LDAPBaseDN:             get("IDENTREE_LDAP_BASE_DN"),
+		LDAPBindDN:             get("IDENTREE_LDAP_BIND_DN"),
+		LDAPBindPassword:       get("IDENTREE_LDAP_BIND_PASSWORD"),
+		LDAPRefreshInterval:    getDuration("IDENTREE_LDAP_REFRESH_INTERVAL", 300*time.Second),
+		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/var/lib/identree/uidmap.json"),
+		LDAPSudoNoAuthenticate: stringDefault(get("IDENTREE_SUDO_NO_AUTHENTICATE"), "false"),
 
 		AdminGroups:        getSlice("IDENTREE_ADMIN_GROUPS"),
 		AdminApprovalHosts: getSlice("IDENTREE_ADMIN_APPROVAL_HOSTS"),
@@ -294,6 +301,14 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 	if cfg.LDAPEnabled && cfg.LDAPBaseDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN is required when LDAP is enabled")
+	}
+
+	// Validate LDAPSudoNoAuthenticate
+	switch cfg.LDAPSudoNoAuthenticate {
+	case "true", "false", "claims":
+		// valid
+	default:
+		cfg.LDAPSudoNoAuthenticate = "false"
 	}
 
 	return cfg, nil

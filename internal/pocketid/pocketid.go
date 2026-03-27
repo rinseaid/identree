@@ -7,11 +7,16 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
 
 var sshKeyClaimRe = regexp.MustCompile(`^sshPublicKey\d*$`)
+
+// validAdminIDPattern matches UUID-like identifiers.
+// Prevents path traversal in per-group URL construction.
+var validAdminIDPattern = regexp.MustCompile(`^[a-fA-F0-9-]{1,128}$`)
 
 // PocketIDClient fetches user and group data from the Pocket ID REST API.
 type PocketIDClient struct {
@@ -325,12 +330,29 @@ type PocketIDAdminUser struct {
 
 // PocketIDAdminGroup is a group from the admin API.
 type PocketIDAdminGroup struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	FriendlyName string `json:"friendlyName"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	FriendlyName string          `json:"friendlyName"`
+	CustomClaims []pocketIDClaim `json:"customClaims"`
 	Members      []struct {
 		ID string `json:"id"`
 	} `json:"members"`
+}
+
+// ClaimsMap returns a key→value map of the group's custom claims.
+// Null bytes are stripped from all keys and values to prevent truncation
+// attacks in downstream C-based consumers (sudo, NSS, PAM).
+func (g *PocketIDAdminGroup) ClaimsMap() map[string]string {
+	m := make(map[string]string, len(g.CustomClaims))
+	for _, c := range g.CustomClaims {
+		m[stripNullBytes(c.Key)] = stripNullBytes(c.Value)
+	}
+	return m
+}
+
+// stripNullBytes removes all null bytes from a string.
+func stripNullBytes(s string) string {
+	return strings.ReplaceAll(s, "\x00", "")
 }
 
 // AllAdminUsers fetches all users via the admin API (auto-paginated).
@@ -362,12 +384,18 @@ func (c *PocketIDClient) AllAdminUsers() ([]PocketIDAdminUser, error) {
 	return all, nil
 }
 
-// AllAdminGroups fetches all groups via the admin API (auto-paginated).
+// AllAdminGroups fetches all groups via a two-phase approach:
+//   - Phase 1: paginate /api/admin/groups to collect group IDs and metadata.
+//   - Phase 2: fetch each group via /api/user-groups/<id> to get members and custom claims.
+//
+// The list endpoint does not return custom claims; only the per-group detail does.
 func (c *PocketIDClient) AllAdminGroups() ([]PocketIDAdminGroup, error) {
 	if c == nil {
 		return nil, nil
 	}
-	var all []PocketIDAdminGroup
+
+	// Phase 1: collect group metadata from the paginated list.
+	var phase1 []PocketIDAdminGroup
 	page := 1
 	for {
 		url := fmt.Sprintf("%s/api/admin/groups?page=%d&pageSize=100&sort=name&sortOrder=asc", c.baseURL, page)
@@ -382,11 +410,47 @@ func (c *PocketIDClient) AllAdminGroups() ([]PocketIDAdminGroup, error) {
 		if err := json.Unmarshal(body, &result); err != nil {
 			return nil, fmt.Errorf("admin groups parse: %w", err)
 		}
-		all = append(all, result.Data...)
+		phase1 = append(phase1, result.Data...)
 		if page >= result.Pagination.TotalPages || result.Pagination.TotalPages == 0 {
 			break
 		}
 		page++
+	}
+
+	// Phase 2: fetch each group individually for members and custom claims.
+	// Skip groups that fail (e.g., deleted between phases, transient errors).
+	var all []PocketIDAdminGroup
+	for _, meta := range phase1 {
+		if !validAdminIDPattern.MatchString(meta.ID) {
+			slog.Warn("pocketid: skipping group with invalid ID format", "name", meta.Name, "id", meta.ID)
+			continue
+		}
+		groupURL := fmt.Sprintf("%s/api/user-groups/%s", c.baseURL, meta.ID)
+		body, err := c.apiGet(groupURL)
+		if err != nil {
+			slog.Warn("pocketid: skipping group", "name", meta.Name, "err", err)
+			continue
+		}
+		var g pocketIDGroup
+		if err := json.Unmarshal(body, &g); err != nil {
+			slog.Warn("pocketid: skipping group (parse error)", "name", meta.Name, "err", err)
+			continue
+		}
+		var members []struct {
+			ID string `json:"id"`
+		}
+		for _, u := range g.Users {
+			members = append(members, struct {
+				ID string `json:"id"`
+			}{ID: u.ID})
+		}
+		all = append(all, PocketIDAdminGroup{
+			ID:           meta.ID,
+			Name:         meta.Name,
+			FriendlyName: meta.FriendlyName,
+			CustomClaims: g.CustomClaims,
+			Members:      members,
+		})
 	}
 	return all, nil
 }
