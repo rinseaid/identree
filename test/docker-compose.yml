@@ -1,0 +1,79 @@
+services:
+  pocketid:
+    image: ghcr.io/pocket-id/pocket-id:latest
+    container_name: identree-test-pocketid
+    restart: unless-stopped
+    environment:
+      APP_URL: "http://pocketid:1411"
+      ENCRYPTION_KEY: "identree-test-key-1234"
+      STATIC_API_KEY: "identree-test-static-key"
+      APP_ENV: production
+      DISABLE_RATE_LIMITING: "true"
+    volumes:
+      - pocketid-data:/app/data
+    ports:
+      - "127.0.0.1:1411:1411"
+    healthcheck:
+      test: ["CMD", "/app/pocket-id", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  identree:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: identree-test-server
+    restart: unless-stopped
+    depends_on:
+      pocketid:
+        condition: service_healthy
+    environment:
+      IDENTREE_OIDC_ISSUER_URL: "http://pocketid:1411"
+      IDENTREE_OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      IDENTREE_OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
+      IDENTREE_POCKETID_API_KEY: "identree-test-static-key"
+      IDENTREE_POCKETID_API_URL: "http://pocketid:1411"
+      IDENTREE_EXTERNAL_URL: "http://localhost:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-123"
+      IDENTREE_LDAP_ENABLED: "true"
+      IDENTREE_LDAP_LISTEN_ADDR: ":3389"
+      IDENTREE_LDAP_BASE_DN: "dc=test,dc=local"
+      IDENTREE_LDAP_REFRESH_INTERVAL: "30s"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+      IDENTREE_LDAP_UID_MAP_FILE: "/data/uidmap.json"
+      IDENTREE_SUDO_RULES_FILE: "/data/sudorules.json"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_CHALLENGE_TTL: "120s"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:3389:3389"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: .
+      dockerfile: testclient/Dockerfile
+    container_name: identree-test-client
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://identree:3389"
+      LDAP_BASE: "dc=test,dc=local"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  pocketid-data:
+  identree-data:

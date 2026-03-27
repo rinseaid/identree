@@ -327,6 +327,7 @@ type PocketIDAdminUser struct {
 	LastName     string          `json:"lastName"`
 	IsAdmin      bool            `json:"isAdmin"`
 	CustomClaims []pocketIDClaim `json:"customClaims"`
+	Disabled     bool            `json:"disabled"`
 }
 
 // PocketIDAdminGroup is a group from the admin API.
@@ -364,7 +365,7 @@ func (c *PocketIDClient) AllAdminUsers() ([]PocketIDAdminUser, error) {
 	var all []PocketIDAdminUser
 	page := 1
 	for {
-		url := fmt.Sprintf("%s/api/admin/users?page=%d&pageSize=100&sort=username&sortOrder=asc", c.baseURL, page)
+		url := fmt.Sprintf("%s/api/users?pagination[page]=%d&pagination[limit]=100", c.baseURL, page)
 		body, err := c.apiGet(url)
 		if err != nil {
 			return nil, fmt.Errorf("admin users page %d: %w", page, err)
@@ -386,10 +387,10 @@ func (c *PocketIDClient) AllAdminUsers() ([]PocketIDAdminUser, error) {
 }
 
 // AllAdminGroups fetches all groups via a two-phase approach:
-//   - Phase 1: paginate /api/admin/groups to collect group IDs and metadata.
+//   - Phase 1: paginate /api/user-groups to collect group IDs and metadata.
 //   - Phase 2: fetch each group via /api/user-groups/<id> to get members and custom claims.
 //
-// The list endpoint does not return custom claims; only the per-group detail does.
+// The list endpoint returns UserGroupMinimalDto; the detail endpoint returns UserGroupDto with members.
 func (c *PocketIDClient) AllAdminGroups() ([]PocketIDAdminGroup, error) {
 	if c == nil {
 		return nil, nil
@@ -399,7 +400,7 @@ func (c *PocketIDClient) AllAdminGroups() ([]PocketIDAdminGroup, error) {
 	var phase1 []PocketIDAdminGroup
 	page := 1
 	for {
-		url := fmt.Sprintf("%s/api/admin/groups?page=%d&pageSize=100&sort=name&sortOrder=asc", c.baseURL, page)
+		url := fmt.Sprintf("%s/api/user-groups?pagination[page]=%d&pagination[limit]=100", c.baseURL, page)
 		body, err := c.apiGet(url)
 		if err != nil {
 			return nil, fmt.Errorf("admin groups page %d: %w", page, err)

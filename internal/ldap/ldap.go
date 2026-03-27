@@ -292,6 +292,11 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			}
 		}
 
+		accountStatus := "active"
+		if u.Disabled {
+			accountStatus = "inactive"
+		}
+
 		attrs := map[string][]string{
 			"objectClass":      {"top", "posixAccount", "shadowAccount", "inetOrgPerson"},
 			"uid":              {u.Username},
@@ -307,6 +312,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			"shadowLastChange": {"0"},
 			"shadowMax":        {"99999"},
 			"shadowWarning":    {"7"},
+			"accountStatus":    {accountStatus},
 		}
 
 		// Populate host attribute from accessHosts claim for pam_access.
