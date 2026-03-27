@@ -16,7 +16,10 @@ import (
 
 	"github.com/rinseaid/identree/internal/breakglass"
 	"github.com/rinseaid/identree/internal/config"
+	ldapserver "github.com/rinseaid/identree/internal/ldap"
 	"github.com/rinseaid/identree/internal/pam"
+	"github.com/rinseaid/identree/internal/sudorules"
+	"github.com/rinseaid/identree/internal/uidmap"
 )
 
 // version and commit are set at build time:
@@ -119,7 +122,19 @@ func runServer() {
 		os.Exit(1)
 	}
 
-	srv, err := NewServer(cfg)
+	// Bridge mode: APIKey is empty — serve only ou=sudoers from local rules store.
+	var rulesStore *sudorules.Store
+	if cfg.APIKey == "" {
+		rulesStore, err = sudorules.NewStore(cfg.SudoRulesFile)
+		if err != nil {
+			slog.Error("sudo rules store init error", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("bridge mode active — serving sudoers from local rules store",
+			"path", cfg.SudoRulesFile)
+	}
+
+	srv, err := NewServer(cfg, rulesStore)
 	if err != nil {
 		slog.Error("server init error", "err", err)
 		os.Exit(1)
@@ -143,6 +158,9 @@ func runServer() {
 			"refresh_interval", cfg.LDAPRefreshInterval,
 		)
 	}
+	if cfg.APIKey == "" {
+		slog.Info("bridge mode rules loaded", "count", len(rulesStore.Rules()))
+	}
 	if cfg.SessionStateFile != "" {
 		slog.Info("session persistence enabled", "path", cfg.SessionStateFile)
 	}
@@ -156,6 +174,68 @@ func runServer() {
 	}
 	if cfg.NotifyCommand != "" {
 		slog.Info("push notifications enabled")
+	}
+
+	// Start LDAP server if enabled.
+	var ldapCancel context.CancelFunc
+	if cfg.LDAPEnabled {
+		um, err := uidmap.NewUIDMap(cfg.LDAPUIDMapFile)
+		if err != nil {
+			slog.Error("uid map load error", "err", err)
+			os.Exit(1)
+		}
+		ldapSrv, err := ldapserver.NewLDAPServer(cfg, um, rulesStore)
+		if err != nil {
+			slog.Error("ldap server init error", "err", err)
+			os.Exit(1)
+		}
+
+		// In full mode, seed the directory before opening the listener.
+		if cfg.APIKey != "" {
+			dir, ferr := srv.pocketIDClient.FetchDirectory()
+			if ferr != nil {
+				slog.Warn("ldap: initial directory fetch failed (will retry)", "err", ferr)
+			} else {
+				ldapSrv.Refresh(dir)
+			}
+		}
+
+		var ldapCtx context.Context
+		ldapCtx, ldapCancel = context.WithCancel(context.Background())
+
+		go func() {
+			if lerr := ldapSrv.Start(ldapCtx); lerr != nil {
+				slog.Error("ldap server stopped", "err", lerr)
+			}
+		}()
+
+		// Full mode: periodic refresh + webhook-triggered refresh.
+		if cfg.APIKey != "" {
+			go func() {
+				ticker := time.NewTicker(cfg.LDAPRefreshInterval)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ldapCtx.Done():
+						return
+					case <-ticker.C:
+						dir, ferr := srv.pocketIDClient.FetchDirectory()
+						if ferr != nil {
+							slog.Warn("ldap: directory refresh failed", "err", ferr)
+							continue
+						}
+						ldapSrv.Refresh(dir)
+					case <-srv.ldapRefreshCh:
+						dir, ferr := srv.pocketIDClient.FetchDirectory()
+						if ferr != nil {
+							slog.Warn("ldap: webhook-triggered refresh failed", "err", ferr)
+							continue
+						}
+						ldapSrv.Refresh(dir)
+					}
+				}
+			}()
+		}
 	}
 
 	httpServer := &http.Server{
@@ -185,6 +265,9 @@ func runServer() {
 		defer cancel()
 		if err := httpServer.Shutdown(ctx); err != nil {
 			slog.Error("HTTP shutdown error", "err", err)
+		}
+		if ldapCancel != nil {
+			ldapCancel()
 		}
 		srv.WaitForNotifications(5 * time.Second)
 		srv.store.SaveState()

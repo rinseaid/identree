@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -16,32 +15,40 @@ import (
 
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/pocketid"
+	"github.com/rinseaid/identree/internal/sudorules"
 	"github.com/rinseaid/identree/internal/uidmap"
 )
 
-// LDAPServer embeds an RFC 4519 LDAP server exposing posixAccount/posixGroup/sudoRole
-// entries derived from a live PocketID user directory.
+// LDAPServer embeds an RFC 4519 LDAP server.
 //
-// Schema layout (assuming base DN "dc=example,dc=com"):
+// Full mode (sudoRules == nil): serves a complete directory from PocketID.
 //
 //	ou=people,dc=example,dc=com      — posixAccount + shadowAccount per user
 //	ou=groups,dc=example,dc=com      — posixGroup per group + one UPG per user
-//	ou=sudoers,dc=example,dc=com     — sudoRole entries derived from group names
+//	ou=sudoers,dc=example,dc=com     — sudoRole entries from PocketID group claims
+//
+// Bridge mode (sudoRules != nil): serves only ou=sudoers from the local rules store.
+// The upstream LDAP (Authentik, Kanidm, lldap, etc.) handles people and groups.
+//
+//	ou=sudoers,dc=example,dc=com     — sudoRole entries from the sudorules store
 type LDAPServer struct {
-	cfg    *config.ServerConfig
-	uidmap *uidmap.UIDMap
+	cfg       *config.ServerConfig
+	uidmap    *uidmap.UIDMap
+	sudoRules *sudorules.Store // non-nil = bridge mode
 
 	mu  sync.RWMutex
-	dir *pocketid.UserDirectory // refreshed periodically
+	dir *pocketid.UserDirectory // refreshed periodically (full mode only)
 
 	srv *gldap.Server
 }
 
 // NewLDAPServer creates (but does not start) the LDAP server.
-func NewLDAPServer(cfg *config.ServerConfig, uidmap *uidmap.UIDMap) (*LDAPServer, error) {
+// Pass a non-nil store to run in bridge mode (sudoers-only LDAP).
+func NewLDAPServer(cfg *config.ServerConfig, um *uidmap.UIDMap, store *sudorules.Store) (*LDAPServer, error) {
 	return &LDAPServer{
-		cfg:    cfg,
-		uidmap: uidmap,
+		cfg:       cfg,
+		uidmap:    um,
+		sudoRules: store,
 	}, nil
 }
 
@@ -54,7 +61,9 @@ func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory) {
 	for _, g := range dir.Groups {
 		s.uidmap.GID(g.ID)
 	}
-	_ = s.uidmap.Flush()
+	if err := s.uidmap.Flush(); err != nil {
+		slog.Warn("ldap: uid map flush failed", "err", err)
+	}
 
 	s.mu.Lock()
 	s.dir = dir
@@ -133,6 +142,29 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		return
 	}
 
+	base := s.cfg.LDAPBaseDN
+	scope := strings.ToLower(msg.BaseDN)
+	peopleDN := strings.ToLower("ou=people," + base)
+	groupsDN := strings.ToLower("ou=groups," + base)
+	sudoersDN := strings.ToLower("ou=sudoers," + base)
+	baseLower := strings.ToLower(base)
+	filter := msg.Filter
+
+	// Bridge mode: serve only ou=sudoers from the local rules store.
+	if s.sudoRules != nil {
+		switch {
+		case scope == baseLower && msg.Scope == gldap.BaseObject:
+			s.sendRootDSE(w, req, base)
+		case scope == sudoersDN || strings.HasSuffix(scope, ","+sudoersDN):
+			s.searchSudoersFromStore(w, req, filter, base)
+		case scope == baseLower:
+			// Subtree from root in bridge mode — only serve sudoers.
+			s.searchSudoersFromStore(w, req, filter, base)
+		}
+		return
+	}
+
+	// Full mode: require directory snapshot.
 	s.mu.RLock()
 	dir := s.dir
 	s.mu.RUnlock()
@@ -141,15 +173,6 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		resp.SetResultCode(gldap.ResultBusy)
 		return
 	}
-
-	base := s.cfg.LDAPBaseDN
-	scope := strings.ToLower(msg.BaseDN)
-	peopleDN := strings.ToLower("ou=people," + base)
-	groupsDN := strings.ToLower("ou=groups," + base)
-	sudoersDN := strings.ToLower("ou=sudoers," + base)
-	baseLower := strings.ToLower(base)
-
-	filter := msg.Filter
 
 	switch {
 	case scope == baseLower && msg.Scope == gldap.BaseObject:
@@ -208,7 +231,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 	for _, u := range dir.Users {
 		uid := s.uidmap.UID(u.ID)
 		gid := uid // UPG: primary group GID == UID
-		dn := fmt.Sprintf("uid=%s,%s", u.Username, peopleDN)
+		dn := fmt.Sprintf("uid=%s,%s", escapeDNValue(u.Username), peopleDN)
 		fullName := strings.TrimSpace(u.FirstName + " " + u.LastName)
 		if fullName == "" {
 			fullName = u.Username
@@ -265,7 +288,7 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 	// PocketID groups
 	for _, g := range dir.Groups {
 		gid := s.uidmap.GID(g.ID)
-		dn := fmt.Sprintf("cn=%s,%s", g.Name, groupsDN)
+		dn := fmt.Sprintf("cn=%s,%s", escapeDNValue(g.Name), groupsDN)
 
 		memberUids := buildMemberUids(g.Members, dir)
 		memberDNs := buildMemberDNs(g.Members, dir, peopleDN)
@@ -295,7 +318,7 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 	// User Private Groups (one per user, GID == UID)
 	for _, u := range dir.Users {
 		uid := s.uidmap.UID(u.ID)
-		dn := fmt.Sprintf("cn=%s,%s", u.Username, groupsDN)
+		dn := fmt.Sprintf("cn=%s,%s", escapeDNValue(u.Username), groupsDN)
 		attrs := map[string][]string{
 			"objectClass": {"top", "posixGroup"},
 			"cn":          {u.Username},
@@ -427,6 +450,141 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 	}
 }
 
+// searchSudoersFromStore emits sudoRole entries from the bridge-mode rules store.
+// sudoUser is set to %groupname (LDAP group membership syntax for sudoers) since
+// individual usernames are not known in bridge mode.
+func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.Request, filter, base string) {
+	sudoersDN := "ou=sudoers," + base
+
+	ouAttrs := map[string][]string{
+		"objectClass": {"top", "organizationalUnit"},
+		"ou":          {"sudoers"},
+	}
+	if matchesFilter(filter, sudoersDN, ouAttrs) {
+		w.Write(req.NewSearchResponseEntry(sudoersDN, gldap.WithAttributes(ouAttrs)))
+	}
+
+	noAuth := s.cfg.LDAPSudoNoAuthenticate
+	rules := s.sudoRules.Rules()
+
+	for _, rule := range rules {
+		if !isValidGroupName(rule.Group) {
+			continue
+		}
+		if rule.Commands == "" {
+			continue
+		}
+
+		// sudoHost (default: ALL)
+		rawHosts := splitComma(rule.Hosts)
+		var sudoHosts []string
+		if len(rawHosts) == 0 {
+			sudoHosts = []string{"ALL"}
+		} else {
+			for _, h := range rawHosts {
+				if h == "ALL" || validSudoHostOrUser.MatchString(h) {
+					sudoHosts = append(sudoHosts, h)
+				}
+			}
+		}
+		if len(sudoHosts) == 0 {
+			continue // all explicit values were invalid — fail-closed
+		}
+
+		// sudoCommand
+		rawCmds := splitComma(rule.Commands)
+		var cmds []string
+		for _, c := range rawCmds {
+			if validSudoCommand(c) {
+				cmds = append(cmds, c)
+			}
+		}
+		if len(cmds) == 0 {
+			continue
+		}
+
+		// sudoRunAsUser (default: root)
+		rawRunAs := splitComma(rule.RunAsUser)
+		var sudoRunAsUser []string
+		if len(rawRunAs) == 0 {
+			sudoRunAsUser = []string{"root"}
+		} else {
+			for _, u := range rawRunAs {
+				if u == "ALL" || validSudoHostOrUser.MatchString(u) {
+					sudoRunAsUser = append(sudoRunAsUser, u)
+				}
+			}
+		}
+		if len(sudoRunAsUser) == 0 {
+			continue
+		}
+
+		dn := fmt.Sprintf("cn=%s,%s", escapeDNValue(rule.Group), sudoersDN)
+		attrs := map[string][]string{
+			"objectClass":   {"top", "sudoRole"},
+			"cn":            {rule.Group},
+			"sudoUser":      {"%" + rule.Group},
+			"sudoHost":      sudoHosts,
+			"sudoCommand":   cmds,
+			"sudoRunAsUser": sudoRunAsUser,
+		}
+
+		// sudoRunAsGroup — optional
+		if rawRG := splitComma(rule.RunAsGroup); len(rawRG) > 0 {
+			var safe []string
+			for _, v := range rawRG {
+				if v == "ALL" || validSudoHostOrUser.MatchString(v) {
+					safe = append(safe, v)
+				}
+			}
+			if len(safe) > 0 {
+				attrs["sudoRunAsGroup"] = safe
+			}
+		}
+
+		// sudoOptions
+		var sudoOptions []string
+		if noAuth == "true" {
+			sudoOptions = append(sudoOptions, "!authenticate")
+		}
+		if extra := splitComma(rule.Options); len(extra) > 0 {
+			for _, opt := range extra {
+				if isNoAuthOption(opt) {
+					if noAuth == "claims" {
+						sudoOptions = append(sudoOptions, strings.TrimSpace(opt))
+					}
+					continue
+				}
+				if isSafeSudoOption(opt) {
+					sudoOptions = append(sudoOptions, opt)
+				}
+			}
+		}
+		if len(sudoOptions) > 0 {
+			attrs["sudoOption"] = sudoOptions
+		}
+
+		if !matchesFilter(filter, dn, attrs) {
+			continue
+		}
+		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+	}
+}
+
+// splitComma splits a comma-separated string into trimmed non-empty values.
+func splitComma(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // ── Group / user name validation ─────────────────────────────────────────────
 
 // validGroupName matches safe POSIX group names.
@@ -442,6 +600,8 @@ var reservedGroupNames = map[string]bool{
 }
 
 // isValidGroupName returns true if the group name is safe for use in LDAP entries.
+// Group names must be strictly lowercase — case-folding is intentionally rejected
+// to avoid silent shadowing of system groups (e.g. "Root" → "root").
 func isValidGroupName(name string) bool {
 	if !utf8.ValidString(name) {
 		return false
@@ -449,11 +609,10 @@ func isValidGroupName(name string) bool {
 	if len(name) > 256 {
 		return false
 	}
-	lower := strings.ToLower(name)
-	if reservedGroupNames[lower] {
+	if reservedGroupNames[strings.ToLower(name)] {
 		return false
 	}
-	return validGroupName.MatchString(lower)
+	return validGroupName.MatchString(name)
 }
 
 // ── Sudo claim security validation ───────────────────────────────────────────
@@ -506,6 +665,10 @@ func hasSudoClaims(claims map[string]string) bool {
 
 // isNoAuthOption returns true if the option is !authenticate or authenticate.
 func isNoAuthOption(opt string) bool {
+	// Check for control characters before TrimSpace — TrimSpace strips \n and \r.
+	if strings.ContainsAny(opt, "\n\r\x00") {
+		return false
+	}
 	normalized := strings.ToLower(strings.TrimSpace(opt))
 	normalized = strings.ReplaceAll(normalized, " ", "")
 	return normalized == "!authenticate" || normalized == "authenticate"
@@ -525,11 +688,12 @@ func normalizeSudoOption(s string) string {
 
 // isSafeSudoOption returns true if the sudo option is safe to pass through.
 func isSafeSudoOption(opt string) bool {
-	lower := strings.ToLower(strings.TrimSpace(opt))
-	if lower == "" {
+	// Check for control characters before any trimming — TrimSpace would hide them.
+	if strings.ContainsAny(opt, "\n\r\x00") {
 		return false
 	}
-	if strings.ContainsAny(lower, "\n\r") {
+	lower := strings.ToLower(strings.TrimSpace(opt))
+	if lower == "" {
 		return false
 	}
 	if dangerousSudoOptions[lower] {
@@ -549,14 +713,12 @@ func isSafeSudoOption(opt string) bool {
 
 // validSudoCommand checks that a sudo command value is safe.
 func validSudoCommand(cmd string) bool {
+	// Check for control characters before TrimSpace — TrimSpace strips \n and \r.
+	if strings.ContainsAny(cmd, "\n\r\x00") {
+		return false
+	}
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
-		return false
-	}
-	if strings.ContainsRune(cmd, 0) {
-		return false
-	}
-	if strings.ContainsAny(cmd, "\n\r") {
 		return false
 	}
 	if cmd == "ALL" {
@@ -702,7 +864,7 @@ func buildMemberDNs(members []struct{ ID string `json:"id"` }, dir *pocketid.Use
 	var out []string
 	for _, m := range members {
 		if u, ok := dir.ByUserID[m.ID]; ok {
-			out = append(out, fmt.Sprintf("uid=%s,%s", u.Username, peopleDN))
+			out = append(out, fmt.Sprintf("uid=%s,%s", escapeDNValue(u.Username), peopleDN))
 		}
 	}
 	return out
@@ -903,41 +1065,3 @@ func ldapSubstringMatch(value, pattern string) bool {
 	return true
 }
 
-// ── Directory refresh loop ────────────────────────────────────────────────────
-
-// RunRefreshLoop polls the PocketID API and updates the LDAP directory.
-// refreshCh receives signals for immediate refresh (from webhook events).
-func (s *LDAPServer) RunRefreshLoop(ctx context.Context, client *pocketid.PocketIDClient, refreshCh <-chan struct{}) {
-	interval := s.cfg.LDAPRefreshInterval
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	doRefresh := func() {
-		users, err := client.AllAdminUsers()
-		if err != nil {
-			slog.Error("ldap: refresh users", "err", err)
-			return
-		}
-		groups, err := client.AllAdminGroups()
-		if err != nil {
-			slog.Error("ldap: refresh groups", "err", err)
-			return
-		}
-		s.Refresh(pocketid.NewUserDirectory(users, groups))
-	}
-
-	doRefresh() // initial load
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			doRefresh()
-		case <-refreshCh:
-			slog.Info("ldap: webhook-triggered refresh")
-			doRefresh()
-			ticker.Reset(interval)
-		}
-	}
-}

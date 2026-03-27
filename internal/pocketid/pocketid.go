@@ -486,3 +486,17 @@ func NewUserDirectory(users []PocketIDAdminUser, groups []PocketIDAdminGroup) *U
 	}
 	return d
 }
+
+// FetchDirectory fetches users and groups from PocketID and returns
+// a queryable UserDirectory snapshot. Returns an error if either API call fails.
+func (c *PocketIDClient) FetchDirectory() (*UserDirectory, error) {
+	users, err := c.AllAdminUsers()
+	if err != nil {
+		return nil, fmt.Errorf("pocketid: fetch users: %w", err)
+	}
+	groups, err := c.AllAdminGroups()
+	if err != nil {
+		return nil, fmt.Errorf("pocketid: fetch groups: %w", err)
+	}
+	return NewUserDirectory(users, groups), nil
+}

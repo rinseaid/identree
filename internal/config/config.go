@@ -43,9 +43,12 @@ type ServerConfig struct {
 	ClientSecret string // OIDC client secret
 
 	// ── PocketID API ──────────────────────────────────────────────────────────
-	// APIKey is required — it's used to fetch all users and groups from PocketID
-	// for the LDAP server and to support admin UI features regardless of login state.
-	APIKey    string // PocketID admin API key
+	// APIKey enables full mode (PocketID backend). When set, identree fetches
+	// users and groups from PocketID and serves a complete LDAP directory.
+	// When empty, identree runs in PAM bridge mode: any OIDC IdP works for
+	// authentication, and the LDAP server serves only ou=sudoers from a local
+	// JSON rules file managed via the admin UI.
+	APIKey    string // PocketID admin API key (optional — empty = bridge mode)
 	APIURL    string // PocketID API base URL (defaults to IssuerURL)
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
@@ -72,6 +75,11 @@ type ServerConfig struct {
 	//   "true"   — !authenticate added to all sudo rules; PAM is never invoked.
 	//   "claims" — per-group: IDP admins set sudoOptions=!authenticate on specific groups.
 	LDAPSudoNoAuthenticate string
+
+	// SudoRulesFile is the path to the JSON sudo rules store (bridge mode only).
+	// In bridge mode (APIKey == ""), the LDAP server serves ou=sudoers from this file.
+	// Rules are managed via the admin UI at /admin/sudo-rules.
+	SudoRulesFile string
 
 	// ── Admin access ──────────────────────────────────────────────────────────
 	AdminGroups        []string // OIDC groups granting admin dashboard access
@@ -140,7 +148,10 @@ type ClientConfig struct {
 func LoadServerConfig() (*ServerConfig, error) {
 	env, err := loadConfigFile(DefaultConfigPath)
 	if err != nil {
-		return nil, err
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		env = map[string]string{}
 	}
 	get := func(key string) string {
 		if v := os.Getenv(key); v != "" {
@@ -218,6 +229,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPRefreshInterval:    getDuration("IDENTREE_LDAP_REFRESH_INTERVAL", 300*time.Second),
 		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/var/lib/identree/uidmap.json"),
 		LDAPSudoNoAuthenticate: stringDefault(get("IDENTREE_SUDO_NO_AUTHENTICATE"), "false"),
+		SudoRulesFile:          stringDefault(get("IDENTREE_SUDO_RULES_FILE"), "/var/lib/identree/sudorules.json"),
 
 		AdminGroups:        getSlice("IDENTREE_ADMIN_GROUPS"),
 		AdminApprovalHosts: getSlice("IDENTREE_ADMIN_APPROVAL_HOSTS"),
@@ -295,9 +307,6 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 	if cfg.ExternalURL == "" {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL is required")
-	}
-	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("IDENTREE_POCKETID_API_KEY is required (needed for LDAP and admin features)")
 	}
 	if cfg.LDAPEnabled && cfg.LDAPBaseDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN is required when LDAP is enabled")

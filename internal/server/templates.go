@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"html/template"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,15 @@ var templateFuncMap = template.FuncMap{
 	"eqInt":          func(a, b int) bool { return a == b },
 	"add":            func(a, b int) int { return a + b },
 	"sub":            func(a, b int) int { return a - b },
+	"splitCommaTemplate": func(s string) []string {
+		var out []string
+		for _, v := range strings.Split(s, ",") {
+			if v = strings.TrimSpace(v); v != "" {
+				out = append(out, v)
+			}
+		}
+		return out
+	},
 }
 
 // Pre-parsed templates — avoids re-parsing on every request.
@@ -1404,6 +1414,7 @@ const adminPageHTML = `<!DOCTYPE html>
       <a href="/admin/users" class="{{if eq .AdminTab "users"}}active{{end}}">{{call .T "users"}}</a>
       <a href="/admin/groups" class="{{if eq .AdminTab "groups"}}active{{end}}">{{call .T "groups"}}</a>
       <a href="/admin/hosts" class="{{if eq .AdminTab "hosts"}}active{{end}}">{{call .T "hosts"}}</a>
+      {{if .BridgeMode}}<a href="/admin/sudo-rules" class="{{if eq .AdminTab "sudo-rules"}}active{{end}}">{{call .T "sudo_rules"}}</a>{{end}}
       <a href="/admin/info" class="{{if eq .AdminTab "info"}}active{{end}}">{{call .T "info"}}</a>
     </div>
 
@@ -1730,6 +1741,133 @@ const adminPageHTML = `<!DOCTYPE html>
     {{else}}
     <p class="empty-state">{{call .T "no_activity"}}</p>
     {{end}}
+
+    {{else if eq .AdminTab "sudo-rules"}}
+    {{if .SudoRules}}
+    <div class="list" role="list">
+      {{range .SudoRules}}
+      <div class="row" role="listitem" style="flex-direction:column;align-items:stretch;gap:0">
+        <div class="host-row-header">
+          <div class="host-row-header-info">
+            <span class="user-name">{{.Group}}</span>
+            {{range splitCommaTemplate .Commands}}<span class="pill cmd" style="font-size:0.78rem">{{.}}</span>{{end}}
+            {{if .Hosts}}<span class="row-sub" style="display:inline">{{call $.T "sudo_rules_hosts"}}: {{.Hosts}}</span>{{end}}
+          </div>
+          <div class="host-row-header-actions">
+            <button type="button" class="host-btn" onclick="sudoEditRule(this)"
+              data-group="{{.Group}}"
+              data-hosts="{{.Hosts}}"
+              data-commands="{{.Commands}}"
+              data-run-as-user="{{.RunAsUser}}"
+              data-run-as-group="{{.RunAsGroup}}"
+              data-options="{{.Options}}">{{call $.T "edit"}}</button>
+            <form method="POST" action="/api/sudo-rules/delete" style="display:inline">
+              <input type="hidden" name="group" value="{{.Group}}">
+              <input type="hidden" name="username" value="{{$.Username}}">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+              <button type="submit" class="host-btn danger" onclick="return confirm('{{printf (call $.T "sudo_rules_confirm_delete") .Group}}')">{{call $.T "delete"}}</button>
+            </form>
+          </div>
+        </div>
+        {{if or .RunAsUser .RunAsGroup .Options}}
+        <div class="host-row-users" style="padding-top:4px;gap:4px">
+          {{if .RunAsUser}}<span class="row-sub">{{call $.T "sudo_rules_run_as_user"}}: {{.RunAsUser}}</span>{{end}}
+          {{if .RunAsGroup}}<span class="row-sub">{{call $.T "sudo_rules_run_as_group"}}: {{.RunAsGroup}}</span>{{end}}
+          {{if .Options}}<span class="row-sub">{{call $.T "sudo_rules_options"}}: {{.Options}}</span>{{end}}
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <p class="empty-state">{{call .T "sudo_rules_empty"}}</p>
+    {{end}}
+
+    <div class="hosts-toolbar" style="margin-top:24px">
+      <button type="button" class="host-btn primary" id="sudo-add-btn" onclick="sudoShowAdd()">{{call .T "sudo_rules_add"}}</button>
+    </div>
+
+    <div id="sudo-form-card" style="display:none;margin-top:16px" class="info-section">
+      <h3 id="sudo-form-title">{{call .T "sudo_rules_add"}}</h3>
+      <form id="sudo-rule-form" method="POST" action="/api/sudo-rules/add">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+        <input type="hidden" id="sudo-form-action" name="_action" value="add">
+        <table class="info-table" style="width:100%;max-width:640px">
+          <tr>
+            <td class="info-label"><label for="sudo-group">{{call .T "sudo_rules_group"}}</label></td>
+            <td><input type="text" id="sudo-group" name="group" required pattern="[a-z_][a-z0-9_.-]*" maxlength="256" class="text-input" placeholder="e.g. sysadmins" autocomplete="off"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="sudo-commands">{{call .T "sudo_rules_commands"}}</label></td>
+            <td>
+              <input type="text" id="sudo-commands" name="commands" required class="text-input" placeholder="/usr/bin/apt,/usr/bin/systemctl" autocomplete="off">
+              <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:4px">{{call .T "sudo_rules_commands_hint"}}</div>
+            </td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="sudo-hosts">{{call .T "sudo_rules_hosts"}}</label></td>
+            <td>
+              <input type="text" id="sudo-hosts" name="hosts" class="text-input" placeholder="ALL" autocomplete="off">
+              <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:4px">{{call .T "sudo_rules_hosts_hint"}}</div>
+            </td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="sudo-run-as-user">{{call .T "sudo_rules_run_as_user"}}</label></td>
+            <td><input type="text" id="sudo-run-as-user" name="run_as_user" class="text-input" placeholder="root (default)" autocomplete="off"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="sudo-run-as-group">{{call .T "sudo_rules_run_as_group"}}</label></td>
+            <td><input type="text" id="sudo-run-as-group" name="run_as_group" class="text-input" placeholder="" autocomplete="off"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="sudo-options">{{call .T "sudo_rules_options"}}</label></td>
+            <td><input type="text" id="sudo-options" name="options" class="text-input" placeholder="NOPASSWD" autocomplete="off"></td>
+          </tr>
+        </table>
+        <div class="modal-actions" style="margin-top:16px">
+          <button type="button" class="host-btn" onclick="sudoHideForm()">{{call .T "cancel"}}</button>
+          <button type="submit" class="host-btn primary">{{call .T "sudo_rules_save"}}</button>
+        </div>
+      </form>
+    </div>
+    <script nonce="{{.CSPNonce}}">
+    function sudoShowAdd() {
+      document.getElementById('sudo-form-title').textContent = {{call .T "sudo_rules_add"}};
+      document.getElementById('sudo-rule-form').action = '/api/sudo-rules/add';
+      document.getElementById('sudo-group').readOnly = false;
+      document.getElementById('sudo-group').value = '';
+      document.getElementById('sudo-commands').value = '';
+      document.getElementById('sudo-hosts').value = '';
+      document.getElementById('sudo-run-as-user').value = '';
+      document.getElementById('sudo-run-as-group').value = '';
+      document.getElementById('sudo-options').value = '';
+      document.getElementById('sudo-form-card').style.display = '';
+      document.getElementById('sudo-add-btn').style.display = 'none';
+      document.getElementById('sudo-group').focus();
+    }
+    function sudoEditRule(btn) {
+      document.getElementById('sudo-form-title').textContent = {{call .T "sudo_rules_edit"}};
+      document.getElementById('sudo-rule-form').action = '/api/sudo-rules/update';
+      document.getElementById('sudo-group').readOnly = true;
+      document.getElementById('sudo-group').value = btn.dataset.group;
+      document.getElementById('sudo-commands').value = btn.dataset.commands;
+      document.getElementById('sudo-hosts').value = btn.dataset.hosts;
+      document.getElementById('sudo-run-as-user').value = btn.dataset.runAsUser;
+      document.getElementById('sudo-run-as-group').value = btn.dataset.runAsGroup;
+      document.getElementById('sudo-options').value = btn.dataset.options;
+      document.getElementById('sudo-form-card').style.display = '';
+      document.getElementById('sudo-add-btn').style.display = 'none';
+      document.getElementById('sudo-commands').focus();
+    }
+    function sudoHideForm() {
+      document.getElementById('sudo-form-card').style.display = 'none';
+      document.getElementById('sudo-add-btn').style.display = '';
+    }
+    </script>
+
     {{end}}
   </div>
 

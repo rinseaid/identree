@@ -18,6 +18,7 @@ import (
 	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/pocketid"
+	"github.com/rinseaid/identree/internal/sudorules"
 )
 
 var serverStartTime = time.Now()
@@ -50,6 +51,9 @@ type Server struct {
 
 	pocketIDClient *pocketid.PocketIDClient
 
+	// sudoRules is non-nil in bridge mode (APIKey == "").
+	sudoRules *sudorules.Store
+
 	// LDAP refresh channel — send a value to trigger an immediate reload.
 	// Buffered so a webhook can fire without blocking the HTTP handler.
 	ldapRefreshCh chan struct{}
@@ -63,7 +67,7 @@ type Server struct {
 var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
 var validHostname = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,253}$`)
 
-func NewServer(cfg *config.ServerConfig) (*Server, error) {
+func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error) {
 	discoveryClient := &http.Client{
 		Timeout: oidcDiscoveryTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -98,8 +102,9 @@ func NewServer(cfg *config.ServerConfig) (*Server, error) {
 		sseClients:    make(map[string][]chan string),
 		deployJobs:    make(map[string]*deployJob),
 		deployRL:      newDeployRateLimiter(),
-		ldapRefreshCh: make(chan struct{}, 1),
+		ldapRefreshCh:  make(chan struct{}, 1),
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
+		sudoRules:      store,
 	}
 
 	s.registerRoutes()
@@ -148,6 +153,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/admin/hosts", s.handleAdminHosts)
 	s.mux.HandleFunc("/api/users/remove", s.handleRemoveUser)
 
+	// Sudo rules (bridge mode only)
+	s.mux.HandleFunc("/admin/sudo-rules", s.handleAdminSudoRules)
+	s.mux.HandleFunc("/api/sudo-rules/add", s.handleSudoRuleAdd)
+	s.mux.HandleFunc("/api/sudo-rules/update", s.handleSudoRuleUpdate)
+	s.mux.HandleFunc("/api/sudo-rules/delete", s.handleSudoRuleDelete)
+
 	// Host management
 	s.mux.HandleFunc("/api/hosts/elevate", s.handleElevate)
 	s.mux.HandleFunc("/api/hosts/rotate", s.handleRotateHost)
@@ -179,6 +190,11 @@ func (s *Server) registerRoutes() {
 
 	// Dashboard is the catch-all — must be registered last.
 	s.mux.HandleFunc("/", s.handleDashboard)
+}
+
+// isBridgeMode returns true when running without a PocketID API key.
+func (s *Server) isBridgeMode() bool {
+	return s.cfg.APIKey == ""
 }
 
 // Stop cleanly shuts down background resources.

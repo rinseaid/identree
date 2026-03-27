@@ -1,0 +1,236 @@
+package server
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/rinseaid/identree/internal/sudorules"
+)
+
+// posixGroupName mirrors the validation in the ldap package: lowercase, no
+// uppercase, starts with a letter or underscore, max 256 chars.
+var posixGroupName = regexp.MustCompile(`^[a-z_][a-z0-9_.-]*$`)
+
+// handleAdminSudoRules renders the sudo rules admin tab (bridge mode only).
+// GET /admin/sudo-rules
+func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isBridgeMode() {
+		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/users", http.StatusSeeOther)
+		return
+	}
+
+	if setLanguageCookie(w, r) {
+		return
+	}
+	lang := detectLanguage(r)
+	t := T(lang)
+
+	username := s.getSessionUser(r)
+	if username == "" {
+		setFlashCookie(w, "expired:")
+		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		return
+	}
+	s.setSessionCookie(w, username, s.getSessionRole(r))
+	if s.getSessionRole(r) != "admin" {
+		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		return
+	}
+
+	// Parse flash messages
+	var flashes []string
+	if flashParam := getAndClearFlash(w, r); flashParam != "" {
+		for _, f := range strings.Split(flashParam, ",") {
+			parts := strings.SplitN(f, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			switch parts[0] {
+			case "sudo_added":
+				flashes = append(flashes, t("sudo_rules_added")+": "+parts[1])
+			case "sudo_updated":
+				flashes = append(flashes, t("sudo_rules_updated")+": "+parts[1])
+			case "sudo_deleted":
+				flashes = append(flashes, t("sudo_rules_deleted")+": "+parts[1])
+			}
+		}
+	}
+
+	now := time.Now()
+	csrfTs := fmt.Sprintf("%d", now.Unix())
+	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+
+	adminTZ := "UTC"
+	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
+		if _, tzErr := time.LoadLocation(c.Value); tzErr == nil {
+			adminTZ = c.Value
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	if err := adminTmpl.Execute(w, map[string]interface{}{
+		"Username":   username,
+		"Initial":    strings.ToUpper(username[:1]),
+		"Avatar":     getAvatar(r),
+		"Timezone":   adminTZ,
+		"Flashes":    flashes,
+		"ActivePage": "admin",
+		"AdminTab":   "sudo-rules",
+		"BridgeMode": true,
+		"Theme":      getTheme(r),
+		"CSPNonce":   r.Context().Value("csp-nonce"),
+		"T":          t,
+		"Lang":       lang,
+		"Languages":  supportedLanguages,
+		"IsAdmin":    true,
+		"SudoRules":  s.sudoRules.Rules(),
+		"CSRFToken":  csrfToken,
+		"CSRFTs":     csrfTs,
+	}); err != nil {
+		log.Printf("ERROR: template execution: %v", err)
+	}
+}
+
+// handleSudoRuleAdd adds a new sudo rule.
+// POST /api/sudo-rules/add
+func (s *Server) handleSudoRuleAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isBridgeMode() {
+		http.Error(w, "not available", http.StatusNotFound)
+		return
+	}
+	adminUser := s.verifyFormAuth(w, r)
+	if adminUser == "" {
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
+		return
+	}
+
+	rule := sudorules.SudoRule{
+		Group:      strings.TrimSpace(r.FormValue("group")),
+		Hosts:      strings.TrimSpace(r.FormValue("hosts")),
+		Commands:   strings.TrimSpace(r.FormValue("commands")),
+		RunAsUser:  strings.TrimSpace(r.FormValue("run_as_user")),
+		RunAsGroup: strings.TrimSpace(r.FormValue("run_as_group")),
+		Options:    strings.TrimSpace(r.FormValue("options")),
+	}
+
+	if rule.Group == "" || rule.Commands == "" {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "missing_fields")
+		return
+	}
+	if len(rule.Group) > 256 || !posixGroupName.MatchString(rule.Group) {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
+		return
+	}
+
+	if err := s.sudoRules.Add(rule); err != nil {
+		revokeErrorPage(w, r, http.StatusConflict, "sudo_rule_conflict", "sudo_rule_conflict_message")
+		return
+	}
+
+	log.Printf("SUDO_RULE_ADDED: admin %q added rule for group %q from %s", adminUser, rule.Group, remoteAddr(r))
+	setFlashCookie(w, "sudo_added:"+rule.Group)
+	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/sudo-rules", http.StatusSeeOther)
+}
+
+// handleSudoRuleUpdate updates an existing sudo rule.
+// POST /api/sudo-rules/update
+func (s *Server) handleSudoRuleUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isBridgeMode() {
+		http.Error(w, "not available", http.StatusNotFound)
+		return
+	}
+	adminUser := s.verifyFormAuth(w, r)
+	if adminUser == "" {
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
+		return
+	}
+
+	rule := sudorules.SudoRule{
+		Group:      strings.TrimSpace(r.FormValue("group")),
+		Hosts:      strings.TrimSpace(r.FormValue("hosts")),
+		Commands:   strings.TrimSpace(r.FormValue("commands")),
+		RunAsUser:  strings.TrimSpace(r.FormValue("run_as_user")),
+		RunAsGroup: strings.TrimSpace(r.FormValue("run_as_group")),
+		Options:    strings.TrimSpace(r.FormValue("options")),
+	}
+
+	if rule.Group == "" || rule.Commands == "" {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "missing_fields")
+		return
+	}
+	if len(rule.Group) > 256 || !posixGroupName.MatchString(rule.Group) {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
+		return
+	}
+
+	if err := s.sudoRules.Update(rule); err != nil {
+		revokeErrorPage(w, r, http.StatusNotFound, "sudo_rule_not_found", "sudo_rule_not_found_message")
+		return
+	}
+
+	log.Printf("SUDO_RULE_UPDATED: admin %q updated rule for group %q from %s", adminUser, rule.Group, remoteAddr(r))
+	setFlashCookie(w, "sudo_updated:"+rule.Group)
+	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/sudo-rules", http.StatusSeeOther)
+}
+
+// handleSudoRuleDelete deletes a sudo rule.
+// POST /api/sudo-rules/delete
+func (s *Server) handleSudoRuleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.isBridgeMode() {
+		http.Error(w, "not available", http.StatusNotFound)
+		return
+	}
+	adminUser := s.verifyFormAuth(w, r)
+	if adminUser == "" {
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
+		return
+	}
+
+	group := strings.TrimSpace(r.FormValue("group"))
+	if group == "" {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "missing_fields")
+		return
+	}
+	if len(group) > 256 || !posixGroupName.MatchString(group) {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
+		return
+	}
+
+	if err := s.sudoRules.Remove(group); err != nil {
+		revokeErrorPage(w, r, http.StatusNotFound, "sudo_rule_not_found", "sudo_rule_not_found_message")
+		return
+	}
+
+	log.Printf("SUDO_RULE_DELETED: admin %q deleted rule for group %q from %s", adminUser, group, remoteAddr(r))
+	setFlashCookie(w, "sudo_deleted:"+group)
+	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/sudo-rules", http.StatusSeeOther)
+}
