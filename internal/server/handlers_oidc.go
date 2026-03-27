@@ -76,6 +76,12 @@ func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 
 	state := "sessions:" + nonce
 	url := s.oidcConfig.AuthCodeURL(state, oidc.Nonce(nonce))
+	// When IssuerPublicURL is set (e.g. split internal/external routing in dev),
+	// rewrite the auth URL so the browser follows the public hostname while
+	// token exchange and discovery continue to use the internal IssuerURL.
+	if s.cfg.IssuerPublicURL != "" {
+		url = strings.Replace(url, s.cfg.IssuerURL, s.cfg.IssuerPublicURL, 1)
+	}
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
