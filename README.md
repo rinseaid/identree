@@ -19,7 +19,7 @@ identree fixes this by making every `sudo` invocation and every SSH login go thr
 1. A user runs `sudo` on a managed host.
 2. The PAM helper calls the identree server and blocks.
 3. The user (or an admin) sees a push notification / browser prompt from their IdP.
-4. They approve. The `sudo` succeeds. They deny. It fails. No password exchanged.
+4. They approve — `sudo` succeeds. They deny — `sudo` fails. No password exchanged.
 
 The identree server handles the OIDC challenge flow. The PAM helper is a small binary that blocks until it gets a result.
 
