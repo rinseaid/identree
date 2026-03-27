@@ -186,6 +186,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"Initial":             strings.ToUpper(username[:1]),
 		"Avatar":              getAvatar(r),
 		"Timezone":            adminTZ,
+		"Flashes":             []string(nil),
 		"ActivePage":          "admin",
 		"AdminTab":            "info",
 		"BridgeMode":          s.isBridgeMode(),
@@ -410,6 +411,10 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 	s.setSessionCookie(w, username, s.getSessionRole(r))
 	if s.getSessionRole(r) != "admin" {
 		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
+		return
+	}
+	if s.isBridgeMode() {
+		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/sudo-rules", http.StatusSeeOther)
 		return
 	}
 

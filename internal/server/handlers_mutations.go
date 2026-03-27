@@ -274,7 +274,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect back to the referring page with flash cookie
 	dest := r.FormValue("from")
-	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") {
+	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
 	}
 	setFlashCookie(w, fmt.Sprintf("revoked:%s:%s", displayHostname, sessionOwner))
@@ -373,7 +373,7 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 	}
 	setFlashCookie(w, fmt.Sprintf("revoked_all:%d", count))
 	dest := r.FormValue("from")
-	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") {
+	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
 	}
 	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+dest, http.StatusSeeOther)
@@ -424,7 +424,7 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 	s.broadcastSSE(username, "session_changed")
 
 	dest := r.FormValue("from")
-	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") {
+	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
 	}
 	expiry := time.Now().Add(remaining)
@@ -467,7 +467,7 @@ func (s *Server) handleExtendAll(w http.ResponseWriter, r *http.Request) {
 	expiry := time.Now().Add(s.cfg.GracePeriod)
 	setFlashCookie(w, fmt.Sprintf("extended_all:%d:%d", count, expiry.Unix()))
 	dest := r.FormValue("from")
-	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") {
+	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
 	}
 	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+dest, http.StatusSeeOther)

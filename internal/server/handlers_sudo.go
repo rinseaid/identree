@@ -84,7 +84,7 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 		"Flashes":    flashes,
 		"ActivePage": "admin",
 		"AdminTab":   "sudo-rules",
-		"BridgeMode": true,
+		"BridgeMode": s.isBridgeMode(),
 		"Theme":      getTheme(r),
 		"CSPNonce":   r.Context().Value("csp-nonce"),
 		"T":          t,

@@ -116,12 +116,28 @@ func (m *UIDMap) flushLocked() error {
 	if err != nil {
 		return fmt.Errorf("uidmap: marshal: %w", err)
 	}
-	// Write to a temp file and rename for atomicity
+	// Write to a temp file, sync, and rename for atomicity + durability.
 	tmp := m.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("uidmap: open %s: %w", tmp, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
 		return fmt.Errorf("uidmap: write %s: %w", tmp, err)
 	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("uidmap: sync %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("uidmap: close %s: %w", tmp, err)
+	}
 	if err := os.Rename(tmp, m.path); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("uidmap: rename to %s: %w", m.path, err)
 	}
 	m.dirty = false
