@@ -200,6 +200,26 @@ const sharedCSS = `
       margin: 12px 0 8px;
       letter-spacing: -0.01em;
     }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    h2.app-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+      white-space: nowrap;
+    }
+    h2.app-brand svg {
+      color: var(--primary);
+      flex-shrink: 0;
+    }
     p { margin: 8px 0; color: var(--text-secondary); font-size: 0.938rem; }
     .icon {
       width: 56px;
@@ -282,7 +302,7 @@ type ActionOption struct {
 
 // navCSS is the shared navigation bar styles used across dashboard, history, and hosts pages.
 const navCSS = `
-    .nav { display: flex; gap: 8px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); justify-content: center; align-items: center; flex-wrap: wrap; }
+    .nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .nav a { color: var(--text-secondary); text-decoration: none; font-size: 0.875rem; font-weight: 500; padding: 4px 8px; border-radius: 6px; }
     .nav a:hover { color: var(--text); background: var(--info-bg); }
     .nav a.active { color: var(--primary); font-weight: 700; }
@@ -486,7 +506,7 @@ const dashboardHTML = `<!DOCTYPE html>
 </head>
 <body class="wide">
   <div class="card">
-    <h2>{{call .T "app_name"}}</h2>
+    <header class="topbar"><h2 class="app-brand"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>{{call .T "app_name"}}</h2>
 
     <nav class="nav">
       <a href="/" class="{{if eq .ActivePage "access"}}active{{end}}">{{call .T "access"}}</a>
@@ -520,7 +540,7 @@ const dashboardHTML = `<!DOCTYPE html>
           <a href="/signout" class="profile-dropdown-item" style="color:var(--danger)">{{call .T "sign_out"}}</a>
         </div>
       </div>
-    </nav>
+    </nav></header>
 
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
@@ -825,7 +845,7 @@ const historyPageHTML = `<!DOCTYPE html>
 </head>
 <body class="wide">
   <div class="card">
-    <h2>{{call .T "app_name"}}</h2>
+    <header class="topbar"><h2 class="app-brand"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>{{call .T "app_name"}}</h2>
 
     <nav class="nav">
       <a href="/" class="{{if eq .ActivePage "access"}}active{{end}}">{{call .T "access"}}</a>
@@ -859,7 +879,7 @@ const historyPageHTML = `<!DOCTYPE html>
           <a href="/signout" class="profile-dropdown-item" style="color:var(--danger)">{{call .T "sign_out"}}</a>
         </div>
       </div>
-    </nav>
+    </nav></header>
 
 
     {{if .Timeline}}
@@ -1374,7 +1394,7 @@ const adminPageHTML = `<!DOCTYPE html>
 </head>
 <body class="wide">
   <div class="card">
-    <h2>{{call .T "app_name"}}</h2>
+    <header class="topbar"><h2 class="app-brand"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>{{call .T "app_name"}}</h2>
 
     <nav class="nav">
       <a href="/" class="{{if eq .ActivePage "access"}}active{{end}}">{{call .T "access"}}</a>
@@ -1408,7 +1428,7 @@ const adminPageHTML = `<!DOCTYPE html>
           <a href="/signout" class="profile-dropdown-item" style="color:var(--danger)">{{call .T "sign_out"}}</a>
         </div>
       </div>
-    </nav>
+    </nav></header>
 
     <div class="admin-tabs">
       <a href="/admin/users" class="{{if eq .AdminTab "users"}}active{{end}}">{{call .T "users"}}</a>

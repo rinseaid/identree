@@ -25,7 +25,8 @@ REPO="rinseaid/identree"
 SERVER_URL="{{.ServerURL}}"
 INSTALL_DIR="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
-CONFIG_FILE="/etc/identree.conf"
+CONFIG_DIR="/etc/identree"
+CONFIG_FILE="/etc/identree/client.conf"
 
 # ── Preflight ───────────────────────────────────────────────────────────────
 
@@ -99,6 +100,9 @@ else
 fi
 
 # ── Config file ─────────────────────────────────────────────────────────────
+
+mkdir -p "$CONFIG_DIR"
+chmod 750 "$CONFIG_DIR"
 
 if [ -f "$CONFIG_FILE" ]; then
     conf_url=$(grep -E '^IDENTREE_SERVER_URL=' "$CONFIG_FILE" | cut -d= -f2- || true)

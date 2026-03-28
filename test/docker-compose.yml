@@ -78,8 +78,8 @@ services:
 
   testclient:
     build:
-      context: .
-      dockerfile: testclient/Dockerfile
+      context: ..
+      dockerfile: test/testclient/Dockerfile
     container_name: identree-test-client
     restart: unless-stopped
     depends_on:
@@ -88,6 +88,8 @@ services:
     environment:
       LDAP_URI: "ldap://identree:3389"
       LDAP_BASE: "dc=test,dc=local"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-123"
     cap_add:
       - NET_ADMIN
     command: ["sleep", "infinity"]
