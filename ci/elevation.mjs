@@ -158,28 +158,20 @@ await dashPage.setViewportSize(BROWSER_VIEWPORT);
 // Dev login as eve (the user who issued sudo)
 await dashPage.goto(`${BASE_URL}/dev/login?user=${USER}&role=user`, { waitUntil: "load" });
 await dashPage.emulateMedia({ colorScheme: "light" });
-// Navigate to dashboard — eve's pending challenge should appear
+// Navigate to dashboard — eve's pending challenge appears in the top bar
 await dashPage.goto(`${BASE_URL}/`, { waitUntil: "load" });
-await dashPage.waitForSelector(".row", { timeout: 8000 }).catch(() => {});
+await dashPage.waitForSelector(".pending-bar", { timeout: 8000 }).catch(() => {});
 await dashPage.waitForTimeout(400);
 await dashPage.screenshot({ path: `${SCREENSHOTS_DIR}/elevation-2.png`, fullPage: false });
 console.log(`  saved ${SCREENSHOTS_DIR}/elevation-2.png`);
 
-// Eve approves her own challenge
-const eveRow = dashPage.locator(".row").filter({
-  has: dashPage.locator(".row-sub", { hasText: USER }),
-}).first();
-
-if (await eveRow.count() > 0) {
-  const approveBtn = eveRow.locator("button.btn-success").first();
-  if (await approveBtn.count() > 0) {
-    await approveBtn.click();
-    console.log("  clicked Approve for", USER);
-  } else {
-    console.warn("  Approve button not found in eve's row");
-  }
+// Eve approves her own challenge via the pending bar
+const approveBtn = dashPage.locator(".pbar-actions button.btn-success").first();
+if (await approveBtn.count() > 0) {
+  await approveBtn.click();
+  console.log("  clicked Approve for", USER);
 } else {
-  console.warn("  eve's challenge row not found — challenge may have expired");
+  console.warn("  Approve button not found in pending bar — challenge may have expired");
 }
 
 await dashPage.close();
