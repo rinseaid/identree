@@ -165,18 +165,9 @@ await dashPage.waitForTimeout(400);
 await dashPage.screenshot({ path: `${SCREENSHOTS_DIR}/elevation-2.png`, fullPage: false });
 console.log(`  saved ${SCREENSHOTS_DIR}/elevation-2.png`);
 
-await dashPage.close();
-await ctx2.close();
-
-// Approve as admin in a separate context
-const ctx2admin = await browser.newContext({ viewport: BROWSER_VIEWPORT });
-const adminPage = await ctx2admin.newPage();
-await adminPage.goto(`${BASE_URL}/dev/login?user=testadmin&role=admin`, { waitUntil: "load" });
-await adminPage.goto(`${BASE_URL}/`, { waitUntil: "load" });
-await adminPage.waitForSelector(".row", { timeout: 8000 }).catch(() => {});
-
-const eveRow = adminPage.locator(".row").filter({
-  has: adminPage.locator(".row-sub", { hasText: USER }),
+// Eve approves her own challenge
+const eveRow = dashPage.locator(".row").filter({
+  has: dashPage.locator(".row-sub", { hasText: USER }),
 }).first();
 
 if (await eveRow.count() > 0) {
@@ -191,8 +182,8 @@ if (await eveRow.count() > 0) {
   console.warn("  eve's challenge row not found — challenge may have expired");
 }
 
-await adminPage.close();
-await ctx2admin.close();
+await dashPage.close();
+await ctx2.close();
 
 // ── Wait for PAM process to finish ───────────────────────────────────────────
 
