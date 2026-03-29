@@ -12,7 +12,6 @@ var templateFuncMap = template.FuncMap{
 	"formatDuration": formatDuration,
 	"timeAgo":        timeAgo,
 	"formatTime":     formatTime,
-	"eq":             func(a, b string) bool { return a == b },
 	"eqInt":          func(a, b int) bool { return a == b },
 	"add":            func(a, b int) int { return a + b },
 	"sub":            func(a, b int) int { return a - b },
