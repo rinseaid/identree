@@ -108,7 +108,7 @@ Open `https://identree.example.com` and log in with your PocketID account. You s
 
 ### Step 5 — Install on a managed host
 
-From the identree admin UI, go to **Hosts** and click **Install** next to any registered host, or run the one-liner on the host:
+On each host you want to manage, run:
 
 ```sh
 curl -fsSL https://identree.example.com/install.sh | sudo bash
@@ -119,6 +119,8 @@ The installer:
 - Writes `/etc/identree/client.conf` with the server URL and shared secret
 - Configures `/etc/pam.d/sudo` to use the PAM helper
 - Generates and stores a break-glass password locally
+
+Once installed, the host appears in the identree admin UI under **Hosts**. From there you can rotate break-glass passwords, view per-host sessions, and remove hosts.
 
 ### Step 6 — Register a passkey and try it
 
