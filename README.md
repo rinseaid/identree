@@ -119,16 +119,45 @@ IDENTREE_SHARED_SECRET=change-me-use-a-strong-secret
 auth required pam_exec.so stdout /usr/local/bin/identree
 ```
 
-### nslcd (`/etc/nslcd.conf`)
+### sssd (`/etc/sssd/sssd.conf`)
+
+```ini
+[sssd]
+services = nss, pam, sudo
+config_file_version = 2
+domains = LDAP
+
+[domain/LDAP]
+id_provider    = ldap
+auth_provider  = none
+sudo_provider  = ldap
+
+ldap_uri        = ldap://identree.example.com:389
+ldap_search_base           = dc=example,dc=com
+ldap_user_search_base      = ou=people,dc=example,dc=com
+ldap_group_search_base     = ou=groups,dc=example,dc=com
+ldap_sudo_search_base      = ou=sudoers,dc=example,dc=com
+
+ldap_schema           = rfc2307
+ldap_id_use_start_tls = false
+enumerate             = true
+
+# Don't cache credentials — identree handles auth.
+cache_credentials        = false
+entry_cache_timeout      = 60
+ldap_sudo_full_refresh_interval  = 60
+```
 
 ```
-uid nslcd
-gid nslcd
-uri ldap://identree.example.com:389
-base dc=example,dc=com
-base passwd ou=people,dc=example,dc=com
-base group  ou=groups,dc=example,dc=com
-base sudoers ou=sudoers,dc=example,dc=com
+# chmod 600 /etc/sssd/sssd.conf
+```
+
+Also ensure `/etc/nsswitch.conf` includes `sss`:
+
+```
+passwd:  files sss
+group:   files sss
+sudoers: files sss
 ```
 
 ---
