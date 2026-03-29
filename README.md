@@ -157,7 +157,7 @@ The dashboard at `https://identree.example.com` provides:
 
 The **Configuration** page (`/admin/config`) lets you change most settings without restarting. Secrets (shared secret, API keys, tokens) are env-only and cannot be written from the UI.
 
-<!-- hero screenshot committed by CI on each push: docs/screenshots/hero.png -->
+![UI overview — light/dark split composites](docs/screenshots/hero.png)
 
 ---
 
