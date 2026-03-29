@@ -82,34 +82,40 @@ var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
 var validHostname = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,253}$`)
 
 func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error) {
-	discoveryClient := &http.Client{
-		Timeout: oidcDiscoveryTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), oidcDiscoveryTimeout)
-	defer cancel()
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, discoveryClient)
+	var oidcConfig oauth2.Config
+	var verifier *oidc.IDTokenVerifier
 
-	// When IssuerPublicURL is set, PocketID's APP_URL (and thus OIDC issuer) is
-	// the public hostname (e.g. localhost) while IssuerURL is the internal Docker
-	// hostname used for network reachability. Tell go-oidc to accept the public
-	// issuer in tokens while still fetching discovery from the internal URL.
-	if cfg.IssuerPublicURL != "" {
-		ctx = oidc.InsecureIssuerURLContext(ctx, cfg.IssuerPublicURL)
-	}
-	provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
-	if err != nil {
-		return nil, fmt.Errorf("OIDC discovery: %w", err)
-	}
+	if !cfg.DevLoginEnabled {
+		discoveryClient := &http.Client{
+			Timeout: oidcDiscoveryTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), oidcDiscoveryTimeout)
+		defer cancel()
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, discoveryClient)
 
-	oidcConfig := oauth2.Config{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		Endpoint:     provider.Endpoint(),
-		RedirectURL:  strings.TrimRight(cfg.ExternalURL, "/") + "/callback",
-		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups"},
+		// When IssuerPublicURL is set, PocketID's APP_URL (and thus OIDC issuer) is
+		// the public hostname (e.g. localhost) while IssuerURL is the internal Docker
+		// hostname used for network reachability. Tell go-oidc to accept the public
+		// issuer in tokens while still fetching discovery from the internal URL.
+		if cfg.IssuerPublicURL != "" {
+			ctx = oidc.InsecureIssuerURLContext(ctx, cfg.IssuerPublicURL)
+		}
+		provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
+		if err != nil {
+			return nil, fmt.Errorf("OIDC discovery: %w", err)
+		}
+
+		oidcConfig = oauth2.Config{
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.ClientSecret,
+			Endpoint:     provider.Endpoint(),
+			RedirectURL:  strings.TrimRight(cfg.ExternalURL, "/") + "/callback",
+			Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups"},
+		}
+		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	}
 
 	s := &Server{
@@ -118,7 +124,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		store:         challenge.NewChallengeStore(cfg.ChallengeTTL, cfg.GracePeriod, cfg.SessionStateFile),
 		hostRegistry:  NewHostRegistry(cfg.HostRegistryFile),
 		oidcConfig:    oidcConfig,
-		verifier:      provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		verifier:      verifier,
 		mux:           http.NewServeMux(),
 		sessionNonces: make(map[string]time.Time),
 		sseClients:    make(map[string][]chan string),

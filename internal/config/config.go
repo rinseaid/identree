@@ -351,13 +351,13 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 
 	// Validate required fields
-	if cfg.IssuerURL == "" {
+	if cfg.IssuerURL == "" && !cfg.DevLoginEnabled {
 		return nil, fmt.Errorf("IDENTREE_OIDC_ISSUER_URL is required")
 	}
-	if cfg.ClientID == "" {
+	if cfg.ClientID == "" && !cfg.DevLoginEnabled {
 		return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_ID is required")
 	}
-	if cfg.ClientSecret == "" {
+	if cfg.ClientSecret == "" && !cfg.DevLoginEnabled {
 		return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_SECRET is required")
 	}
 	if cfg.SharedSecret == "" {
