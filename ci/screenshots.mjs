@@ -16,7 +16,6 @@ import { mkdir } from "fs/promises";
 import { existsSync } from "fs";
 
 const BASE_URL = process.env.IDENTREE_URL || "http://localhost:8090";
-const SHARED_SECRET = "test-shared-secret-123";
 const SCREENSHOTS_DIR = "./screenshots";
 const VIEWPORT = { width: 1440, height: 900 };
 
@@ -189,31 +188,6 @@ await screenshot(context, "admin-info", async (page) => {
 console.log("Admin config...");
 await screenshot(context, "admin-config", async (page) => {
   await page.goto(`${BASE_URL}/admin/config`, { waitUntil: "load" });
-});
-
-// ── 9. Approval page ───────────────────────────────────────────────────────────
-// Create the challenge immediately before navigating so it doesn't expire
-// (challenge TTL is 120 s; earlier screenshots can take longer than that).
-
-console.log("Approval page...");
-await screenshot(context, "approval", async (page) => {
-  let approvalURL = null;
-  try {
-    const resp = await fetch(`${BASE_URL}/api/challenge`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shared-Secret": SHARED_SECRET,
-      },
-      body: JSON.stringify({ username: "eve", hostname: "prod-web-01" }),
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      approvalURL = data.verification_url || null;
-    }
-  } catch { /* non-fatal */ }
-  const target = approvalURL || `${BASE_URL}/`;
-  await page.goto(target, { waitUntil: "load" });
 });
 
 // ── Cleanup ────────────────────────────────────────────────────────────────────
