@@ -12,10 +12,11 @@
  */
 
 import { chromium } from "@playwright/test";
-import { mkdir } from "fs/promises";
+import { mkdir, readFile } from "fs/promises";
 import { existsSync } from "fs";
 
 const BASE_URL = process.env.IDENTREE_URL || "http://localhost:8090";
+const SHARED_SECRET = "test-shared-secret-123";
 const SCREENSHOTS_DIR = "./screenshots";
 const VIEWPORT = { width: 1440, height: 900 };
 
@@ -30,13 +31,11 @@ const browser = await chromium.launch({ headless: true });
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /**
- * Create a new page, set viewport, and log in via the dev login endpoint.
- * Returns the page object with a valid session cookie.
+ * Create a new page with a valid admin session cookie via the dev login endpoint.
  */
 async function loginPage(context, user = "testadmin", role = "admin") {
   const page = await context.newPage();
   await page.setViewportSize(VIEWPORT);
-  // Dev login sets a session cookie and redirects to /
   await page.goto(`${BASE_URL}/dev/login?user=${user}&role=${role}`, {
     waitUntil: "load",
   });
@@ -44,25 +43,16 @@ async function loginPage(context, user = "testadmin", role = "admin") {
 }
 
 /**
- * Take a screenshot in both light and dark modes and save to SCREENSHOTS_DIR.
- * `name` is the filename stem (e.g. "dashboard").
- * `captureFn` receives the page and mode string ("light"|"dark") and should
- * navigate / interact before resolving — the screenshot is taken on return.
+ * Take a screenshot in both light and dark modes.
+ * `captureFn` receives the page and should navigate/interact before returning.
  */
 async function screenshot(context, name, captureFn) {
   for (const mode of ["light", "dark"]) {
     const page = await loginPage(context);
     try {
-      // Apply color scheme before navigation so CSS media query fires correctly.
-      await page.emulateMedia({
-        colorScheme: mode === "dark" ? "dark" : "light",
-      });
-
+      await page.emulateMedia({ colorScheme: mode === "dark" ? "dark" : "light" });
       await captureFn(page, mode);
-
-      // Short pause to let any animations settle.
-      await page.waitForTimeout(300);
-
+      await page.waitForTimeout(400);
       const dest = `${SCREENSHOTS_DIR}/${name}-${mode}.png`;
       await page.screenshot({ path: dest, fullPage: false });
       console.log(`  saved ${dest}`);
@@ -72,22 +62,20 @@ async function screenshot(context, name, captureFn) {
   }
 }
 
-// ── Wait for identree to be ready ─────────────────────────────────────────────
+// ── Wait for identree ──────────────────────────────────────────────────────────
 
 console.log("Waiting for identree...");
 {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  for (let attempt = 0; attempt < 30; attempt++) {
+  for (let i = 0; i < 30; i++) {
     try {
       const resp = await page.goto(`${BASE_URL}/healthz`, {
         timeout: 5000,
         waitUntil: "domcontentloaded",
       });
       if (resp && resp.ok()) break;
-    } catch {
-      // not up yet
-    }
+    } catch { /* not up yet */ }
     await page.waitForTimeout(2000);
   }
   await page.close();
@@ -95,184 +83,173 @@ console.log("Waiting for identree...");
 }
 console.log("identree ready.\n");
 
-// ── Open a single persistent browser context ──────────────────────────────────
+// ── Create a fresh pending challenge for the approval page screenshot ──────────
 
-const context = await browser.newContext({
-  viewport: VIEWPORT,
-  // Accept all redirects; don't store credentials between pages.
-});
+let approvalChallengeID = null;
+try {
+  const resp = await fetch(`${BASE_URL}/api/challenge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shared-Secret": SHARED_SECRET,
+    },
+    body: JSON.stringify({ username: "eve", hostname: "prod-web-01" }),
+  });
+  if (resp.ok) {
+    const data = await resp.json();
+    approvalChallengeID = data.challenge_id;
+    console.log(`Created approval challenge: ${approvalChallengeID}\n`);
+  }
+} catch { /* non-fatal */ }
 
-// ── 1. Dashboard ──────────────────────────────────────────────────────────────
+// ── Open browser context ───────────────────────────────────────────────────────
 
-console.log("Dashboard...");
+const context = await browser.newContext({ viewport: VIEWPORT });
+
+// ── 1. Dashboard — pending challenges ─────────────────────────────────────────
+
+console.log("Dashboard (pending challenges)...");
 await screenshot(context, "dashboard", async (page) => {
   await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
+  // Wait for the pending challenges list to appear
+  await page.waitForSelector(".list, .row, [class*='pending'], [class*='challenge']", {
+    timeout: 5000,
+  }).catch(() => {});
 });
 
-// ── 2. Sessions page ──────────────────────────────────────────────────────────
+// ── 2. Sessions ────────────────────────────────────────────────────────────────
 
 console.log("Sessions...");
 await screenshot(context, "sessions", async (page) => {
   await page.goto(`${BASE_URL}/sessions`, { waitUntil: "load" });
+  await page.waitForSelector(".sessions-table, .gtcol, table", {
+    timeout: 5000,
+  }).catch(() => {});
 });
 
-// ── 3. Access page ────────────────────────────────────────────────────────────
+// ── 3. Access ──────────────────────────────────────────────────────────────────
 
 console.log("Access...");
 await screenshot(context, "access", async (page) => {
   await page.goto(`${BASE_URL}/access`, { waitUntil: "load" });
 });
 
-// ── 4. History page ───────────────────────────────────────────────────────────
+// ── 4. History ─────────────────────────────────────────────────────────────────
 
-console.log("History (default)...");
+console.log("History...");
 await screenshot(context, "history", async (page) => {
   await page.goto(`${BASE_URL}/history`, { waitUntil: "load" });
 });
 
-console.log("History (with filters)...");
+console.log("History (filters open)...");
 await screenshot(context, "history-filtered", async (page) => {
   await page.goto(`${BASE_URL}/history`, { waitUntil: "load" });
-  // Type into filter boxes if they exist
-  const userFilter = page.locator('input[name="user"], input[placeholder*="user" i]').first();
-  if (await userFilter.count() > 0) {
-    await userFilter.fill("alice");
+  // Fill any visible filter inputs
+  const inputs = await page.locator("input[type='text'], input[type='search']").all();
+  if (inputs.length > 0) {
+    await inputs[0].fill("alice");
     await page.waitForTimeout(400);
   }
-  const hostFilter = page.locator('input[name="host"], input[placeholder*="host" i]').first();
-  if (await hostFilter.count() > 0) {
-    await hostFilter.fill("prod");
+  if (inputs.length > 1) {
+    await inputs[1].fill("prod");
     await page.waitForTimeout(400);
   }
 });
 
-// ── 5. Hosts page ─────────────────────────────────────────────────────────────
+// ── 5. Hosts ───────────────────────────────────────────────────────────────────
 
 console.log("Hosts...");
 await screenshot(context, "hosts", async (page) => {
   await page.goto(`${BASE_URL}/admin/hosts`, { waitUntil: "load" });
 });
 
-// ── 6. Users page ─────────────────────────────────────────────────────────────
+// ── 6. Users ───────────────────────────────────────────────────────────────────
 
 console.log("Users...");
 await screenshot(context, "users", async (page) => {
   await page.goto(`${BASE_URL}/admin/users`, { waitUntil: "load" });
+  // Wait for user rows to render
+  await page.waitForSelector(".users-table-row, tr, [class*='user-row']", {
+    timeout: 5000,
+  }).catch(() => {});
 });
 
-console.log("Users (SSH key claims expanded)...");
+console.log("Users (claims expanded)...");
 await screenshot(context, "users-expanded", async (page) => {
   await page.goto(`${BASE_URL}/admin/users`, { waitUntil: "load" });
-  // Try to open the first user's claims detail row or expand button
-  const expandBtn = page
-    .locator(
-      'button[aria-label*="claim" i], button[aria-label*="expand" i], details > summary, .expand-claims, [data-action="expand"]'
-    )
-    .first();
-  if (await expandBtn.count() > 0) {
-    await expandBtn.click();
-    await page.waitForTimeout(400);
-  }
-  // Also try clicking on alice's row if visible
-  const aliceRow = page.locator("tr, .user-row, li").filter({ hasText: "alice" }).first();
-  if (await aliceRow.count() > 0) {
-    const aliceToggle = aliceRow.locator("button, summary").first();
-    if (await aliceToggle.count() > 0) {
-      await aliceToggle.click();
-      await page.waitForTimeout(400);
-    }
+  await page.waitForSelector(".ssh-keys-toggle, [data-claims-target]", {
+    timeout: 5000,
+  }).catch(() => {});
+  // Click the toggle for the first user that has claims (alice has SSH keys)
+  const toggles = await page.locator(".ssh-keys-toggle, [data-claims-target]").all();
+  if (toggles.length > 0) {
+    await toggles[0].click();
+    await page.waitForTimeout(500);
+    // Scroll to ensure the expanded panel is visible
+    const panel = page.locator(".user-claims-panel, [id^='uclaims-']").first();
+    if (await panel.count() > 0) await panel.scrollIntoViewIfNeeded();
   }
 });
 
-// ── 7. Groups page ────────────────────────────────────────────────────────────
+// ── 7. Groups ──────────────────────────────────────────────────────────────────
 
 console.log("Groups...");
 await screenshot(context, "groups", async (page) => {
   await page.goto(`${BASE_URL}/admin/groups`, { waitUntil: "load" });
+  await page.waitForSelector(".groups-table-row, [id^='group-']", {
+    timeout: 5000,
+  }).catch(() => {});
 });
 
-console.log("Groups (developers expanded)...");
+console.log("Groups (sudo claims expanded)...");
 await screenshot(context, "groups-expanded", async (page) => {
   await page.goto(`${BASE_URL}/admin/groups`, { waitUntil: "load" });
-  // Expand the developers group to show its custom claims
-  const devRow = page
-    .locator("tr, .group-row, li, details")
-    .filter({ hasText: "developers" })
-    .first();
-  if (await devRow.count() > 0) {
-    const toggle = devRow.locator("button, summary").first();
-    if (await toggle.count() > 0) {
-      await toggle.click();
-      await page.waitForTimeout(500);
-    } else {
-      // The row itself may be clickable
-      await devRow.click();
-      await page.waitForTimeout(500);
-    }
-  } else {
-    // Fallback: try expanding any first expand button
-    const anyExpand = page
-      .locator("button[aria-expanded], details > summary, .toggle-claims")
-      .first();
-    if (await anyExpand.count() > 0) {
-      await anyExpand.click();
-      await page.waitForTimeout(500);
-    }
+  await page.waitForSelector(".claims-toggle-btn, [data-claims-target]", {
+    timeout: 5000,
+  }).catch(() => {});
+  // Click the toggle for the developers group (has rich sudo claims)
+  const devGroup = page.locator("[id='group-developers']").first();
+  const toggleBtn = devGroup.count() > 0
+    ? devGroup.locator(".claims-toggle-btn").first()
+    : page.locator(".claims-toggle-btn").first();
+  if (await toggleBtn.count() > 0) {
+    await toggleBtn.click();
+    await page.waitForTimeout(500);
+    // Scroll to show the expanded panel
+    const panel = page.locator(".claims-panel.visible, [id^='gclaims-']").first();
+    if (await panel.count() > 0) await panel.scrollIntoViewIfNeeded();
   }
 });
 
-// ── 8. Admin info page ────────────────────────────────────────────────────────
+// ── 8. Admin info ──────────────────────────────────────────────────────────────
 
 console.log("Admin info...");
 await screenshot(context, "admin-info", async (page) => {
   await page.goto(`${BASE_URL}/admin/info`, { waitUntil: "load" });
 });
 
-// ── 9. Admin config page ──────────────────────────────────────────────────────
+// ── 9. Admin config ────────────────────────────────────────────────────────────
 
-console.log("Admin config (top)...");
+console.log("Admin config...");
 await screenshot(context, "admin-config", async (page) => {
   await page.goto(`${BASE_URL}/admin/config`, { waitUntil: "load" });
 });
 
-console.log("Admin config (LDAP section)...");
-await screenshot(context, "admin-config-ldap", async (page) => {
-  await page.goto(`${BASE_URL}/admin/config`, { waitUntil: "load" });
-  // Scroll to the LDAP section
-  const ldapSection = page
-    .locator(
-      'section, fieldset, [id*="ldap" i], [class*="ldap" i], h2, h3'
-    )
-    .filter({ hasText: /ldap/i })
-    .first();
-  if (await ldapSection.count() > 0) {
-    await ldapSection.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(300);
+// ── 10. Approval page ──────────────────────────────────────────────────────────
+
+console.log("Approval page...");
+await screenshot(context, "approval", async (page) => {
+  if (approvalChallengeID) {
+    await page.goto(`${BASE_URL}/approve/${approvalChallengeID}`, {
+      waitUntil: "load",
+    });
   } else {
-    await page.evaluate(() => window.scrollBy(0, 600));
-    await page.waitForTimeout(300);
+    // Fallback: navigate to root showing pending challenges
+    await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
   }
 });
 
-// ── 10. Approval / challenge page ─────────────────────────────────────────────
-
-console.log("Approval page (generic state)...");
-await screenshot(context, "approval", async (page) => {
-  // Navigate to /approve/ with a fake token — we expect a "not found" or
-  // "expired" state page, which is still a meaningful screenshot.
-  await page.goto(`${BASE_URL}/approve/ci-screenshot-placeholder`, {
-    waitUntil: "domcontentloaded",
-  });
-});
-
-// ── 11. Sudo rules page ───────────────────────────────────────────────────────
-
-console.log("Sudo rules...");
-await screenshot(context, "sudo-rules", async (page) => {
-  await page.goto(`${BASE_URL}/admin/sudo-rules`, { waitUntil: "load" });
-});
-
-// ── Cleanup ───────────────────────────────────────────────────────────────────
+// ── Cleanup ────────────────────────────────────────────────────────────────────
 
 await context.close();
 await browser.close();

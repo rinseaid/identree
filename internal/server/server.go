@@ -260,6 +260,7 @@ func (s *Server) registerRoutes() {
 	// Dev login bypass (IDENTREE_DEV_LOGIN=true only — never for production).
 	if s.cfg.DevLoginEnabled {
 		s.mux.HandleFunc("/dev/login", s.handleDevLogin)
+		s.mux.HandleFunc("/dev/seed-session", s.handleDevSeedSession)
 	}
 
 	// Dashboard is the catch-all — must be registered last.

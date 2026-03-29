@@ -336,8 +336,55 @@ curl -sf -X POST "${IDENTREE_URL}/api/webhook/pocketid" \
 echo "    Waiting 15s for LDAP refresh cycle..."
 sleep 15
 
+# ── Seed approved sessions ──────────────────────────────────────────────────────
+
+echo "==> Creating approved sessions..."
+
+seed_session() {
+    local username="$1"
+    local hostname="$2"
+    curl -sf -X POST "${IDENTREE_URL}/dev/seed-session" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${username}\",\"hostname\":\"${hostname}\"}" >/dev/null
+}
+
+seed_session "alice"   "prod-web-01"
+seed_session "alice"   "prod-web-02"
+seed_session "bob"     "prod-db-01"
+seed_session "carol"   "staging-01"
+seed_session "grace"   "prod-lb-01"
+seed_session "grace"   "prod-web-01"
+seed_session "heidi"   "prod-db-01"
+seed_session "ivan"    "prod-web-02"
+seed_session "dave"    "staging-02"
+seed_session "neil"    "prod-web-01"
+seed_session "olivia"  "prod-db-01"
+seed_session "frank"   "staging-01"
+
+echo "    12 approved sessions created."
+
+# ── Seed pending challenges ─────────────────────────────────────────────────────
+
+echo "==> Creating pending challenges..."
+
+create_challenge() {
+    local username="$1"
+    local hostname="$2"
+    curl -sf -X POST "${IDENTREE_URL}/api/challenge" \
+        -H "Content-Type: application/json" \
+        -H "X-Shared-Secret: test-shared-secret-123" \
+        -d "{\"username\":\"${username}\",\"hostname\":\"${hostname}\"}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('challenge_id',''))" 2>/dev/null || true
+}
+
+PENDING_1=$(create_challenge "kate"   "data-worker-01")
+PENDING_2=$(create_challenge "liam"   "prod-web-01")
+PENDING_3=$(create_challenge "maya"   "staging-01")
+export CI_PENDING_CHALLENGE_1="$PENDING_1"
+
+echo "    Pending challenge IDs: ${PENDING_1} ${PENDING_2} ${PENDING_3}"
+echo "    CI_PENDING_CHALLENGE_1=${PENDING_1}" > /tmp/identree-ci-env.sh
+
 echo ""
 echo "==> Seed complete."
-echo "    PocketID users and groups created."
-echo "    identree should now reflect the directory via LDAP."
+echo "    PocketID users/groups, 12 approved sessions, and 3 pending challenges created."
 echo ""

@@ -67,6 +67,26 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+// handleDevSeedSession creates a grace session directly for testing.
+// Only registered when IDENTREE_DEV_LOGIN=true. Never use in production.
+// POST /dev/seed-session  body: {"username":"alice","hostname":"prod-web-01"}
+func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Hostname string `json:"hostname"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	s.store.CreateGraceSession(req.Username, req.Hostname, s.cfg.GracePeriod)
+	w.WriteHeader(http.StatusCreated)
+}
+
 // handleDashboard renders the main dashboard page.
 // GET /
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
