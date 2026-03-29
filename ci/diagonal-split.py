@@ -6,7 +6,9 @@ For each pair of light/dark screenshots in ./screenshots/, produces a diagonal
 split composite saved as ./screenshots/{page}-split.png.
 
 The split runs from top-left to bottom-right (45-degree line).
-Light mode occupies the left side; dark mode the right side.
+
+Regular splits: dark at top-right, light at bottom-left.
+Expanded splits (*-expanded-*): dark at bottom-left, light at top-right.
 
 Requirements: Pillow (pip install Pillow)
 """
@@ -20,26 +22,34 @@ SCREENSHOTS_DIR = Path("./screenshots")
 SSAA = 4  # supersampling factor for anti-aliased diagonal edge
 
 
-def diagonal_split(light_img: Image.Image, dark_img: Image.Image) -> Image.Image:
+def diagonal_split(light_img: Image.Image, dark_img: Image.Image,
+                   dark_at_top: bool = True) -> Image.Image:
     """
     Combine two same-size images along a top-left → bottom-right diagonal.
 
-    Light occupies the left/lower-left; dark occupies the right/upper-right.
+    dark_at_top=True  (regular):  dark in upper-right, light in lower-left.
+    dark_at_top=False (expanded): light in upper-right, dark in lower-left.
+
     The mask is rendered at SSAA× resolution and downsampled for a smooth edge.
     """
     if light_img.size != dark_img.size:
         dark_img = dark_img.resize(light_img.size, Image.LANCZOS)
 
     w, h = light_img.size
-
-    # Build mask at higher resolution, then downsample for anti-aliasing.
-    # Diagonal runs top-left → bottom-right (\).
-    # Light occupies the lower-left triangle (left side of image);
-    # dark occupies the upper-right triangle (right side of image).
     sw, sh = w * SSAA, h * SSAA
+
     hi_mask = Image.new("L", (sw, sh), 0)
     draw = ImageDraw.Draw(hi_mask)
-    draw.polygon([(0, 0), (0, sh), (sw, sh)], fill=255)
+
+    if dark_at_top:
+        # Light in upper-right triangle (top-left, top-right, bottom-right).
+        # Dark fills the lower-left triangle.
+        draw.polygon([(0, 0), (sw, 0), (sw, sh)], fill=255)
+    else:
+        # Light in lower-left triangle (top-left, bottom-left, bottom-right).
+        # Dark fills the upper-right triangle.
+        draw.polygon([(0, 0), (0, sh), (sw, sh)], fill=255)
+
     mask = hi_mask.resize((w, h), Image.LANCZOS)
 
     # Composite: start with dark, paste light over it using the smooth mask.
@@ -71,11 +81,16 @@ def main() -> None:
             print(f"  skip  {stem}: no matching dark screenshot", file=sys.stderr)
             continue
 
-        print(f"  split {stem}")
+        # Expanded screenshots flip the diagonal so the expanded panel
+        # (lower portion) shows dark mode, header shows light.
+        is_expanded = "-expanded-" in stem
+        dark_at_top = not is_expanded
+
+        print(f"  split {stem}  (dark_at_top={dark_at_top})")
         light_img = Image.open(light_path)
         dark_img = Image.open(dark_path)
 
-        composite = diagonal_split(light_img, dark_img)
+        composite = diagonal_split(light_img, dark_img, dark_at_top=dark_at_top)
 
         out_path = SCREENSHOTS_DIR / f"{stem}-split.png"
         composite.save(out_path, optimize=True)

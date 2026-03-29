@@ -190,6 +190,17 @@ await screenshot(context, "admin-config", async (page) => {
   await page.goto(`${BASE_URL}/admin/config`, { waitUntil: "load" });
 });
 
+// ── 9. Profile popup (sidebar lower-left) ──────────────────────────────────────
+
+console.log("Profile popup...");
+await screenshot(context, "profile", async (page) => {
+  await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
+  // Click the user button to open the profile dropdown
+  const userBtn = page.locator(".user-btn").first();
+  await userBtn.click();
+  await page.waitForTimeout(300);
+});
+
 // ── Cleanup ────────────────────────────────────────────────────────────────────
 
 await context.close();
