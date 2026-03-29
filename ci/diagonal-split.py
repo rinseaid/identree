@@ -19,11 +19,12 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 SCREENSHOTS_DIR = Path("./screenshots")
-SPLIT_LINE_COLOR = (255, 255, 255, 220)   # semi-transparent white
-SPLIT_LINE_WIDTH = 2
 HERO_COLS = 3
 HERO_PADDING = 8
 HERO_BG = (18, 18, 28)                    # dark background for hero
+
+
+SSAA = 4  # supersampling factor for anti-aliased diagonal edge
 
 
 def diagonal_split(light_img: Image.Image, dark_img: Image.Image) -> Image.Image:
@@ -31,34 +32,25 @@ def diagonal_split(light_img: Image.Image, dark_img: Image.Image) -> Image.Image
     Combine two same-size images along a top-left → bottom-right diagonal.
 
     The upper-left triangle comes from light_img; the lower-right from dark_img.
-    A 2 px white line marks the boundary.
+    The mask is rendered at SSAA× resolution and downsampled for a smooth edge.
     """
     if light_img.size != dark_img.size:
         dark_img = dark_img.resize(light_img.size, Image.LANCZOS)
 
     w, h = light_img.size
 
-    # Convert to RGBA so we can use alpha masks.
+    # Build mask at higher resolution, then downsample for anti-aliasing.
+    sw, sh = w * SSAA, h * SSAA
+    hi_mask = Image.new("L", (sw, sh), 0)
+    draw = ImageDraw.Draw(hi_mask)
+    draw.polygon([(0, 0), (sw, 0), (0, sh)], fill=255)
+    mask = hi_mask.resize((w, h), Image.LANCZOS)
+
+    # Composite: start with dark, paste light over it using the smooth mask.
     light = light_img.convert("RGBA")
     dark = dark_img.convert("RGBA")
-
-    # Build a mask: white = show light, black = show dark.
-    # The diagonal runs from (0, 0) to (w, h).
-    # Pixels above/left of the diagonal: show light.
-    # Pixels below/right: show dark.
-    mask = Image.new("L", (w, h), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.polygon([(0, 0), (w, 0), (0, h)], fill=255)
-
-    # Composite: start with dark, paste light over it using the mask.
     result = dark.copy()
     result.paste(light, mask=mask)
-
-    # Draw the diagonal split line.
-    line_draw = ImageDraw.Draw(result)
-    # Draw SPLIT_LINE_WIDTH lines offset from the main diagonal for thickness.
-    for offset in range(-SPLIT_LINE_WIDTH // 2, SPLIT_LINE_WIDTH // 2 + 1):
-        line_draw.line([(0, offset), (w, h + offset)], fill=SPLIT_LINE_COLOR, width=1)
 
     return result.convert("RGB")
 
@@ -73,11 +65,23 @@ def make_hero(splits: list[tuple[str, Image.Image]]) -> Image.Image:
 
     from PIL import ImageFont
 
-    # Use default bitmap font — no external dependency.
-    try:
-        font = ImageFont.load_default(size=13)
-    except TypeError:
-        font = ImageFont.load_default()
+    _FONT_CANDIDATES = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+    ]
+    font = None
+    for _path in _FONT_CANDIDATES:
+        try:
+            font = ImageFont.truetype(_path, 13)
+            break
+        except (OSError, IOError):
+            continue
+    if font is None:
+        try:
+            font = ImageFont.load_default(size=13)
+        except TypeError:
+            font = ImageFont.load_default()
 
     cell_w, cell_h = splits[0][1].size
     label_h = 22
