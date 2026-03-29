@@ -18,8 +18,8 @@ func TestTranslationsLoaded(t *testing.T) {
 func TestTFallbackToEnglish(t *testing.T) {
 	tr := T("xx") // unsupported language
 	got := tr("app_name")
-	if got != "pam-pocketid" {
-		t.Errorf("T('xx')('app_name') = %q, want %q", got, "pam-pocketid")
+	if got != "identree" {
+		t.Errorf("T('xx')('app_name') = %q, want %q", got, "identree")
 	}
 }
 

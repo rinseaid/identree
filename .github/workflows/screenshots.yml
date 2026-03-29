@@ -1,0 +1,82 @@
+name: Screenshots
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build Docker image
+        run: docker build -t identree:test .
+
+      - name: Start services
+        run: |
+          docker compose -f test/docker-compose.yml up -d pocketid identree
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ci
+
+      - name: Wait for PocketID to be healthy
+        run: |
+          echo "Waiting for PocketID..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:1411/healthz >/dev/null 2>&1; then
+              echo "PocketID ready."
+              break
+            fi
+            echo "  attempt $i/30..."
+            sleep 3
+          done
+          curl -sf http://localhost:1411/healthz || { echo "PocketID never became healthy"; exit 1; }
+
+      - name: Wait for identree to be healthy
+        run: |
+          echo "Waiting for identree..."
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:8090/healthz >/dev/null 2>&1; then
+              echo "identree ready."
+              break
+            fi
+            echo "  attempt $i/40..."
+            sleep 3
+          done
+          curl -sf http://localhost:8090/healthz || { echo "identree never became healthy"; exit 1; }
+
+      - name: Seed test data
+        run: bash ci/seed-data.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Playwright + Chromium
+        run: |
+          npm init -y
+          npm install @playwright/test
+          npx playwright install chromium --with-deps
+
+      - name: Take screenshots
+        run: node ci/screenshots.mjs
+
+      - name: Install Pillow
+        run: pip install Pillow
+
+      - name: Generate diagonal-split composites
+        run: python ci/diagonal-split.py
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: screenshots/
+          retention-days: 30

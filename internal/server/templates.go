@@ -3096,10 +3096,17 @@ const adminPageHTML = `<!DOCTYPE html>
       <div class="script-preview" id="deploy-script-preview">
         <div class="script-preview-header" id="deploy-script-toggle">
           <span class="script-preview-label"><span class="script-expand-chevron">&#9654;</span>Install script</span>
-          <button type="button" class="btn btn-sm" id="deploy-script-copy-btn" data-cmd="curl -fsSL {{.InstallURL}} | sudo bash"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>
+          <button type="button" class="btn btn-sm" id="deploy-script-copy-btn" data-cmd="curl -fsSL {{.InstallURL}}/install.sh | sudo bash"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>
         </div>
         <div class="script-preview-body">
           <pre id="deploy-script-content">Loading...</pre>
+        </div>
+      </div>
+      <div style="margin-bottom:14px">
+        <div style="font-size:0.75rem;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Manual download</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a href="{{.InstallURL}}/download/identree-linux-amd64" download class="btn btn-sm"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>linux/amd64</a>
+          <a href="{{.InstallURL}}/download/identree-linux-arm64" download class="btn btn-sm"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>linux/arm64</a>
         </div>
       </div>
       <div id="deploy-form-area">

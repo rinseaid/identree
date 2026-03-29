@@ -371,6 +371,17 @@ go build -trimpath \
   -o identree ./cmd/identree/
 ```
 
+### Screenshots
+
+UI screenshots are generated automatically on every push to `dev` and `main` by the [Screenshots workflow](.github/workflows/screenshots.yml). The workflow:
+
+1. Builds the Docker image and starts the full test stack (`docker-compose.yml`).
+2. Seeds 30+ users and 9 groups with varied sudo claims via `ci/seed-data.sh`.
+3. Captures every admin page in light and dark mode using Playwright (`ci/screenshots.mjs`).
+4. Produces diagonal light/dark split composites and a hero grid image via `ci/diagonal-split.py`.
+
+The resulting images are uploaded as the **ui-screenshots** workflow artifact (30-day retention). Download them from the **Actions** tab on any passing run.
+
 ---
 
 ## Migrating from pam-pocketid + glauth-pocketid
