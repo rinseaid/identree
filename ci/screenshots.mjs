@@ -12,7 +12,7 @@
  */
 
 import { chromium } from "@playwright/test";
-import { mkdir, readFile } from "fs/promises";
+import { mkdir } from "fs/promises";
 import { existsSync } from "fs";
 
 const BASE_URL = process.env.IDENTREE_URL || "http://localhost:8090";
@@ -83,73 +83,43 @@ console.log("Waiting for identree...");
 }
 console.log("identree ready.\n");
 
-// ── Create a fresh pending challenge for the approval page screenshot ──────────
-
-let approvalURL = null;
-try {
-  const resp = await fetch(`${BASE_URL}/api/challenge`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shared-Secret": SHARED_SECRET,
-    },
-    body: JSON.stringify({ username: "eve", hostname: "prod-web-01" }),
-  });
-  if (resp.ok) {
-    const data = await resp.json();
-    // verification_url is the correct /approve/{user_code} URL
-    approvalURL = data.verification_url || null;
-    console.log(`Created approval challenge: ${approvalURL}\n`);
-  }
-} catch { /* non-fatal */ }
-
 // ── Open browser context ───────────────────────────────────────────────────────
 
 const context = await browser.newContext({ viewport: VIEWPORT });
 
-// ── 1. Dashboard — pending challenges ─────────────────────────────────────────
-
-console.log("Dashboard (pending challenges)...");
-await screenshot(context, "dashboard", async (page) => {
-  await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
-  // Wait for the pending challenges list to appear
-  await page.waitForSelector(".list, .row, [class*='pending'], [class*='challenge']", {
-    timeout: 5000,
-  }).catch(() => {});
-});
-
-// ── 2. Sessions ────────────────────────────────────────────────────────────────
+// ── 1. Sessions (root / — pending challenges + active sessions) ───────────────
 
 console.log("Sessions...");
 await screenshot(context, "sessions", async (page) => {
-  await page.goto(`${BASE_URL}/sessions`, { waitUntil: "load" });
-  await page.waitForSelector(".sessions-table, .gtcol, table", {
+  await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
+  // Wait for the sessions table or challenge rows to appear
+  await page.waitForSelector(".sessions-table, .gtcol, table, .list, .row", {
     timeout: 5000,
   }).catch(() => {});
 });
 
-// ── 3. Access ──────────────────────────────────────────────────────────────────
+// ── 2. Access ──────────────────────────────────────────────────────────────────
 
 console.log("Access...");
 await screenshot(context, "access", async (page) => {
   await page.goto(`${BASE_URL}/access`, { waitUntil: "load" });
 });
 
-// ── 4. History ─────────────────────────────────────────────────────────────────
+// ── 3. History ─────────────────────────────────────────────────────────────────
 
 console.log("History...");
 await screenshot(context, "history", async (page) => {
   await page.goto(`${BASE_URL}/history`, { waitUntil: "load" });
 });
 
-// ── 5. Hosts ───────────────────────────────────────────────────────────────────
+// ── 4. Hosts ───────────────────────────────────────────────────────────────────
 
 console.log("Hosts...");
 await screenshot(context, "hosts", async (page) => {
   await page.goto(`${BASE_URL}/admin/hosts`, { waitUntil: "load" });
 });
 
-// ── 6. Users ───────────────────────────────────────────────────────────────────
+// ── 5. Users ───────────────────────────────────────────────────────────────────
 
 console.log("Users...");
 await screenshot(context, "users", async (page) => {
@@ -177,7 +147,7 @@ await screenshot(context, "users-expanded", async (page) => {
   }
 });
 
-// ── 7. Groups ──────────────────────────────────────────────────────────────────
+// ── 6. Groups ──────────────────────────────────────────────────────────────────
 
 console.log("Groups...");
 await screenshot(context, "groups", async (page) => {
@@ -195,7 +165,7 @@ await screenshot(context, "groups-expanded", async (page) => {
   }).catch(() => {});
   // Click the toggle for the developers group (has rich sudo claims)
   const devGroup = page.locator("[id='group-developers']").first();
-  const toggleBtn = devGroup.count() > 0
+  const toggleBtn = (await devGroup.count()) > 0
     ? devGroup.locator(".claims-toggle-btn").first()
     : page.locator(".claims-toggle-btn").first();
   if (await toggleBtn.count() > 0) {
@@ -207,24 +177,41 @@ await screenshot(context, "groups-expanded", async (page) => {
   }
 });
 
-// ── 8. Admin info ──────────────────────────────────────────────────────────────
+// ── 7. Admin info ──────────────────────────────────────────────────────────────
 
 console.log("Admin info...");
 await screenshot(context, "admin-info", async (page) => {
   await page.goto(`${BASE_URL}/admin/info`, { waitUntil: "load" });
 });
 
-// ── 9. Admin config ────────────────────────────────────────────────────────────
+// ── 8. Admin config ────────────────────────────────────────────────────────────
 
 console.log("Admin config...");
 await screenshot(context, "admin-config", async (page) => {
   await page.goto(`${BASE_URL}/admin/config`, { waitUntil: "load" });
 });
 
-// ── 10. Approval page ──────────────────────────────────────────────────────────
+// ── 9. Approval page ───────────────────────────────────────────────────────────
+// Create the challenge immediately before navigating so it doesn't expire
+// (challenge TTL is 120 s; earlier screenshots can take longer than that).
 
 console.log("Approval page...");
 await screenshot(context, "approval", async (page) => {
+  let approvalURL = null;
+  try {
+    const resp = await fetch(`${BASE_URL}/api/challenge`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shared-Secret": SHARED_SECRET,
+      },
+      body: JSON.stringify({ username: "eve", hostname: "prod-web-01" }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      approvalURL = data.verification_url || null;
+    }
+  } catch { /* non-fatal */ }
   const target = approvalURL || `${BASE_URL}/`;
   await page.goto(target, { waitUntil: "load" });
 });

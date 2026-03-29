@@ -6,8 +6,7 @@ For each pair of light/dark screenshots in ./screenshots/, produces a diagonal
 split composite saved as ./screenshots/{page}-split.png.
 
 The split runs from top-left to bottom-right (45-degree line).
-Light mode occupies the upper-left triangle; dark mode the lower-right.
-A thin white 2 px line marks the cut.
+Light mode occupies the left side; dark mode the right side.
 
 Also produces ./screenshots/hero.png — a grid of all split images.
 
@@ -31,7 +30,7 @@ def diagonal_split(light_img: Image.Image, dark_img: Image.Image) -> Image.Image
     """
     Combine two same-size images along a top-left → bottom-right diagonal.
 
-    The upper-left triangle comes from light_img; the lower-right from dark_img.
+    Light occupies the left/lower-left; dark occupies the right/upper-right.
     The mask is rendered at SSAA× resolution and downsampled for a smooth edge.
     """
     if light_img.size != dark_img.size:
@@ -41,11 +40,12 @@ def diagonal_split(light_img: Image.Image, dark_img: Image.Image) -> Image.Image
 
     # Build mask at higher resolution, then downsample for anti-aliasing.
     # Diagonal runs top-left → bottom-right (\).
-    # Light occupies the upper-right triangle; dark the lower-left.
+    # Light occupies the lower-left triangle (left side of image);
+    # dark occupies the upper-right triangle (right side of image).
     sw, sh = w * SSAA, h * SSAA
     hi_mask = Image.new("L", (sw, sh), 0)
     draw = ImageDraw.Draw(hi_mask)
-    draw.polygon([(0, 0), (sw, 0), (sw, sh)], fill=255)
+    draw.polygon([(0, 0), (0, sh), (sw, sh)], fill=255)
     mask = hi_mask.resize((w, h), Image.LANCZOS)
 
     # Composite: start with dark, paste light over it using the smooth mask.
