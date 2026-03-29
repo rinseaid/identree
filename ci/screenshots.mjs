@@ -141,9 +141,9 @@ await screenshot(context, "users-expanded", async (page) => {
   if (toggles.length > 0) {
     await toggles[0].click();
     await page.waitForTimeout(500);
-    // Scroll to ensure the expanded panel is visible
+    // Scroll to ensure the expanded panel is visible (swallow if still hidden)
     const panel = page.locator(".user-claims-panel, [id^='uclaims-']").first();
-    if (await panel.count() > 0) await panel.scrollIntoViewIfNeeded();
+    if (await panel.count() > 0) await panel.scrollIntoViewIfNeeded().catch(() => {});
   }
 });
 
@@ -171,9 +171,9 @@ await screenshot(context, "groups-expanded", async (page) => {
   if (await toggleBtn.count() > 0) {
     await toggleBtn.click();
     await page.waitForTimeout(500);
-    // Scroll to show the expanded panel
+    // Scroll to show the expanded panel (swallow if still hidden)
     const panel = page.locator(".claims-panel.visible, [id^='gclaims-']").first();
-    if (await panel.count() > 0) await panel.scrollIntoViewIfNeeded();
+    if (await panel.count() > 0) await panel.scrollIntoViewIfNeeded().catch(() => {});
   }
 });
 
