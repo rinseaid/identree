@@ -4,22 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
-	"os"
-	"syscall"
 	"text/template"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/rinseaid/identree/internal/config"
 )
-
-// notifyUsersMaxSize caps the size of the per-user notification JSON file
-// to prevent memory exhaustion from an accidentally large file.
-const notifyUsersMaxSize = 1 << 20 // 1 MB
 
 // NotificationsTotal tracks notification outcomes.
 var NotificationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -32,99 +23,6 @@ func init() {
 	NotificationsTotal.WithLabelValues("sent")
 	NotificationsTotal.WithLabelValues("failed")
 	NotificationsTotal.WithLabelValues("skipped")
-}
-
-// LoadNotifyUsers reads the per-user notification URL mapping from a JSON file.
-// Returns nil map (not error) if the file doesn't exist or is empty — this is
-// the normal case when per-user routing is not configured.
-//
-// Security: uses the same hardened file-reading pattern as loadConfigFile:
-// O_NOFOLLOW to reject symlinks, fd-based stat for permissions/ownership
-// (no TOCTOU gap), and size limit to prevent OOM.
-func LoadNotifyUsers(path string) map[string]string {
-	if path == "" {
-		return nil
-	}
-
-	// Open with O_NOFOLLOW to atomically reject symlinks.
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			log.Printf("NOTIFY: cannot open users file %s: %v", path, err)
-		}
-		return nil
-	}
-	defer f.Close()
-
-	// Use fd-based stat (not path-based) to avoid TOCTOU races.
-	info, err := f.Stat()
-	if err != nil {
-		log.Printf("NOTIFY: cannot stat users file %s: %v", path, err)
-		return nil
-	}
-	if !info.Mode().IsRegular() {
-		log.Printf("NOTIFY: ERROR: %s is not a regular file — refusing to load", path)
-		return nil
-	}
-
-	// Enforce size limit to prevent OOM from large files.
-	if info.Size() > notifyUsersMaxSize {
-		log.Printf("NOTIFY: ERROR: %s is too large (%d bytes, max %d) — refusing to load", path, info.Size(), notifyUsersMaxSize)
-		return nil
-	}
-
-	// Enforce permissions: file may contain bot tokens and webhook secrets.
-	if mode := info.Mode().Perm(); mode&0077 != 0 {
-		log.Printf("NOTIFY: ERROR: %s has group/other permissions (mode %04o) — refusing to load (fix with: chmod 600 %s)", path, mode, path)
-		return nil
-	}
-
-	// Enforce root ownership to prevent pre-creation attacks.
-	if uid, ok := config.FileOwnerUID(info); !ok {
-		log.Printf("NOTIFY: ERROR: cannot determine owner of %s — refusing to load", path)
-		return nil
-	} else if uid != 0 {
-		log.Printf("NOTIFY: ERROR: %s is not owned by root (uid=%d) — refusing to load", path, uid)
-		return nil
-	}
-
-	// Read from the already-opened fd (not the path) to maintain consistency.
-	data, err := io.ReadAll(io.LimitReader(f, notifyUsersMaxSize+1))
-	if err != nil {
-		log.Printf("NOTIFY: cannot read users file %s: %v", path, err)
-		return nil
-	}
-
-	// Strip UTF-8 BOM (common when edited on Windows).
-	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
-
-	// Empty file is valid — means no per-user routing configured.
-	if len(data) == 0 {
-		return nil
-	}
-
-	var users map[string]string
-	if err := json.Unmarshal(data, &users); err != nil {
-		log.Printf("NOTIFY: cannot parse users file %s: %v", path, err)
-		return nil
-	}
-	return users
-}
-
-// LookupUserURLs returns the notification URL(s) for a username from the
-// per-user mapping. Falls back to the "*" wildcard entry if the user has
-// no explicit mapping. Returns empty string if no mapping exists.
-func LookupUserURLs(users map[string]string, username string) string {
-	if users == nil {
-		return ""
-	}
-	if urls, ok := users[username]; ok {
-		return urls
-	}
-	if urls, ok := users["*"]; ok {
-		return urls
-	}
-	return ""
 }
 
 // WebhookData holds all the fields available to webhook formatters.

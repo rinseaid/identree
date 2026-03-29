@@ -75,8 +75,10 @@ var TOMLSections = []TOMLSection{
 		{Key: "approval_hosts", EnvKey: "IDENTREE_ADMIN_APPROVAL_HOSTS", IsList: true},
 	}},
 	{Name: "notifications", Fields: []TOMLField{
+		{Key: "backend", EnvKey: "IDENTREE_NOTIFY_BACKEND"},
+		{Key: "url", EnvKey: "IDENTREE_NOTIFY_URL"},
 		{Key: "command", EnvKey: "IDENTREE_NOTIFY_COMMAND"},
-		{Key: "users_file", EnvKey: "IDENTREE_NOTIFY_USERS_FILE"},
+		{Key: "timeout", EnvKey: "IDENTREE_NOTIFY_TIMEOUT"},
 	}},
 	{Name: "escrow", Fields: []TOMLField{
 		{Key: "backend", EnvKey: "IDENTREE_ESCROW_BACKEND"},

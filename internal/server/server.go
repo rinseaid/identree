@@ -73,8 +73,8 @@ type Server struct {
 	removedUsers   map[string]time.Time
 	removedUsersMu sync.Mutex
 
-	// webhookClient is the hardened HTTP client for outbound webhook delivery.
-	// Initialised in NewServer with the configured WebhookTimeout.
+	// webhookClient is the hardened HTTP client for outbound notifications.
+	// Initialised in NewServer with the configured NotifyTimeout.
 	webhookClient *http.Client
 }
 
@@ -129,7 +129,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
 		sudoRules:      store,
 		webhookClient: &http.Client{
-			Timeout:   cfg.WebhookTimeout,
+			Timeout:   cfg.NotifyTimeout,
 			Transport: &http.Transport{Proxy: nil},
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse

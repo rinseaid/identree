@@ -1,0 +1,95 @@
+# docker-compose.example.yml — identree + PocketID (full mode)
+#
+# Quick start:
+#   1. Copy this file to docker-compose.yml
+#   2. Follow the steps in the README Quick start section
+#   3. docker compose up -d
+#
+# Data persistence:
+#   - PocketID data is stored in the named volume 'pocketid-data'
+#   - identree state (sessions, UID map, hosts, sudo rules) is stored in ./config
+#     Mount ./config to a persistent directory or named volume in production.
+
+services:
+
+  pocketid:
+    image: ghcr.io/pocket-id/pocket-id:latest
+    container_name: identree-pocketid
+    restart: unless-stopped
+    environment:
+      APP_URL: "https://pocketid.example.com"       # public URL of PocketID
+      ENCRYPTION_KEY: "change-me-32-char-minimum"   # openssl rand -hex 32
+      APP_ENV: production
+    volumes:
+      - pocketid-data:/app/data
+    ports:
+      - "127.0.0.1:1411:1411"   # expose only to localhost; put Nginx/Caddy in front
+    healthcheck:
+      test: ["CMD", "/app/pocket-id", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  identree:
+    image: ghcr.io/rinseaid/identree:latest     # or: build: .
+    container_name: identree
+    restart: unless-stopped
+    depends_on:
+      pocketid:
+        condition: service_healthy
+    environment:
+      # ── OIDC ──────────────────────────────────────────────────────────────
+      # Internal URL used for OIDC discovery (Docker service name)
+      IDENTREE_OIDC_ISSUER_URL: "http://pocketid:1411"
+      # Public URL used for browser OIDC redirects (must match APP_URL above)
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "https://pocketid.example.com"
+      IDENTREE_OIDC_CLIENT_ID: "your-oidc-client-id"         # from PocketID → OIDC Clients
+      IDENTREE_OIDC_CLIENT_SECRET: "your-oidc-client-secret"
+
+      # ── PocketID API (full mode) ───────────────────────────────────────────
+      IDENTREE_POCKETID_API_KEY: "your-admin-api-key"         # from PocketID → Settings → API Keys
+      IDENTREE_POCKETID_API_URL: "http://pocketid:1411"       # internal URL for API calls
+
+      # ── Server ────────────────────────────────────────────────────────────
+      IDENTREE_EXTERNAL_URL: "https://identree.example.com"   # public URL of identree
+      IDENTREE_SHARED_SECRET: "change-me-use-a-strong-secret" # openssl rand -hex 32
+      IDENTREE_ADMIN_GROUPS: "admins"                         # PocketID group name(s)
+
+      # ── LDAP ──────────────────────────────────────────────────────────────
+      IDENTREE_LDAP_ENABLED: "true"
+      IDENTREE_LDAP_LISTEN_ADDR: ":389"
+      IDENTREE_LDAP_BASE_DN: "dc=example,dc=com"
+
+      # ── State (all files under /config — mount a persistent volume) ───────
+      # These paths are the defaults; override only if needed.
+      # IDENTREE_SESSION_STATE_FILE: /config/sessions.json
+      # IDENTREE_LDAP_UID_MAP_FILE: /config/uidmap.json
+      # IDENTREE_SUDO_RULES_FILE: /config/sudorules.json
+      # IDENTREE_HOST_REGISTRY_FILE: /config/hosts.json
+
+      # ── Break-glass escrow (optional) ─────────────────────────────────────
+      # See docs/breakglass.md for all backends (Vault, 1Password, Bitwarden, etc.)
+      IDENTREE_ESCROW_BACKEND: "local"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "change-me-64-hex-chars"  # openssl rand -hex 32
+
+      # ── Notifications (optional) ──────────────────────────────────────────
+      # See docs/notifications.md for all backends
+      # IDENTREE_NOTIFY_BACKEND: ntfy
+      # IDENTREE_NOTIFY_URL: https://ntfy.sh/your-topic
+      # IDENTREE_NOTIFY_TOKEN: your-ntfy-token
+
+    volumes:
+      - ./config:/config    # persistent state: sessions, UID map, host registry, sudo rules
+    ports:
+      - "127.0.0.1:8090:8090"   # HTTP — put Nginx/Caddy in front for TLS
+      - "127.0.0.1:389:389"     # LDAP — or use a higher port and forward in sssd config
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  pocketid-data:

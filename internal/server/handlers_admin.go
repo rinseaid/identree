@@ -30,8 +30,10 @@ var liveUpdateKeys = map[string]bool{
 	"IDENTREE_ONE_TAP_MAX_AGE":                 true,
 	"IDENTREE_ADMIN_GROUPS":                    true,
 	"IDENTREE_ADMIN_APPROVAL_HOSTS":            true,
+	"IDENTREE_NOTIFY_BACKEND":                  true,
+	"IDENTREE_NOTIFY_URL":                      true,
 	"IDENTREE_NOTIFY_COMMAND":                  true,
-	"IDENTREE_NOTIFY_USERS_FILE":               true,
+	"IDENTREE_NOTIFY_TIMEOUT":                  true,
 	"IDENTREE_ESCROW_BACKEND":                  true,
 	"IDENTREE_ESCROW_URL":                      true,
 	"IDENTREE_ESCROW_AUTH_ID":                  true,
@@ -462,8 +464,10 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_LDAP_DEFAULT_HOME":               cfg.LDAPDefaultHome,
 		"IDENTREE_ADMIN_GROUPS":                    strings.Join(cfg.AdminGroups, ", "),
 		"IDENTREE_ADMIN_APPROVAL_HOSTS":            strings.Join(cfg.AdminApprovalHosts, ", "),
+		"IDENTREE_NOTIFY_BACKEND":                  cfg.NotifyBackend,
+		"IDENTREE_NOTIFY_URL":                      cfg.NotifyURL,
 		"IDENTREE_NOTIFY_COMMAND":                  cfg.NotifyCommand,
-		"IDENTREE_NOTIFY_USERS_FILE":               cfg.NotifyUsersFile,
+		"IDENTREE_NOTIFY_TIMEOUT":                  formatDuration(cfg.NotifyTimeout),
 		"IDENTREE_ESCROW_BACKEND":                  string(cfg.EscrowBackend),
 		"IDENTREE_ESCROW_URL":                      cfg.EscrowURL,
 		"IDENTREE_ESCROW_AUTH_ID":                  cfg.EscrowAuthID,
@@ -500,6 +504,7 @@ func configLockedKeys() map[string]bool {
 		"IDENTREE_OIDC_CLIENT_SECRET", "IDENTREE_POCKETID_API_KEY",
 		"IDENTREE_SHARED_SECRET", "IDENTREE_LDAP_BIND_PASSWORD",
 		"IDENTREE_ESCROW_AUTH_SECRET", "IDENTREE_ESCROW_ENCRYPTION_KEY", "IDENTREE_WEBHOOK_SECRET", "IDENTREE_API_KEYS",
+		"IDENTREE_NOTIFY_TOKEN",
 	} {
 		if config.IsEnvSourced(key) {
 			locked[key] = true
@@ -511,13 +516,14 @@ func configLockedKeys() map[string]bool {
 // configSecretStatus returns true for each secret key if the secret is currently set.
 func configSecretStatus(cfg *config.ServerConfig) map[string]bool {
 	return map[string]bool{
-		"IDENTREE_OIDC_CLIENT_SECRET": cfg.ClientSecret != "",
-		"IDENTREE_POCKETID_API_KEY":   cfg.APIKey != "",
-		"IDENTREE_SHARED_SECRET":      cfg.SharedSecret != "",
-		"IDENTREE_LDAP_BIND_PASSWORD": cfg.LDAPBindPassword != "",
-		"IDENTREE_ESCROW_AUTH_SECRET":     cfg.EscrowAuthSecret != "",
+		"IDENTREE_OIDC_CLIENT_SECRET":    cfg.ClientSecret != "",
+		"IDENTREE_POCKETID_API_KEY":      cfg.APIKey != "",
+		"IDENTREE_SHARED_SECRET":         cfg.SharedSecret != "",
+		"IDENTREE_LDAP_BIND_PASSWORD":    cfg.LDAPBindPassword != "",
+		"IDENTREE_ESCROW_AUTH_SECRET":    cfg.EscrowAuthSecret != "",
 		"IDENTREE_ESCROW_ENCRYPTION_KEY": cfg.EscrowEncryptionKey != "",
-		"IDENTREE_WEBHOOK_SECRET":     cfg.WebhookSecret != "",
+		"IDENTREE_WEBHOOK_SECRET":        cfg.WebhookSecret != "",
+		"IDENTREE_NOTIFY_TOKEN":          cfg.NotifyToken != "",
 	}
 }
 
@@ -526,6 +532,7 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 	for _, key := range []string{
 		"IDENTREE_CHALLENGE_TTL", "IDENTREE_GRACE_PERIOD",
 		"IDENTREE_ONE_TAP_MAX_AGE", "IDENTREE_LDAP_REFRESH_INTERVAL",
+		"IDENTREE_NOTIFY_TIMEOUT",
 	} {
 		if v := values[key]; v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
@@ -541,6 +548,13 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 			if _, err := strconv.Atoi(v); err != nil {
 				return fmt.Errorf("invalid integer for %s: %q", key, v)
 			}
+		}
+	}
+	if v := values["IDENTREE_NOTIFY_BACKEND"]; v != "" {
+		switch v {
+		case "ntfy", "slack", "discord", "apprise", "webhook", "custom":
+		default:
+			return fmt.Errorf("invalid notify backend: %q", v)
 		}
 	}
 	if v := values["IDENTREE_SUDO_NO_AUTHENTICATE"]; v != "" {
@@ -620,11 +634,19 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 	if !config.IsEnvSourced("IDENTREE_ADMIN_APPROVAL_HOSTS") {
 		s.cfg.AdminApprovalHosts = parseSlice("IDENTREE_ADMIN_APPROVAL_HOSTS")
 	}
+	if !config.IsEnvSourced("IDENTREE_NOTIFY_BACKEND") {
+		s.cfg.NotifyBackend = values["IDENTREE_NOTIFY_BACKEND"]
+	}
+	if !config.IsEnvSourced("IDENTREE_NOTIFY_URL") {
+		s.cfg.NotifyURL = values["IDENTREE_NOTIFY_URL"]
+	}
 	if !config.IsEnvSourced("IDENTREE_NOTIFY_COMMAND") {
 		s.cfg.NotifyCommand = values["IDENTREE_NOTIFY_COMMAND"]
 	}
-	if !config.IsEnvSourced("IDENTREE_NOTIFY_USERS_FILE") {
-		s.cfg.NotifyUsersFile = values["IDENTREE_NOTIFY_USERS_FILE"]
+	if !config.IsEnvSourced("IDENTREE_NOTIFY_TIMEOUT") {
+		if d, err := time.ParseDuration(values["IDENTREE_NOTIFY_TIMEOUT"]); err == nil {
+			s.cfg.NotifyTimeout = d
+		}
 	}
 	if !config.IsEnvSourced("IDENTREE_ESCROW_BACKEND") {
 		s.cfg.EscrowBackend = config.EscrowBackend(values["IDENTREE_ESCROW_BACKEND"])

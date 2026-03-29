@@ -71,7 +71,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogAction(challenge.Username, "approved", hostname, challenge.UserCode, username)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
-	s.sendWebhookNotifications(notify.WebhookData{
+	s.sendEventNotification(notify.WebhookData{
 		Event:     "challenge_approved",
 		Username:  challenge.Username,
 		Hostname:  hostname,
@@ -535,7 +535,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 	log.Printf("REJECTED: sudo for user %q on host %q (challenge %s) from %s", challenge.Username, hostname, challengeID[:8], remoteAddr(r))
 	s.store.LogAction(challenge.Username, "rejected", hostname, challenge.UserCode, username)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
-	s.sendWebhookNotifications(notify.WebhookData{
+	s.sendEventNotification(notify.WebhookData{
 		Event:     "challenge_rejected",
 		Username:  challenge.Username,
 		Hostname:  hostname,

@@ -219,7 +219,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 			hostname = "(unknown)"
 		}
 		s.store.LogAction(req.Username, "auto_approved", hostname, challenge.UserCode, "")
-		s.sendWebhookNotifications(notify.WebhookData{
+		s.sendEventNotification(notify.WebhookData{
 			Event:     "auto_approved",
 			Username:  req.Username,
 			Hostname:  hostname,
@@ -263,18 +263,6 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 
 	// Fire push notification asynchronously (no-op if not configured).
 	s.sendNotification(challenge, approvalURL, oneTapURL)
-	// sendWebhookNotifications spawns one goroutine per configured webhook; no
-	// extra goroutine wrapper needed here.
-	s.sendWebhookNotifications(notify.WebhookData{
-		Event:       "challenge_created",
-		Username:    challenge.Username,
-		Hostname:    challenge.Hostname,
-		UserCode:    challenge.UserCode,
-		ApprovalURL: approvalURL,
-		OneTapURL:   oneTapURL,
-		ExpiresIn:   int(s.cfg.ChallengeTTL.Seconds()),
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
-	})
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]interface{}{
@@ -283,15 +271,8 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		"verification_url": approvalURL,
 		"expires_in":       int(s.cfg.ChallengeTTL.Seconds()),
 	}
-	if s.cfg.NotifyCommand != "" {
-		// Only indicate notification_sent if the notification is likely to
-		// reach someone: either no per-user file is configured (global command),
-		// or the user has a mapping (including wildcard).
-		if s.cfg.NotifyUsersFile == "" {
-			resp["notification_sent"] = true
-		} else if urls := notify.LookupUserURLs(notify.LoadNotifyUsers(s.cfg.NotifyUsersFile), req.Username); urls != "" {
-			resp["notification_sent"] = true
-		}
+	if s.cfg.NotifyBackend != "" {
+		resp["notification_sent"] = true
 	}
 	if challenge.BreakglassRotateBefore != "" {
 		resp["rotate_breakglass_before"] = challenge.BreakglassRotateBefore

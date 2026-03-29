@@ -28,14 +28,6 @@ const (
 	EscrowBackendLocal            EscrowBackend = "local"
 )
 
-// WebhookConfig is a single outbound notification destination.
-type WebhookConfig struct {
-	URL      string            `json:"url"`
-	Format   string            `json:"format"` // raw, apprise, discord, slack, ntfy, custom
-	Headers  map[string]string `json:"headers,omitempty"`
-	Template string            `json:"template,omitempty"` // only for "custom" format
-}
-
 // ServerConfig holds all configuration for identree in server mode.
 type ServerConfig struct {
 	// ── OIDC ──────────────────────────────────────────────────────────────────
@@ -100,13 +92,11 @@ type ServerConfig struct {
 	APIKeys            []string // API bearer tokens for programmatic access
 
 	// ── Notifications ─────────────────────────────────────────────────────────
-	NotifyCommand        string
-	NotifyEnvPassthrough []string
-	NotifyUsersFile      string
-	NotifyUsers          map[string]string
-	Webhooks             []WebhookConfig
-	NotifyTimeout        time.Duration // max time for notify command (default 15s)
-	WebhookTimeout       time.Duration // per-webhook HTTP request timeout (default 10s)
+	NotifyBackend string        // ntfy | slack | discord | apprise | webhook | custom | "" (disabled)
+	NotifyURL     string        // webhook URL (all backends except custom)
+	NotifyToken   string        // optional Bearer token (e.g. ntfy auth)
+	NotifyCommand string        // path to executable (custom backend only)
+	NotifyTimeout time.Duration // timeout for both HTTP and command (default 15s)
 
 	// ── Break-glass escrow ────────────────────────────────────────────────────
 	EscrowCommand          string
@@ -266,9 +256,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPBindDN:             get("IDENTREE_LDAP_BIND_DN"),
 		LDAPBindPassword:       get("IDENTREE_LDAP_BIND_PASSWORD"),
 		LDAPRefreshInterval:    getDuration("IDENTREE_LDAP_REFRESH_INTERVAL", 300*time.Second),
-		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/var/lib/identree/uidmap.json"),
+		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/config/uidmap.json"),
 		LDAPSudoNoAuthenticate: stringDefault(get("IDENTREE_SUDO_NO_AUTHENTICATE"), "false"),
-		SudoRulesFile:          stringDefault(get("IDENTREE_SUDO_RULES_FILE"), "/var/lib/identree/sudorules.json"),
+		SudoRulesFile:          stringDefault(get("IDENTREE_SUDO_RULES_FILE"), "/config/sudorules.json"),
 		LDAPUIDBase:            getInt("IDENTREE_LDAP_UID_BASE", 0),
 		LDAPGIDBase:            getInt("IDENTREE_LDAP_GID_BASE", 0),
 		LDAPDefaultShell:       get("IDENTREE_LDAP_DEFAULT_SHELL"),
@@ -278,11 +268,11 @@ func LoadServerConfig() (*ServerConfig, error) {
 		AdminApprovalHosts: getSlice("IDENTREE_ADMIN_APPROVAL_HOSTS"),
 		APIKeys:            getSlice("IDENTREE_API_KEYS"),
 
-		NotifyCommand:        get("IDENTREE_NOTIFY_COMMAND"),
-		NotifyEnvPassthrough: getSlice("IDENTREE_NOTIFY_ENV_PASSTHROUGH"),
-		NotifyUsersFile:      get("IDENTREE_NOTIFY_USERS_FILE"),
-		NotifyTimeout:        getDuration("IDENTREE_NOTIFY_TIMEOUT", 15*time.Second),
-		WebhookTimeout:       getDuration("IDENTREE_WEBHOOK_TIMEOUT", 10*time.Second),
+		NotifyBackend: get("IDENTREE_NOTIFY_BACKEND"),
+		NotifyURL:     get("IDENTREE_NOTIFY_URL"),
+		NotifyToken:   get("IDENTREE_NOTIFY_TOKEN"),
+		NotifyCommand: get("IDENTREE_NOTIFY_COMMAND"),
+		NotifyTimeout: getDuration("IDENTREE_NOTIFY_TIMEOUT", 15*time.Second),
 
 		EscrowCommand:        get("IDENTREE_ESCROW_COMMAND"),
 		EscrowEnvPassthrough: getSlice("IDENTREE_ESCROW_COMMAND_ENV"),
@@ -295,9 +285,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		EscrowWebURL:         get("IDENTREE_ESCROW_WEB_URL"),
 		EscrowEncryptionKey:  get("IDENTREE_ESCROW_ENCRYPTION_KEY"),
 
-		HostRegistryFile:       get("IDENTREE_HOST_REGISTRY_FILE"),
+		HostRegistryFile:       stringDefault(get("IDENTREE_HOST_REGISTRY_FILE"), "/config/hosts.json"),
 		DefaultHistoryPageSize: getInt("IDENTREE_HISTORY_PAGE_SIZE", 10),
-		SessionStateFile:       get("IDENTREE_SESSION_STATE_FILE"),
+		SessionStateFile:       stringDefault(get("IDENTREE_SESSION_STATE_FILE"), "/config/sessions.json"),
 
 		ClientBreakglassPasswordType: get("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"),
 		ClientBreakglassRotationDays: getInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", 0),
@@ -318,12 +308,6 @@ func LoadServerConfig() (*ServerConfig, error) {
 			cfg.EscrowVaultMap = m
 		}
 	}
-
-	// Parse webhooks
-	cfg.Webhooks = parseWebhooks(get("IDENTREE_WEBHOOKS"), get("IDENTREE_WEBHOOKS_FILE"))
-
-	// Parse notify users
-	cfg.NotifyUsers = parseNotifyUsers(get("IDENTREE_NOTIFY_USERS"), cfg.NotifyUsersFile)
 
 	// Client token cache override
 	if v := get("IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"); v != "" {
@@ -373,15 +357,6 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 	if cfg.LDAPEnabled && cfg.LDAPBaseDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN is required when LDAP is enabled")
-	}
-
-	// Warn if any IDENTREE_NOTIFY_ENV_PASSTHROUGH prefix lacks a trailing '_'
-	// separator — a prefix like "MY_APP" would inadvertently match "MY_APPDATA",
-	// "MY_APPSERVER", etc.  Intended prefixes should end with '_' (e.g. "MY_APP_").
-	for _, prefix := range cfg.NotifyEnvPassthrough {
-		if prefix != "" && !strings.HasSuffix(prefix, "_") {
-			fmt.Printf("WARNING: IDENTREE_NOTIFY_ENV_PASSTHROUGH prefix %q does not end with '_' — it may match unintended env vars (e.g. %q would also match %qXTRA). Add a trailing '_' to be safe.\n", prefix, prefix, prefix)
-		}
 	}
 
 	// Validate LDAPSudoNoAuthenticate
@@ -520,37 +495,6 @@ func parseCIDRs(s string) []*net.IPNet {
 		_, network, err := net.ParseCIDR(cidr)
 		if err == nil {
 			out = append(out, network)
-		}
-	}
-	return out
-}
-
-// parseWebhooks loads WebhookConfig from an inline JSON string or a JSON file.
-func parseWebhooks(inline, filePath string) []WebhookConfig {
-	var out []WebhookConfig
-	if inline != "" {
-		_ = json.Unmarshal([]byte(inline), &out)
-	}
-	if filePath != "" && len(out) == 0 {
-		data, err := os.ReadFile(filePath)
-		if err == nil {
-			_ = json.Unmarshal(data, &out)
-		}
-	}
-	return out
-}
-
-// parseNotifyUsers loads the per-user notification map from an inline JSON
-// string or a JSON file.
-func parseNotifyUsers(inline, filePath string) map[string]string {
-	var out map[string]string
-	if inline != "" {
-		_ = json.Unmarshal([]byte(inline), &out)
-	}
-	if filePath != "" && out == nil {
-		data, err := os.ReadFile(filePath)
-		if err == nil {
-			_ = json.Unmarshal(data, &out)
 		}
 	}
 	return out

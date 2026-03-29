@@ -2,15 +2,15 @@
 
 **identree** bridges your identity provider to Linux. Type `sudo` and approve it on your phone. SSH in without a password. No RADIUS, no password sprawl, no "just disable sudo" compromises.
 
-It is a single binary that runs on one server and installs a small PAM helper on each managed host.
+It is a single binary (or Docker container) that runs on one server and deploys a small PAM helper to each managed host.
 
 ---
 
 ## The problem
 
-Your homelab IdP handles web app logins beautifully — passkeys, MFA, SSO. But your servers still use Unix passwords. `sudo` prompts for a password that either never changes, gets shared, or gets disabled entirely. SSH keys get copied everywhere. There is no audit trail.
+Your IdP handles web app logins beautifully — passkeys, MFA, SSO. But your servers still use Unix passwords. `sudo` prompts for a password that never changes or gets shared. SSH keys are copied everywhere. There is no audit trail.
 
-identree fixes this by making every `sudo` invocation and every SSH login go through your IdP's approval flow, the same way a web app login would.
+identree fixes this by routing every `sudo` invocation and SSH login through your IdP's approval flow.
 
 ---
 
@@ -27,281 +27,158 @@ PAM helper (identree) ──► identree server ──► OIDC approval page
       └──────── sudo succeeds ◄──────────────────────┘
 ```
 
-1. A user runs `sudo` on a managed host.
+1. User runs `sudo` on a managed host.
 2. The PAM helper calls the identree server and blocks.
-3. The user (or an admin) sees a notification / approval prompt from their IdP.
+3. The user sees an approval prompt from their IdP.
 4. They approve — `sudo` succeeds. They deny — `sudo` fails. No password exchanged.
-
-The identree server handles the OIDC challenge flow. The PAM helper is a small binary that blocks until it gets a result.
 
 ---
 
 ## Deployment modes
 
-identree has two modes. Choose based on what your identity stack already looks like.
+identree has two modes. See [docs/deployment-modes.md](docs/deployment-modes.md) for full details and sssd config examples.
 
-### Full mode — identree manages everything
+### Full mode — identree + PocketID
 
-Use this if you run **PocketID** and want a zero-infrastructure solution. identree acts as your LDAP server, your sudo policy engine, and your PAM auth bridge in one process.
-
-```
-PocketID ──► identree ──► LDAP (posixAccount, posixGroup, sudoRole)
-                     └──► PAM (sudo approval, SSH)
-```
-
-- Users and groups come from PocketID
-- Sudo policies are custom claims on PocketID groups
-- identree serves LDAP for `nslcd`/`sssd` — no separate LDAP server needed
-- UIDs/GIDs are stable and persisted across restarts
+Use this if you are starting fresh or already use [PocketID](https://github.com/pocket-id/pocket-id). identree acts as your LDAP server, sudo policy engine, and PAM auth bridge in one process. No separate LDAP server needed.
 
 **Requires:** PocketID with an admin API key.
 
----
+### PAM bridge mode — identree alongside your existing stack
 
-### PAM bridge mode — identree adds passkey auth to your existing stack
+Use this if you already have LDAP (Authentik, Kanidm, lldap, OpenLDAP, etc.) and just want to add passkey-gated PAM auth on top. Your existing LDAP continues to handle user/group resolution. identree handles only the PAM challenge flow, and optionally serves `ou=sudoers` for sudo policy management.
 
-Use this if you already have an identity stack that provides LDAP (Authentik, Kanidm, lldap, OpenLDAP, etc.). identree adds the one thing those systems don't have: **passkey-gated PAM auth**.
-
-```
-Authentik / Kanidm / any IdP ──► LDAP (posixAccount, posixGroup)
-                                                  │
-                              identree ──► LDAP (sudoRole only, optional)
-                                     └──► PAM (sudo approval, SSH)
-```
-
-- Your existing LDAP handles user/group resolution as normal
-- identree handles only the PAM challenge flow
-- Optionally, identree also serves `ou=sudoers` — managed via its admin UI — so you get fine-grained sudo policy without needing custom LDAP attributes
-- Any OIDC-compliant IdP works; no PocketID dependency
-
-**Requires:** Any OIDC-compliant IdP.
+**Requires:** Any OIDC-compliant IdP. An existing LDAP server for user/group resolution.
 
 ---
 
-## Quick start — Full mode (PocketID)
+## Quick start
 
-### Server
+This walks through a full mode deployment (PocketID + identree) using Docker Compose.
+
+### Step 1 — Start PocketID
+
+Copy the example compose file and start PocketID first:
 
 ```sh
-# /etc/identree/identree.conf
-IDENTREE_OIDC_ISSUER_URL=https://pocket-id.example.com
-IDENTREE_OIDC_CLIENT_ID=your-client-id
-IDENTREE_OIDC_CLIENT_SECRET=your-client-secret
-IDENTREE_POCKETID_API_KEY=your-admin-api-key
-IDENTREE_EXTERNAL_URL=https://identree.example.com
-IDENTREE_SHARED_SECRET=change-me-use-a-strong-secret
-IDENTREE_ADMIN_GROUPS=admins
-
-IDENTREE_LDAP_ENABLED=true
-IDENTREE_LDAP_LISTEN_ADDR=:389
-IDENTREE_LDAP_BASE_DN=dc=example,dc=com
-
-identree serve
+cp docker-compose.example.yml docker-compose.yml
+mkdir config
+docker compose up pocketid -d
 ```
 
-### Client (each managed host)
+Open PocketID at `http://localhost:1411` (or your configured `APP_URL`) and complete the initial setup to create your admin account.
+
+### Step 2 — Configure PocketID
+
+In PocketID:
+
+1. **Create an OIDC client** (OIDC Clients → New):
+   - Redirect URL: `https://identree.example.com/callback`
+   - Note the **Client ID** and **Client Secret**
+
+2. **Create an API key** (Settings → API Keys → New):
+   - Note the key value
+
+3. **Create an admin group** named `admins` (or whatever you set in `IDENTREE_ADMIN_GROUPS`) and add your user to it.
+
+### Step 3 — Configure identree
+
+Edit `docker-compose.yml` and fill in:
+
+```yaml
+IDENTREE_OIDC_CLIENT_ID: "your-client-id"
+IDENTREE_OIDC_CLIENT_SECRET: "your-client-secret"
+IDENTREE_POCKETID_API_KEY: "your-api-key"
+IDENTREE_EXTERNAL_URL: "https://identree.example.com"
+IDENTREE_SHARED_SECRET: "$(openssl rand -hex 32)"
+IDENTREE_LDAP_BASE_DN: "dc=example,dc=com"
+IDENTREE_ESCROW_ENCRYPTION_KEY: "$(openssl rand -hex 32)"
+```
+
+Also update `APP_URL` in the pocketid section and `IDENTREE_OIDC_ISSUER_PUBLIC_URL` to match.
+
+### Step 4 — Start identree
 
 ```sh
-# Install in one command from the admin dashboard, or manually:
+docker compose up identree -d
+docker compose logs -f identree   # watch for startup errors
+```
+
+Open `https://identree.example.com` and log in with your PocketID account. You should land on the identree dashboard.
+
+### Step 5 — Install on a managed host
+
+From the identree admin UI, go to **Hosts** and click **Install** next to any registered host, or run the one-liner on the host:
+
+```sh
 curl -fsSL https://identree.example.com/install.sh | sudo bash
 ```
 
-Or manually:
+The installer:
+- Downloads the identree binary
+- Writes `/etc/identree/client.conf` with the server URL and shared secret
+- Configures `/etc/pam.d/sudo` to use the PAM helper
+- Generates and stores a break-glass password locally
+
+### Step 6 — Register a passkey and try it
+
+Log into PocketID on the host's user account and register a passkey. Then try:
 
 ```sh
-# /etc/identree/client.conf
-IDENTREE_SERVER_URL=https://identree.example.com
-IDENTREE_SHARED_SECRET=change-me-use-a-strong-secret
+sudo whoami
 ```
 
-```
-# /etc/pam.d/sudo — add before the first auth line
-auth required pam_exec.so stdout /usr/local/bin/identree
-```
-
-### sssd (`/etc/sssd/sssd.conf`)
-
-```ini
-[sssd]
-services = nss, pam, sudo
-config_file_version = 2
-domains = LDAP
-
-[domain/LDAP]
-id_provider    = ldap
-auth_provider  = none
-sudo_provider  = ldap
-
-ldap_uri        = ldap://identree.example.com:389
-ldap_search_base           = dc=example,dc=com
-ldap_user_search_base      = ou=people,dc=example,dc=com
-ldap_group_search_base     = ou=groups,dc=example,dc=com
-ldap_sudo_search_base      = ou=sudoers,dc=example,dc=com
-
-ldap_schema           = rfc2307
-ldap_id_use_start_tls = false
-enumerate             = true
-
-# Don't cache credentials — identree handles auth.
-cache_credentials        = false
-entry_cache_timeout      = 60
-ldap_sudo_full_refresh_interval  = 60
-```
-
-```
-# chmod 600 /etc/sssd/sssd.conf
-```
-
-Also ensure `/etc/nsswitch.conf` includes `sss`:
-
-```
-passwd:  files sss
-group:   files sss
-sudoers: files sss
-```
+A challenge notification appears (if configured) or the user opens `https://identree.example.com` — they approve, and `sudo` succeeds.
 
 ---
 
-## Quick start — PAM bridge mode
+## The admin UI
 
-Bridge mode requires no PocketID API key. Omit `IDENTREE_POCKETID_API_KEY` from the server config.
+The dashboard at `https://identree.example.com` provides:
 
-```sh
-# /etc/identree/identree.conf
-IDENTREE_OIDC_ISSUER_URL=https://authentik.example.com/application/o/identree/
-IDENTREE_OIDC_CLIENT_ID=your-client-id
-IDENTREE_OIDC_CLIENT_SECRET=your-client-secret
-IDENTREE_EXTERNAL_URL=https://identree.example.com
-IDENTREE_SHARED_SECRET=change-me-use-a-strong-secret
-IDENTREE_ADMIN_GROUPS=admins
+- **Dashboard** — live pending challenges with one-click approve/reject; auto-refreshes via SSE
+- **Sessions** — active approved sessions; revoke or extend individually or in bulk; "Just me" toggle to filter your own sessions
+- **Access** — per-host access log with user/host/time; exportable
+- **History** — full audit log of all sudo events; filterable by user, host, event type
+- **Hosts** — registered hosts; install new hosts, rotate break-glass passwords, remove hosts
+- **Users** — PocketID user list (full mode); manage SSH public key claims per user
+- **Groups** — PocketID group list (full mode); manage sudo policy claims per group
+- **Admin** — server info, live configuration editor, restart
 
-# Optional: serve ou=sudoers from identree's built-in rules engine
-IDENTREE_LDAP_ENABLED=true
-IDENTREE_LDAP_BASE_DN=dc=example,dc=com
-IDENTREE_SUDO_RULES_FILE=/var/lib/identree/sudorules.json
-```
-
-In bridge mode, identree's admin UI exposes a sudo rules editor at `/admin/sudo-rules`. Rules created there are served as `sudoRole` LDAP entries for any host that includes `ou=sudoers` in its LDAP search base.
+The **Configuration** page (`/admin/config`) lets you change most settings without restarting. Secrets (shared secret, API keys, tokens) are env-only and cannot be written from the UI.
 
 ---
 
-## Sudo policy (Full mode)
+## Persistent state
 
-Sudo rules are defined as **custom claims on PocketID groups**. A group with no sudo claims generates no sudo entries — there is no naming convention to follow.
+All server state files default to `/config/`. Mount a persistent volume there:
 
-| Claim | Required | Description | Example |
-|---|---|---|---|
-| `sudoCommands` | Yes | Comma-separated commands the group may run | `/usr/bin/apt, /usr/bin/systemctl` |
-| `sudoHosts` | No | Comma-separated hosts (default: `ALL`) | `server1,server2` |
-| `sudoRunAsUser` | No | Run-as user (default: `root`) | `root` |
-| `sudoRunAsGroup` | No | Run-as group (optional) | `docker` |
-| `sudoOptions` | No | Extra sudo options (see note) | `NOPASSWD` |
+```yaml
+volumes:
+  - ./config:/config
+```
 
-**`IDENTREE_SUDO_NO_AUTHENTICATE`** controls whether sudo invocations require PAM authentication (i.e. the identree approval flow):
-
-| Value | Behaviour |
+| File | Contents |
 |---|---|
-| `false` (default) | Every sudo invocation triggers the passkey approval flow |
-| `true` | `!authenticate` added to all rules — no approval required |
-| `claims` | Per-group: set `sudoOptions=!authenticate` on specific groups |
+| `/config/sessions.json` | Active approved sessions (survives restarts) |
+| `/config/uidmap.json` | UID/GID assignments for LDAP users (full mode) |
+| `/config/hosts.json` | Registered host registry |
+| `/config/sudorules.json` | Sudo rules (bridge mode) |
 
-The default (`false`) is the point of identree — keep it unless you have a good reason.
-
----
-
-## LDAP schema (Full mode)
-
-| DN | Object classes | Content |
-|---|---|---|
-| `ou=people,<base>` | `posixAccount`, `shadowAccount`, `inetOrgPerson` | One entry per PocketID user |
-| `ou=groups,<base>` | `posixGroup` | PocketID groups + one User Private Group per user |
-| `ou=sudoers,<base>` | `sudoRole` | Sudo rules from group custom claims |
-
-UID/GID assignments are stable and persisted to `uidmap.json`. They are never reused.
-
----
-
-## Break-glass
-
-Every managed host gets a locally-stored bcrypt-hashed password as a fallback for when the identree server is unreachable. It is auto-generated, auto-rotated on a configurable schedule, and can be escrowed to a secret manager.
-
-```sh
-identree rotate-breakglass          # rotate immediately
-identree verify-breakglass          # check the current password works
-```
-
-**Supported escrow backends:** 1Password Connect, HashiCorp Vault, Bitwarden Secrets Manager, Infisical, and a local AES-256-GCM backend (no external service required).
-
----
-
-## Notifications
-
-identree can call a script or send webhooks whenever a new sudo challenge is created.
-
-### Shell command
-
-```sh
-IDENTREE_NOTIFY_COMMAND=/usr/local/bin/my-notify.sh
-# Variables passed: NOTIFY_USERNAME, NOTIFY_HOSTNAME, NOTIFY_USER_CODE,
-#                   NOTIFY_APPROVAL_URL, NOTIFY_EXPIRES_IN, NOTIFY_USER_URLS,
-#                   NOTIFY_ONETAP_URL
-```
-
-### Webhooks (Discord, Slack, ntfy, Apprise, raw JSON)
-
-```sh
-# IDENTREE_WEBHOOKS is a JSON array:
-IDENTREE_WEBHOOKS='[{"url":"https://discord.com/api/webhooks/xxx","format":"discord"}]'
-
-# Or point to a file:
-IDENTREE_WEBHOOKS_FILE=/etc/identree/webhooks.json
-```
-
-Supported formats: `raw`, `apprise`, `discord`, `slack`, `ntfy`, `custom` (Go template).
-
-Custom format example:
-
-```json
-[{
-  "url": "https://ntfy.sh/my-topic",
-  "format": "custom",
-  "template": "{\"topic\":\"my-topic\",\"message\":\"{{.Username}} wants sudo on {{.Hostname}}\"}"
-}]
-```
-
-### Per-user notification routing
-
-```sh
-# Map usernames to per-user webhook URLs (NOTIFY_USER_URLS env var in notify script):
-IDENTREE_NOTIFY_USERS='{"alice":"https://...", "bob":"https://..."}'
-# Or from a file:
-IDENTREE_NOTIFY_USERS_FILE=/etc/identree/notify-users.json
-```
-
----
-
-## PocketID webhook integration
-
-identree can receive webhooks from PocketID to trigger immediate LDAP directory refreshes when users or groups change, without waiting for the next polling interval.
-
-In PocketID, create a webhook pointing to `https://identree.example.com/api/webhook/pocketid`.
-
-```sh
-IDENTREE_WEBHOOK_SECRET=your-hmac-secret   # validates incoming signatures
-```
+Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 
 ---
 
 ## Configuration reference
 
-### Server (`/etc/identree/identree.conf`)
+### Server (`/etc/identree/identree.conf` or environment)
 
 #### OIDC / Authentication
 
 | Variable | Default | Description |
 |---|---|---|
-| `IDENTREE_OIDC_ISSUER_URL` | — | **Required.** OIDC issuer URL (PocketID base URL) |
-| `IDENTREE_OIDC_ISSUER_PUBLIC_URL` | — | Public-facing OIDC URL for browser redirects (split internal/external routing) |
+| `IDENTREE_OIDC_ISSUER_URL` | — | **Required.** OIDC issuer URL |
+| `IDENTREE_OIDC_ISSUER_PUBLIC_URL` | — | Public-facing OIDC URL (split internal/external routing) |
 | `IDENTREE_OIDC_CLIENT_ID` | — | **Required.** OIDC client ID |
 | `IDENTREE_OIDC_CLIENT_SECRET` | — | **Required.** OIDC client secret |
 
@@ -310,7 +187,7 @@ IDENTREE_WEBHOOK_SECRET=your-hmac-secret   # validates incoming signatures
 | Variable | Default | Description |
 |---|---|---|
 | `IDENTREE_POCKETID_API_KEY` | — | **Required (full mode).** PocketID admin API key |
-| `IDENTREE_POCKETID_API_URL` | `IDENTREE_OIDC_ISSUER_URL` | Internal PocketID API URL (if different from issuer) |
+| `IDENTREE_POCKETID_API_URL` | `IDENTREE_OIDC_ISSUER_URL` | Internal PocketID API URL |
 
 #### HTTP server
 
@@ -318,7 +195,7 @@ IDENTREE_WEBHOOK_SECRET=your-hmac-secret   # validates incoming signatures
 |---|---|---|
 | `IDENTREE_EXTERNAL_URL` | — | **Required.** Public-facing URL of identree |
 | `IDENTREE_LISTEN_ADDR` | `:8090` | HTTP listen address |
-| `IDENTREE_INSTALL_URL` | `IDENTREE_EXTERNAL_URL` | URL embedded in client install scripts (use when identree is behind a split-horizon DNS) |
+| `IDENTREE_INSTALL_URL` | `IDENTREE_EXTERNAL_URL` | URL embedded in install scripts (split-horizon DNS) |
 | `IDENTREE_SHARED_SECRET` | — | **Required.** HMAC secret shared with PAM clients |
 | `IDENTREE_API_KEYS` | — | Comma-separated API bearer tokens for programmatic access |
 
@@ -329,14 +206,13 @@ IDENTREE_WEBHOOK_SECRET=your-hmac-secret   # validates incoming signatures
 | `IDENTREE_CHALLENGE_TTL` | `120s` | How long a pending challenge lives |
 | `IDENTREE_GRACE_PERIOD` | `0` | Skip re-auth if user approved on this host within this window |
 | `IDENTREE_ONE_TAP_MAX_AGE` | `24h` | Max PocketID session age for silent one-tap approval |
-| `IDENTREE_SESSION_STATE_FILE` | — | Path to persist active session state across restarts |
 
 #### Admin access
 
 | Variable | Default | Description |
 |---|---|---|
 | `IDENTREE_ADMIN_GROUPS` | — | Comma-separated OIDC groups with admin UI access |
-| `IDENTREE_ADMIN_APPROVAL_HOSTS` | — | Comma-separated hostnames requiring manual admin approval (glob patterns) |
+| `IDENTREE_ADMIN_APPROVAL_HOSTS` | — | Hostnames requiring manual admin approval (glob patterns) |
 
 #### LDAP server
 
@@ -345,35 +221,36 @@ IDENTREE_WEBHOOK_SECRET=your-hmac-secret   # validates incoming signatures
 | `IDENTREE_LDAP_ENABLED` | `true` | Enable the embedded LDAP server |
 | `IDENTREE_LDAP_LISTEN_ADDR` | `:389` | LDAP listen address |
 | `IDENTREE_LDAP_BASE_DN` | — | **Required if LDAP enabled.** Base DN |
-| `IDENTREE_LDAP_BIND_DN` | — | Service account DN for read-only bind (leave blank for anonymous binds) |
+| `IDENTREE_LDAP_BIND_DN` | — | Service account DN for read-only bind |
 | `IDENTREE_LDAP_BIND_PASSWORD` | — | Service account password |
 | `IDENTREE_LDAP_REFRESH_INTERVAL` | `300s` | How often to sync from PocketID |
-| `IDENTREE_LDAP_UID_MAP_FILE` | `/var/lib/identree/uidmap.json` | UID/GID persistence file |
+| `IDENTREE_LDAP_UID_MAP_FILE` | `/config/uidmap.json` | UID/GID persistence file |
 | `IDENTREE_LDAP_UID_BASE` | `200000` | First UID assigned to PocketID users |
 | `IDENTREE_LDAP_GID_BASE` | `200000` | First GID assigned to PocketID groups |
-| `IDENTREE_LDAP_DEFAULT_SHELL` | `/bin/bash` | Default `loginShell` for LDAP user entries |
+| `IDENTREE_LDAP_DEFAULT_SHELL` | `/bin/bash` | Default `loginShell` |
 | `IDENTREE_LDAP_DEFAULT_HOME` | `/home/%s` | `homeDirectory` pattern (`%s` = username) |
-| `IDENTREE_SUDO_NO_AUTHENTICATE` | `false` | `false`, `true`, or `claims` — see [Sudo policy](#sudo-policy-full-mode) |
-| `IDENTREE_SUDO_RULES_FILE` | `/var/lib/identree/sudorules.json` | Static sudo rules file (bridge mode) |
+| `IDENTREE_SUDO_NO_AUTHENTICATE` | `false` | `false`, `true`, or `claims` — see [deployment modes](docs/deployment-modes.md) |
+| `IDENTREE_SUDO_RULES_FILE` | `/config/sudorules.json` | Sudo rules file (bridge mode) |
 
 #### Notifications
 
 | Variable | Default | Description |
 |---|---|---|
-| `IDENTREE_NOTIFY_COMMAND` | — | Script to run when a new challenge is created |
-| `IDENTREE_NOTIFY_ENV_PASSTHROUGH` | — | Comma-separated env var prefixes passed to the notify command (e.g. `SLACK_,MY_APP_`) |
-| `IDENTREE_NOTIFY_USERS_FILE` | — | JSON file mapping usernames → per-user webhook URLs |
-| `IDENTREE_NOTIFY_USERS` | — | Inline JSON equivalent of `IDENTREE_NOTIFY_USERS_FILE` |
-| `IDENTREE_NOTIFY_TIMEOUT` | `15s` | Max time to wait for the notify command to complete |
-| `IDENTREE_WEBHOOKS` | — | JSON array of webhook destinations (see [Notifications](#notifications)) |
-| `IDENTREE_WEBHOOKS_FILE` | — | Path to a JSON file containing webhook destinations |
-| `IDENTREE_WEBHOOK_TIMEOUT` | `10s` | Per-webhook HTTP request timeout |
+| `IDENTREE_NOTIFY_BACKEND` | — | `ntfy`, `slack`, `discord`, `apprise`, `webhook`, or `custom` |
+| `IDENTREE_NOTIFY_URL` | — | Webhook URL (all backends except `custom`) |
+| `IDENTREE_NOTIFY_TOKEN` | — | Optional Bearer token for webhook auth |
+| `IDENTREE_NOTIFY_COMMAND` | — | Command to execute (`custom` backend only) |
+| `IDENTREE_NOTIFY_TIMEOUT` | `15s` | Timeout for HTTP requests or command execution |
+
+See [docs/notifications.md](docs/notifications.md) for full details and examples.
 
 #### PocketID webhook receiver
 
 | Variable | Default | Description |
 |---|---|---|
-| `IDENTREE_WEBHOOK_SECRET` | — | HMAC-SHA256 secret for validating incoming PocketID webhook signatures |
+| `IDENTREE_WEBHOOK_SECRET` | — | HMAC-SHA256 secret for validating incoming PocketID webhooks |
+
+Set up a webhook in PocketID pointing to `https://identree.example.com/api/webhook/pocketid` for immediate LDAP directory refreshes when users or groups change.
 
 #### Break-glass escrow
 
@@ -381,13 +258,23 @@ IDENTREE_WEBHOOK_SECRET=your-hmac-secret   # validates incoming signatures
 |---|---|---|
 | `IDENTREE_ESCROW_BACKEND` | — | `1password-connect`, `vault`, `bitwarden`, `infisical`, or `local` |
 | `IDENTREE_ESCROW_URL` | — | API URL of the secret backend |
-| `IDENTREE_ESCROW_AUTH_ID` | — | Application/client ID for the secret backend |
-| `IDENTREE_ESCROW_AUTH_SECRET` | — | Credential for the secret backend |
-| `IDENTREE_ESCROW_AUTH_SECRET_FILE` | — | Path to a file containing the secret backend credential |
-| `IDENTREE_ESCROW_PATH` | — | Storage path/prefix in the backend (vault mount, 1Password vault name, etc.) |
+| `IDENTREE_ESCROW_AUTH_ID` | — | Application/client ID |
+| `IDENTREE_ESCROW_AUTH_SECRET` | — | Credential (or use `_FILE` variant) |
+| `IDENTREE_ESCROW_AUTH_SECRET_FILE` | — | Path to a file containing the credential |
+| `IDENTREE_ESCROW_PATH` | — | Storage path/prefix in the backend |
 | `IDENTREE_ESCROW_WEB_URL` | — | Link to the backend's web UI (shown in admin panel) |
-| `IDENTREE_ESCROW_ENCRYPTION_KEY` | — | Encryption key for `local` backend (AES-256-GCM) |
-| `IDENTREE_BREAKGLASS_ROTATE_BEFORE` | — | RFC 3339 timestamp — clients with older hashes are prompted to rotate |
+| `IDENTREE_ESCROW_ENCRYPTION_KEY` | — | Encryption key for `local` backend |
+| `IDENTREE_BREAKGLASS_ROTATE_BEFORE` | — | RFC 3339 timestamp — clients older than this are prompted to rotate |
+
+See [docs/breakglass.md](docs/breakglass.md) for full details and per-backend examples.
+
+#### Persistent state files
+
+| Variable | Default | Description |
+|---|---|---|
+| `IDENTREE_SESSION_STATE_FILE` | `/config/sessions.json` | Active sessions (persists across restarts) |
+| `IDENTREE_HOST_REGISTRY_FILE` | `/config/hosts.json` | Registered host registry |
+| `IDENTREE_HISTORY_PAGE_SIZE` | `10` | Default entries per page in the history view |
 
 #### Client defaults (pushed to clients at registration)
 
@@ -396,13 +283,6 @@ IDENTREE_WEBHOOK_SECRET=your-hmac-secret   # validates incoming signatures
 | `IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE` | `random` | Break-glass password style: `random`, `passphrase`, `alphanumeric` |
 | `IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS` | `90` | Days between auto-rotations (`0` disables) |
 | `IDENTREE_CLIENT_TOKEN_CACHE_ENABLED` | `true` | Allow clients to cache OIDC tokens locally |
-
-#### Miscellaneous
-
-| Variable | Default | Description |
-|---|---|---|
-| `IDENTREE_HOST_REGISTRY_FILE` | — | JSON file of registered hosts |
-| `IDENTREE_HISTORY_PAGE_SIZE` | `10` | Default entries per page in the history view |
 
 ---
 
@@ -445,7 +325,7 @@ identree --version                      Print version
 ### Prerequisites
 
 - Go 1.22+
-- Docker (for the test environment)
+- Docker + Docker Compose
 - `make`
 
 ### Running the test environment
@@ -457,48 +337,31 @@ make logs    # follow server logs
 make ps      # show container status
 ```
 
-The test environment starts:
+Test environment:
 - PocketID at `http://localhost:1411`
-- identree server at `http://localhost:8090`
-- An SSH test host at `192.168.215.2`
-
-### Logging into the test PocketID instance
-
-To get a browser session cookie for the test PocketID instance as `testadmin`:
-
-```bash
-CODE=$(docker exec identree-test-pocketid /app/pocket-id one-time-access-token testadmin 2>&1 | grep -oE '/lc/[^ ]+' | grep -oE '[^/]+$')
-JWT=$(curl -si "http://localhost:1411/api/one-time-access-token/$CODE" -X POST | grep -i "set-cookie" | grep -oE 'access_token=[^;]+')
-printf 'document.cookie = "%s; path=/; SameSite=Lax"' "$JWT" | pbcopy
-```
-
-Paste the copied command into the browser console on `http://localhost:1411` and refresh.
+- identree at `http://localhost:8090`
+- SSH test host at `192.168.215.2`
 
 ### Building
 
 ```sh
+make build
+# or manually:
 go build -trimpath \
   -ldflags "-X main.version=v0.1.0 -X main.commit=$(git rev-parse HEAD)" \
   -o identree ./cmd/identree/
-```
-
-Or with `make`:
-
-```sh
-make build
 ```
 
 ---
 
 ## Migrating from pam-pocketid + glauth-pocketid
 
-identree replaces both. Migration is designed to be non-breaking.
+identree replaces both. Migration is non-breaking.
 
-1. Export `uidmap.json` from your glauth-pocketid container.
-2. Set `IDENTREE_LDAP_UID_MAP_FILE` and copy in the exported file — identree imports the existing UID/GID assignments automatically.
-3. Replace `pam-pocketid` with `identree` in `/etc/pam.d/sudo`.
-4. `PAM_POCKETID_*` env vars and `/etc/pam-pocketid.conf` are still read as fallbacks — no immediate config changes required.
-5. Move sudo policy from group naming conventions (`sudo-hostname`) to [custom claims](#sudo-policy-full-mode) on your PocketID groups.
+1. Export `uidmap.json` from glauth-pocketid and copy it to `/config/uidmap.json`.
+2. Replace `pam-pocketid` with `identree` in `/etc/pam.d/sudo`.
+3. `PAM_POCKETID_*` env vars and `/etc/pam-pocketid.conf` are still read as fallbacks.
+4. Move sudo policy from group naming conventions to [custom claims](docs/deployment-modes.md#sudo-policy-full-mode).
 
 ---
 
