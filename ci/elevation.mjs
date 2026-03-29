@@ -149,41 +149,50 @@ await saveTermShot("elevation-1", [
   [{ c: "dim", t: "  Code: " }, { c: "code", t: userCode }, { c: "dim", t: " (notification sent)" }],
 ]);
 
-// ── elevation-2: browser — admin sees pending challenge ───────────────────────
+// ── elevation-2: browser — eve sees her pending challenge ─────────────────────
 
-console.log("elevation-2 (browser — pending challenge)...");
+console.log("elevation-2 (browser — eve's pending challenge)...");
 const ctx2 = await browser.newContext({ viewport: BROWSER_VIEWPORT });
 const dashPage = await ctx2.newPage();
 await dashPage.setViewportSize(BROWSER_VIEWPORT);
-// Dev login as admin
-await dashPage.goto(`${BASE_URL}/dev/login?user=testadmin&role=admin`, { waitUntil: "load" });
+// Dev login as eve (the user who issued sudo)
+await dashPage.goto(`${BASE_URL}/dev/login?user=${USER}&role=user`, { waitUntil: "load" });
 await dashPage.emulateMedia({ colorScheme: "light" });
-// Navigate to dashboard — alice's challenge should appear in pending list
+// Navigate to dashboard — eve's pending challenge should appear
 await dashPage.goto(`${BASE_URL}/`, { waitUntil: "load" });
 await dashPage.waitForSelector(".row", { timeout: 8000 }).catch(() => {});
 await dashPage.waitForTimeout(400);
 await dashPage.screenshot({ path: `${SCREENSHOTS_DIR}/elevation-2.png`, fullPage: false });
 console.log(`  saved ${SCREENSHOTS_DIR}/elevation-2.png`);
 
-// Approve alice's specific challenge row (identified by her username in .row-sub)
-const aliceRow = dashPage.locator(".row").filter({
-  has: dashPage.locator(".row-sub", { hasText: USER }),
+await dashPage.close();
+await ctx2.close();
+
+// Approve as admin in a separate context
+const ctx2admin = await browser.newContext({ viewport: BROWSER_VIEWPORT });
+const adminPage = await ctx2admin.newPage();
+await adminPage.goto(`${BASE_URL}/dev/login?user=testadmin&role=admin`, { waitUntil: "load" });
+await adminPage.goto(`${BASE_URL}/`, { waitUntil: "load" });
+await adminPage.waitForSelector(".row", { timeout: 8000 }).catch(() => {});
+
+const eveRow = adminPage.locator(".row").filter({
+  has: adminPage.locator(".row-sub", { hasText: USER }),
 }).first();
 
-if (await aliceRow.count() > 0) {
-  const approveBtn = aliceRow.locator("button.btn-success").first();
+if (await eveRow.count() > 0) {
+  const approveBtn = eveRow.locator("button.btn-success").first();
   if (await approveBtn.count() > 0) {
     await approveBtn.click();
     console.log("  clicked Approve for", USER);
   } else {
-    console.warn("  Approve button not found in alice's row");
+    console.warn("  Approve button not found in eve's row");
   }
 } else {
-  console.warn("  alice's challenge row not found — challenge may have expired");
+  console.warn("  eve's challenge row not found — challenge may have expired");
 }
 
-await dashPage.close();
-await ctx2.close();
+await adminPage.close();
+await ctx2admin.close();
 
 // ── Wait for PAM process to finish ───────────────────────────────────────────
 
