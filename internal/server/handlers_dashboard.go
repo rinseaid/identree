@@ -67,6 +67,33 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+// handleDevSeedHistory injects action log entries at a given timestamp offset.
+// Only registered when IDENTREE_DEV_LOGIN=true. Never use in production.
+// POST /dev/seed-history  body: [{"username":"alice","action":"approved","hostname":"prod-web-01","actor":"testadmin","minutes_ago":90}]
+func (s *Server) handleDevSeedHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var entries []struct {
+		Username   string `json:"username"`
+		Action     string `json:"action"`
+		Hostname   string `json:"hostname"`
+		Actor      string `json:"actor"`
+		MinutesAgo int    `json:"minutes_ago"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&entries); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	now := time.Now()
+	for _, e := range entries {
+		at := now.Add(-time.Duration(e.MinutesAgo) * time.Minute)
+		s.store.LogActionAt(e.Username, e.Action, e.Hostname, "", e.Actor, at)
+	}
+	w.WriteHeader(http.StatusCreated)
+}
+
 // handleDevSeedSession creates a grace session directly for testing.
 // Only registered when IDENTREE_DEV_LOGIN=true. Never use in production.
 // POST /dev/seed-session  body: {"username":"alice","hostname":"prod-web-01"}

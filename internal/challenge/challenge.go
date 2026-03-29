@@ -612,10 +612,15 @@ func (s *ChallengeStore) AllActionHistoryWithUsers() []ActionLogEntryWithUser {
 // when the serialized state exceeds 1 MB.
 // actor is who performed the action; if empty or equal to username (self-action), Actor is not stored.
 func (s *ChallengeStore) LogAction(username, action, hostname, code, actor string) {
+	s.LogActionAt(username, action, hostname, code, actor, time.Now())
+}
+
+// LogActionAt records an action with an explicit timestamp (for seeding test data).
+func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor string, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry := ActionLogEntry{
-		Timestamp: time.Now(),
+		Timestamp: at,
 		Action:    action,
 		Hostname:  hostname,
 		Code:      code,

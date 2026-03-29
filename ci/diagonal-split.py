@@ -40,10 +40,12 @@ def diagonal_split(light_img: Image.Image, dark_img: Image.Image) -> Image.Image
     w, h = light_img.size
 
     # Build mask at higher resolution, then downsample for anti-aliasing.
+    # Diagonal runs top-left → bottom-right (\).
+    # Light occupies the upper-right triangle; dark the lower-left.
     sw, sh = w * SSAA, h * SSAA
     hi_mask = Image.new("L", (sw, sh), 0)
     draw = ImageDraw.Draw(hi_mask)
-    draw.polygon([(0, 0), (sw, 0), (0, sh)], fill=255)
+    draw.polygon([(0, 0), (sw, 0), (sw, sh)], fill=255)
     mask = hi_mask.resize((w, h), Image.LANCZOS)
 
     # Composite: start with dark, paste light over it using the smooth mask.

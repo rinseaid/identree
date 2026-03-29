@@ -384,6 +384,57 @@ export CI_PENDING_CHALLENGE_1="$PENDING_1"
 echo "    Pending challenge IDs: ${PENDING_1} ${PENDING_2} ${PENDING_3}"
 echo "    CI_PENDING_CHALLENGE_1=${PENDING_1}" > /tmp/identree-ci-env.sh
 
+# ── Seed action history (spread over past 24 hours) ────────────────────────────
+
+echo "==> Seeding action history..."
+
+curl -sf -X POST "${IDENTREE_URL}/dev/seed-history" \
+    -H "Content-Type: application/json" \
+    -d '[
+      {"username":"alice",  "action":"approved",      "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":5},
+      {"username":"bob",    "action":"approved",      "hostname":"prod-db-01",     "actor":"testadmin", "minutes_ago":18},
+      {"username":"grace",  "action":"approved",      "hostname":"prod-lb-01",     "actor":"testadmin", "minutes_ago":34},
+      {"username":"carol",  "action":"approved",      "hostname":"staging-01",     "actor":"testadmin", "minutes_ago":47},
+      {"username":"alice",  "action":"revoked",       "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":62},
+      {"username":"dave",   "action":"approved",      "hostname":"staging-02",     "actor":"testadmin", "minutes_ago":78},
+      {"username":"heidi",  "action":"approved",      "hostname":"prod-db-01",     "actor":"testadmin", "minutes_ago":95},
+      {"username":"ivan",   "action":"approved",      "hostname":"prod-web-02",    "actor":"testadmin", "minutes_ago":110},
+      {"username":"alice",  "action":"approved",      "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":128},
+      {"username":"neil",   "action":"approved",      "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":145},
+      {"username":"frank",  "action":"approved",      "hostname":"staging-01",     "actor":"testadmin", "minutes_ago":162},
+      {"username":"olivia", "action":"approved",      "hostname":"prod-db-01",     "actor":"testadmin", "minutes_ago":180},
+      {"username":"bob",    "action":"revoked",       "hostname":"prod-db-01",     "actor":"testadmin", "minutes_ago":198},
+      {"username":"grace",  "action":"approved",      "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":215},
+      {"username":"carol",  "action":"auto_approved", "hostname":"staging-01",     "actor":"",          "minutes_ago":232},
+      {"username":"dave",   "action":"approved",      "hostname":"staging-02",     "actor":"testadmin", "minutes_ago":250},
+      {"username":"alice",  "action":"approved",      "hostname":"prod-web-02",    "actor":"testadmin", "minutes_ago":268},
+      {"username":"heidi",  "action":"revoked",       "hostname":"prod-db-01",     "actor":"testadmin", "minutes_ago":285},
+      {"username":"ivan",   "action":"approved",      "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":302},
+      {"username":"kate",   "action":"approved",      "hostname":"data-worker-01", "actor":"testadmin", "minutes_ago":320},
+      {"username":"liam",   "action":"approved",      "hostname":"data-worker-02", "actor":"testadmin", "minutes_ago":338},
+      {"username":"neil",   "action":"auto_approved", "hostname":"prod-web-01",    "actor":"",          "minutes_ago":355},
+      {"username":"grace",  "action":"approved",      "hostname":"prod-lb-01",     "actor":"testadmin", "minutes_ago":373},
+      {"username":"frank",  "action":"revoked",       "hostname":"staging-01",     "actor":"testadmin", "minutes_ago":390},
+      {"username":"bob",    "action":"approved",      "hostname":"prod-db-01",     "actor":"testadmin", "minutes_ago":408},
+      {"username":"alice",  "action":"approved",      "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":425},
+      {"username":"olivia", "action":"approved",      "hostname":"prod-web-02",    "actor":"testadmin", "minutes_ago":443},
+      {"username":"dave",   "action":"auto_approved", "hostname":"staging-02",     "actor":"",          "minutes_ago":460},
+      {"username":"carol",  "action":"approved",      "hostname":"staging-01",     "actor":"testadmin", "minutes_ago":478},
+      {"username":"heidi",  "action":"approved",      "hostname":"prod-db-01",     "actor":"testadmin", "minutes_ago":495},
+      {"username":"ivan",   "action":"revoked",       "hostname":"prod-web-02",    "actor":"testadmin", "minutes_ago":512},
+      {"username":"kate",   "action":"approved",      "hostname":"data-worker-01", "actor":"testadmin", "minutes_ago":530},
+      {"username":"liam",   "action":"approved",      "hostname":"data-worker-03", "actor":"testadmin", "minutes_ago":548},
+      {"username":"alice",  "action":"revoked",       "hostname":"prod-web-02",    "actor":"testadmin", "minutes_ago":565},
+      {"username":"grace",  "action":"approved",      "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":583},
+      {"username":"neil",   "action":"approved",      "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":600},
+      {"username":"frank",  "action":"approved",      "hostname":"staging-01",     "actor":"testadmin", "minutes_ago":618},
+      {"username":"bob",    "action":"auto_approved", "hostname":"prod-db-01",     "actor":"",          "minutes_ago":635},
+      {"username":"maya",   "action":"approved",      "hostname":"data-worker-02", "actor":"testadmin", "minutes_ago":1200},
+      {"username":"alice",  "action":"approved",      "hostname":"prod-web-01",    "actor":"testadmin", "minutes_ago":1380}
+    ]' >/dev/null
+
+echo "    History entries injected."
+
 echo ""
 echo "==> Seed complete."
 echo "    PocketID users/groups, 12 approved sessions, and 3 pending challenges created."

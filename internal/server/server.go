@@ -261,6 +261,7 @@ func (s *Server) registerRoutes() {
 	if s.cfg.DevLoginEnabled {
 		s.mux.HandleFunc("/dev/login", s.handleDevLogin)
 		s.mux.HandleFunc("/dev/seed-session", s.handleDevSeedSession)
+		s.mux.HandleFunc("/dev/seed-history", s.handleDevSeedHistory)
 	}
 
 	// Dashboard is the catch-all — must be registered last.
