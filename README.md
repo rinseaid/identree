@@ -108,19 +108,27 @@ Open `https://identree.example.com` and log in with your PocketID account. You s
 
 ### Step 5 — Install on a managed host
 
-On each host you want to manage, run:
+**Option A — Deploy directly from the admin UI (recommended)**
+
+Go to **Hosts → Deploy** in the identree admin UI. Fill in the target hostname, SSH user, and paste in a private key with SSH access to the host. identree SSHes in, runs the installer, and streams the output back in real time. Once complete the host appears in the Hosts list automatically.
+
+**Option B — Run the installer manually**
+
+On the host:
 
 ```sh
 curl -fsSL https://identree.example.com/install.sh | sudo bash
 ```
 
-The installer:
-- Downloads the identree binary
-- Writes `/etc/identree/client.conf` with the server URL and shared secret
-- Configures `/etc/pam.d/sudo` to use the PAM helper
-- Generates and stores a break-glass password locally
+Or fetch the script first to inspect it, then run it:
 
-Once installed, the host appears in the identree admin UI under **Hosts**. From there you can rotate break-glass passwords, view per-host sessions, and remove hosts.
+```sh
+curl -fsSL https://identree.example.com/install.sh -o install.sh
+less install.sh   # review
+sudo bash install.sh
+```
+
+The installer downloads the identree binary, writes `/etc/identree/client.conf` with the server URL and shared secret, configures `/etc/pam.d/sudo`, and generates a local break-glass password.
 
 ### Step 6 — Register a passkey and try it
 
@@ -278,10 +286,15 @@ See [docs/breakglass.md](docs/breakglass.md) for full details and per-backend ex
 | `IDENTREE_HOST_REGISTRY_FILE` | `/config/hosts.json` | Registered host registry |
 | `IDENTREE_HISTORY_PAGE_SIZE` | `10` | Default entries per page in the history view |
 
-#### Client defaults (pushed to clients at registration)
+#### Client defaults (pushed to clients on every auth)
+
+These are sent in the challenge response and override each client's local config without editing files on the host. Configure them in the admin UI under **Configuration → Client Defaults**.
 
 | Variable | Default | Description |
 |---|---|---|
+| `IDENTREE_CLIENT_POLL_INTERVAL` | `2s` | How often clients poll for challenge resolution |
+| `IDENTREE_CLIENT_TIMEOUT` | `120s` | Max time clients wait for user approval |
+| `IDENTREE_CLIENT_BREAKGLASS_ENABLED` | `true` | Enable break-glass fallback on clients |
 | `IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE` | `random` | Break-glass password style: `random`, `passphrase`, `alphanumeric` |
 | `IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS` | `90` | Days between auto-rotations (`0` disables) |
 | `IDENTREE_CLIENT_TOKEN_CACHE_ENABLED` | `true` | Allow clients to cache OIDC tokens locally |
@@ -290,18 +303,22 @@ See [docs/breakglass.md](docs/breakglass.md) for full details and per-backend ex
 
 ### Client (`/etc/identree/client.conf`)
 
-| Variable | Default | Description |
+Only two values need to be set locally. Everything else is pushed by the server on every authentication and does not need to be in the client config file.
+
+| Variable | Default | Source |
 |---|---|---|
-| `IDENTREE_SERVER_URL` | — | **Required.** identree server URL |
-| `IDENTREE_SHARED_SECRET` | — | **Required.** Shared secret |
-| `IDENTREE_POLL_INTERVAL` | `2s` | How often to poll for challenge resolution |
-| `IDENTREE_TIMEOUT` | `120s` | Max time to wait for user approval |
-| `IDENTREE_BREAKGLASS_ENABLED` | `true` | Enable break-glass fallback |
-| `IDENTREE_BREAKGLASS_FILE` | `/etc/identree-breakglass` | Break-glass hash file |
-| `IDENTREE_BREAKGLASS_ROTATION_DAYS` | `90` | Days between rotations |
-| `IDENTREE_BREAKGLASS_PASSWORD_TYPE` | `random` | `random`, `passphrase`, or `alphanumeric` |
-| `IDENTREE_TOKEN_CACHE_ENABLED` | `true` | Cache OIDC tokens locally |
-| `IDENTREE_TOKEN_CACHE_DIR` | `/run/identree` | Token cache directory |
+| `IDENTREE_SERVER_URL` | — | **Required. Local only.** |
+| `IDENTREE_SHARED_SECRET` | — | **Required. Local only.** |
+| `IDENTREE_BREAKGLASS_FILE` | `/etc/identree-breakglass` | Local only (filesystem path) |
+| `IDENTREE_POLL_INTERVAL` | `2s` | Pushed by server (`IDENTREE_CLIENT_POLL_INTERVAL`) |
+| `IDENTREE_TIMEOUT` | `120s` | Pushed by server (`IDENTREE_CLIENT_TIMEOUT`) |
+| `IDENTREE_BREAKGLASS_ENABLED` | `true` | Pushed by server (`IDENTREE_CLIENT_BREAKGLASS_ENABLED`) |
+| `IDENTREE_BREAKGLASS_ROTATION_DAYS` | `90` | Pushed by server (`IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS`) |
+| `IDENTREE_BREAKGLASS_PASSWORD_TYPE` | `random` | Pushed by server (`IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE`) |
+| `IDENTREE_TOKEN_CACHE_ENABLED` | `true` | Pushed by server (`IDENTREE_CLIENT_TOKEN_CACHE_ENABLED`) |
+| `IDENTREE_TOKEN_CACHE_DIR` | `/run/identree` | Local only (filesystem path) |
+
+Server-pushed values are sent in the challenge response on every `sudo` invocation and apply for that session. They override the local config without modifying the file. Configure them centrally in the admin UI under **Configuration → Client Defaults**.
 
 > Legacy `PAM_POCKETID_*` env vars and `/etc/pam-pocketid.conf` are still read as fallbacks.
 

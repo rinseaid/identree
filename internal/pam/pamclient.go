@@ -77,6 +77,9 @@ func NewPAMClient(cfg *config.ClientConfig, tokenCache *TokenCache) *PAMClient {
 
 // clientConfigResponse is the server-side client config override.
 type clientConfigResponse struct {
+	PollInterval           string `json:"poll_interval,omitempty"`            // Go duration string, e.g. "2s"
+	Timeout                string `json:"timeout,omitempty"`                  // Go duration string, e.g. "120s"
+	BreakglassEnabled      *bool  `json:"breakglass_enabled,omitempty"`
 	BreakglassPasswordType string `json:"breakglass_password_type,omitempty"`
 	BreakglassRotationDays int    `json:"breakglass_rotation_days,omitempty"`
 	TokenCacheEnabled      *bool  `json:"token_cache_enabled,omitempty"`
@@ -413,6 +416,19 @@ func (p *PAMClient) queryGraceStatus(username string) graceStatusResult {
 func applyClientConfig(p *PAMClient, challenge *challengeResponse) {
 	if challenge.ClientConfig == nil {
 		return
+	}
+	if challenge.ClientConfig.PollInterval != "" {
+		if d, err := time.ParseDuration(challenge.ClientConfig.PollInterval); err == nil {
+			p.cfg.PollInterval = d
+		}
+	}
+	if challenge.ClientConfig.Timeout != "" {
+		if d, err := time.ParseDuration(challenge.ClientConfig.Timeout); err == nil {
+			p.cfg.Timeout = d
+		}
+	}
+	if challenge.ClientConfig.BreakglassEnabled != nil {
+		p.cfg.BreakglassEnabled = *challenge.ClientConfig.BreakglassEnabled
 	}
 	if challenge.ClientConfig.BreakglassPasswordType != "" {
 		p.cfg.BreakglassPasswordType = challenge.ClientConfig.BreakglassPasswordType

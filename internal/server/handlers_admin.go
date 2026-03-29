@@ -39,6 +39,9 @@ var liveUpdateKeys = map[string]bool{
 	"IDENTREE_ESCROW_AUTH_ID":                  true,
 	"IDENTREE_ESCROW_PATH":                     true,
 	"IDENTREE_ESCROW_WEB_URL":                  true,
+	"IDENTREE_CLIENT_POLL_INTERVAL":            true,
+	"IDENTREE_CLIENT_TIMEOUT":                  true,
+	"IDENTREE_CLIENT_BREAKGLASS_ENABLED":       true,
 	"IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE": true,
 	"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS": true,
 	"IDENTREE_CLIENT_TOKEN_CACHE_ENABLED":      true,
@@ -473,6 +476,9 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_ESCROW_AUTH_ID":                  cfg.EscrowAuthID,
 		"IDENTREE_ESCROW_PATH":                     cfg.EscrowPath,
 		"IDENTREE_ESCROW_WEB_URL":                  cfg.EscrowWebURL,
+		"IDENTREE_CLIENT_POLL_INTERVAL":            formatDuration(cfg.ClientPollInterval),
+		"IDENTREE_CLIENT_TIMEOUT":                  formatDuration(cfg.ClientTimeout),
+		"IDENTREE_CLIENT_BREAKGLASS_ENABLED":       boolPtrToString(cfg.ClientBreakglassEnabled),
 		"IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE": cfg.ClientBreakglassPasswordType,
 		"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS": strconv.Itoa(cfg.ClientBreakglassRotationDays),
 		"IDENTREE_CLIENT_TOKEN_CACHE_ENABLED":      tokenCache,
@@ -488,6 +494,13 @@ func boolToString(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func boolPtrToString(b *bool) string {
+	if b == nil {
+		return ""
+	}
+	return boolToString(*b)
 }
 
 // configLockedKeys returns the set of env var keys that are currently sourced from the environment.
@@ -533,6 +546,7 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 		"IDENTREE_CHALLENGE_TTL", "IDENTREE_GRACE_PERIOD",
 		"IDENTREE_ONE_TAP_MAX_AGE", "IDENTREE_LDAP_REFRESH_INTERVAL",
 		"IDENTREE_NOTIFY_TIMEOUT",
+		"IDENTREE_CLIENT_POLL_INTERVAL", "IDENTREE_CLIENT_TIMEOUT",
 	} {
 		if v := values[key]; v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
@@ -663,6 +677,29 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 	if !config.IsEnvSourced("IDENTREE_ESCROW_WEB_URL") {
 		s.cfg.EscrowWebURL = values["IDENTREE_ESCROW_WEB_URL"]
 	}
+	if !config.IsEnvSourced("IDENTREE_CLIENT_POLL_INTERVAL") {
+		if d, err := time.ParseDuration(values["IDENTREE_CLIENT_POLL_INTERVAL"]); err == nil && d > 0 {
+			s.cfg.ClientPollInterval = d
+		} else if values["IDENTREE_CLIENT_POLL_INTERVAL"] == "" {
+			s.cfg.ClientPollInterval = 0
+		}
+	}
+	if !config.IsEnvSourced("IDENTREE_CLIENT_TIMEOUT") {
+		if d, err := time.ParseDuration(values["IDENTREE_CLIENT_TIMEOUT"]); err == nil && d > 0 {
+			s.cfg.ClientTimeout = d
+		} else if values["IDENTREE_CLIENT_TIMEOUT"] == "" {
+			s.cfg.ClientTimeout = 0
+		}
+	}
+	if !config.IsEnvSourced("IDENTREE_CLIENT_BREAKGLASS_ENABLED") {
+		if v := values["IDENTREE_CLIENT_BREAKGLASS_ENABLED"]; v != "" {
+			if b, err := strconv.ParseBool(v); err == nil {
+				s.cfg.ClientBreakglassEnabled = &b
+			}
+		} else {
+			s.cfg.ClientBreakglassEnabled = nil
+		}
+	}
 	if !config.IsEnvSourced("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE") {
 		s.cfg.ClientBreakglassPasswordType = values["IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"]
 	}
@@ -674,6 +711,8 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 			if b, err := strconv.ParseBool(v); err == nil {
 				s.cfg.ClientTokenCacheEnabled = &b
 			}
+		} else {
+			s.cfg.ClientTokenCacheEnabled = nil
 		}
 	}
 	if !config.IsEnvSourced("IDENTREE_HISTORY_PAGE_SIZE") {

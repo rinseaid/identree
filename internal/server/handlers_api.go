@@ -434,6 +434,15 @@ func (s *Server) computeOneTapToken(challengeID string, expiresAt time.Time) str
 // or nil if no overrides are configured.
 func (s *Server) buildClientConfig() map[string]interface{} {
 	cfg := make(map[string]interface{})
+	if s.cfg.ClientPollInterval > 0 {
+		cfg["poll_interval"] = s.cfg.ClientPollInterval.String()
+	}
+	if s.cfg.ClientTimeout > 0 {
+		cfg["timeout"] = s.cfg.ClientTimeout.String()
+	}
+	if s.cfg.ClientBreakglassEnabled != nil {
+		cfg["breakglass_enabled"] = *s.cfg.ClientBreakglassEnabled
+	}
 	if s.cfg.ClientBreakglassPasswordType != "" {
 		cfg["breakglass_password_type"] = s.cfg.ClientBreakglassPasswordType
 	}

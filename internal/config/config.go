@@ -121,7 +121,12 @@ type ServerConfig struct {
 	// ── Session state ─────────────────────────────────────────────────────────
 	SessionStateFile string
 
-	// ── Client config overrides (pushed to clients at registration) ───────────
+	// ── Client config overrides (pushed to clients at every auth) ────────────
+	// Sent in the challenge response and override the client's local config.
+	// Allows central control without editing client.conf on every host.
+	ClientPollInterval           time.Duration
+	ClientTimeout                time.Duration
+	ClientBreakglassEnabled      *bool
 	ClientBreakglassPasswordType string
 	ClientBreakglassRotationDays int
 	ClientTokenCacheEnabled      *bool
@@ -289,6 +294,8 @@ func LoadServerConfig() (*ServerConfig, error) {
 		DefaultHistoryPageSize: getInt("IDENTREE_HISTORY_PAGE_SIZE", 10),
 		SessionStateFile:       stringDefault(get("IDENTREE_SESSION_STATE_FILE"), "/config/sessions.json"),
 
+		ClientPollInterval:           getDuration("IDENTREE_CLIENT_POLL_INTERVAL", 0),
+		ClientTimeout:                getDuration("IDENTREE_CLIENT_TIMEOUT", 0),
 		ClientBreakglassPasswordType: get("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"),
 		ClientBreakglassRotationDays: getInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", 0),
 
@@ -309,11 +316,15 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
-	// Client token cache override
+	// Client bool overrides
 	if v := get("IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err == nil {
+		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.ClientTokenCacheEnabled = &b
+		}
+	}
+	if v := get("IDENTREE_CLIENT_BREAKGLASS_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.ClientBreakglassEnabled = &b
 		}
 	}
 
