@@ -38,7 +38,7 @@ async function loginPage(context, user = "testadmin", role = "admin") {
   await page.setViewportSize(VIEWPORT);
   // Dev login sets a session cookie and redirects to /
   await page.goto(`${BASE_URL}/dev/login?user=${user}&role=${role}`, {
-    waitUntil: "networkidle",
+    waitUntil: "load",
   });
   return page;
 }
@@ -106,33 +106,33 @@ const context = await browser.newContext({
 
 console.log("Dashboard...");
 await screenshot(context, "dashboard", async (page) => {
-  await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
 });
 
 // ── 2. Sessions page ──────────────────────────────────────────────────────────
 
 console.log("Sessions...");
 await screenshot(context, "sessions", async (page) => {
-  await page.goto(`${BASE_URL}/sessions`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/sessions`, { waitUntil: "load" });
 });
 
 // ── 3. Access page ────────────────────────────────────────────────────────────
 
 console.log("Access...");
 await screenshot(context, "access", async (page) => {
-  await page.goto(`${BASE_URL}/access`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/access`, { waitUntil: "load" });
 });
 
 // ── 4. History page ───────────────────────────────────────────────────────────
 
 console.log("History (default)...");
 await screenshot(context, "history", async (page) => {
-  await page.goto(`${BASE_URL}/history`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/history`, { waitUntil: "load" });
 });
 
 console.log("History (with filters)...");
 await screenshot(context, "history-filtered", async (page) => {
-  await page.goto(`${BASE_URL}/history`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/history`, { waitUntil: "load" });
   // Type into filter boxes if they exist
   const userFilter = page.locator('input[name="user"], input[placeholder*="user" i]').first();
   if (await userFilter.count() > 0) {
@@ -150,19 +150,19 @@ await screenshot(context, "history-filtered", async (page) => {
 
 console.log("Hosts...");
 await screenshot(context, "hosts", async (page) => {
-  await page.goto(`${BASE_URL}/admin/hosts`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/admin/hosts`, { waitUntil: "load" });
 });
 
 // ── 6. Users page ─────────────────────────────────────────────────────────────
 
 console.log("Users...");
 await screenshot(context, "users", async (page) => {
-  await page.goto(`${BASE_URL}/admin/users`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/admin/users`, { waitUntil: "load" });
 });
 
 console.log("Users (SSH key claims expanded)...");
 await screenshot(context, "users-expanded", async (page) => {
-  await page.goto(`${BASE_URL}/admin/users`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/admin/users`, { waitUntil: "load" });
   // Try to open the first user's claims detail row or expand button
   const expandBtn = page
     .locator(
@@ -188,12 +188,12 @@ await screenshot(context, "users-expanded", async (page) => {
 
 console.log("Groups...");
 await screenshot(context, "groups", async (page) => {
-  await page.goto(`${BASE_URL}/admin/groups`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/admin/groups`, { waitUntil: "load" });
 });
 
 console.log("Groups (developers expanded)...");
 await screenshot(context, "groups-expanded", async (page) => {
-  await page.goto(`${BASE_URL}/admin/groups`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/admin/groups`, { waitUntil: "load" });
   // Expand the developers group to show its custom claims
   const devRow = page
     .locator("tr, .group-row, li, details")
@@ -225,19 +225,19 @@ await screenshot(context, "groups-expanded", async (page) => {
 
 console.log("Admin info...");
 await screenshot(context, "admin-info", async (page) => {
-  await page.goto(`${BASE_URL}/admin/info`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/admin/info`, { waitUntil: "load" });
 });
 
 // ── 9. Admin config page ──────────────────────────────────────────────────────
 
 console.log("Admin config (top)...");
 await screenshot(context, "admin-config", async (page) => {
-  await page.goto(`${BASE_URL}/admin/config`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/admin/config`, { waitUntil: "load" });
 });
 
 console.log("Admin config (LDAP section)...");
 await screenshot(context, "admin-config-ldap", async (page) => {
-  await page.goto(`${BASE_URL}/admin/config`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/admin/config`, { waitUntil: "load" });
   // Scroll to the LDAP section
   const ldapSection = page
     .locator(
@@ -269,7 +269,7 @@ await screenshot(context, "approval", async (page) => {
 
 console.log("Sudo rules...");
 await screenshot(context, "sudo-rules", async (page) => {
-  await page.goto(`${BASE_URL}/admin/sudo-rules`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE_URL}/admin/sudo-rules`, { waitUntil: "load" });
 });
 
 // ── Cleanup ───────────────────────────────────────────────────────────────────
