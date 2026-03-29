@@ -141,21 +141,6 @@ await screenshot(context, "history", async (page) => {
   await page.goto(`${BASE_URL}/history`, { waitUntil: "load" });
 });
 
-console.log("History (filters open)...");
-await screenshot(context, "history-filtered", async (page) => {
-  await page.goto(`${BASE_URL}/history`, { waitUntil: "load" });
-  // Fill any visible filter inputs
-  const inputs = await page.locator("input[type='text'], input[type='search']").all();
-  if (inputs.length > 0) {
-    await inputs[0].fill("alice");
-    await page.waitForTimeout(400);
-  }
-  if (inputs.length > 1) {
-    await inputs[1].fill("prod");
-    await page.waitForTimeout(400);
-  }
-});
-
 // ── 5. Hosts ───────────────────────────────────────────────────────────────────
 
 console.log("Hosts...");
