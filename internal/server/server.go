@@ -17,6 +17,7 @@ import (
 
 	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
+	"github.com/rinseaid/identree/internal/escrow"
 	"github.com/rinseaid/identree/internal/pocketid"
 	"github.com/rinseaid/identree/internal/sudorules"
 )
@@ -51,6 +52,10 @@ type Server struct {
 
 	pocketIDClient *pocketid.PocketIDClient
 
+	// escrowKey is the 32-byte AES key for the local escrow backend.
+	// Only set when EscrowBackend == "local".
+	escrowKey []byte
+
 	// sudoRules is non-nil in bridge mode (APIKey == "").
 	sudoRules *sudorules.Store
 
@@ -62,6 +67,10 @@ type Server struct {
 	deployJobs map[string]*deployJob
 	deployMu   sync.Mutex
 	deployRL   *deployRateLimiter
+
+	// Recently-removed users: excluded from PocketID merge until cleared.
+	removedUsers   map[string]time.Time
+	removedUsersMu sync.Mutex
 }
 
 var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
@@ -109,9 +118,21 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		sseClients:    make(map[string][]chan string),
 		deployJobs:    make(map[string]*deployJob),
 		deployRL:      newDeployRateLimiter(),
+		removedUsers:  make(map[string]time.Time),
 		ldapRefreshCh:  make(chan struct{}, 1),
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
 		sudoRules:      store,
+	}
+
+	if cfg.EscrowBackend == config.EscrowBackendLocal {
+		if cfg.EscrowEncryptionKey == "" {
+			return nil, fmt.Errorf("IDENTREE_ESCROW_ENCRYPTION_KEY must be set when using the local escrow backend")
+		}
+		key, err := escrow.DeriveEscrowKey(cfg.EscrowEncryptionKey)
+		if err != nil {
+			return nil, fmt.Errorf("deriving escrow encryption key: %w", err)
+		}
+		s.escrowKey = key
 	}
 
 	s.registerRoutes()
@@ -130,6 +151,7 @@ func (s *Server) registerRoutes() {
 
 	// Break-glass escrow
 	s.mux.HandleFunc("/api/breakglass/escrow", s.handleBreakglassEscrow)
+	s.mux.HandleFunc("/api/breakglass/reveal", s.handleBreakglassReveal)
 
 	// Session management
 	s.mux.HandleFunc("/api/sessions/revoke", s.handleRevokeSession)
@@ -143,6 +165,9 @@ func (s *Server) registerRoutes() {
 	// SSE
 	s.mux.HandleFunc("/api/events", s.handleSSEEvents)
 
+	// Access page
+	s.mux.HandleFunc("/access", s.handleAccess)
+
 	// OIDC flow
 	s.mux.HandleFunc("/approve/", s.handleApprovalPage)
 	s.mux.HandleFunc("/callback", s.handleOIDCCallback)
@@ -155,6 +180,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/admin/history", s.handleHistoryPage)
 	s.mux.HandleFunc("/admin", s.handleAdmin)
 	s.mux.HandleFunc("/admin/info", s.handleAdminInfo)
+	s.mux.HandleFunc("/admin/config", s.handleAdminConfig)
 	s.mux.HandleFunc("/admin/users", s.handleAdminUsers)
 	s.mux.HandleFunc("/admin/groups", s.handleAdminGroups)
 	s.mux.HandleFunc("/admin/hosts", s.handleAdminHosts)
@@ -181,11 +207,20 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/signout", s.handleSignOut)
 	s.mux.HandleFunc("/install.sh", s.handleInstallScript)
 
+	// Self-hosted binary distribution
+	s.mux.HandleFunc("/download/version", s.handleDownloadVersion)
+	s.mux.HandleFunc("/download/identree-linux-amd64", s.handleDownloadBinary)
+	s.mux.HandleFunc("/download/identree-linux-arm64", s.handleDownloadBinary)
+	s.mux.HandleFunc("/download/systemd/", s.handleDownloadSystemd)
+
 	// Deploy
 	s.mux.HandleFunc("/api/deploy/users", s.handleDeployUsers)
 	s.mux.HandleFunc("/api/deploy/pubkey", s.handleDeployPubkey)
+	s.mux.HandleFunc("/api/deploy/uninstall-script", s.handleUninstallScript)
 	s.mux.HandleFunc("/api/deploy/stream/", s.handleDeployStream)
 	s.mux.HandleFunc("/api/deploy", s.handleDeploy)
+	s.mux.HandleFunc("/api/hosts/remove-host", s.handleRemoveHost)
+	s.mux.HandleFunc("/api/deploy/remove", s.handleRemoveDeploy)
 
 	// Legacy redirects
 	s.mux.HandleFunc("/hosts", func(w http.ResponseWriter, r *http.Request) {
@@ -250,6 +285,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type ctxKeyType string
 
 const ctxKeyCSPNonce ctxKeyType = "csp-nonce"
+
+// cspNonce retrieves the per-request CSP nonce from the context.
+func cspNonce(r *http.Request) string {
+	v, _ := r.Context().Value(ctxKeyCSPNonce).(string)
+	return v
+}
 
 // ── Webhook receiver ──────────────────────────────────────────────────────────
 

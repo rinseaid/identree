@@ -86,7 +86,7 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 		"AdminTab":   "sudo-rules",
 		"BridgeMode": s.isBridgeMode(),
 		"Theme":      getTheme(r),
-		"CSPNonce":   r.Context().Value("csp-nonce"),
+		"CSPNonce":   cspNonce(r),
 		"T":          t,
 		"Lang":       lang,
 		"Languages":  supportedLanguages,

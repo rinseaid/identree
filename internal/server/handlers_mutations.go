@@ -408,8 +408,16 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always force-extend to max grace period — the user made an explicit action.
-	remaining := s.store.ForceExtendGraceSession(username, hostname)
+	// Extend to a specific duration if provided, otherwise to full grace period.
+	var remaining time.Duration
+	if durStr := r.FormValue("duration"); durStr != "" && durStr != "max" {
+		if durSec, err := strconv.Atoi(durStr); err == nil && durSec > 0 {
+			remaining = s.store.ExtendGraceSessionFor(username, hostname, time.Duration(durSec)*time.Second)
+		}
+	}
+	if remaining == 0 {
+		remaining = s.store.ForceExtendGraceSession(username, hostname)
+	}
 	if remaining == 0 {
 		revokeErrorPage(w, r, http.StatusNotFound, "challenge_not_found", "challenge_expired_or_resolved")
 		return
@@ -573,10 +581,7 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.getSessionRole(r) != "admin" {
-		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
-		return
-	}
+	isAdmin := s.getSessionRole(r) == "admin"
 
 	hostname := r.FormValue("hostname")
 	durationStr := r.FormValue("duration")
@@ -589,13 +594,17 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Admin may elevate a different user; fall back to self if not specified.
+	// Admin may elevate any user; non-admins may only elevate themselves.
 	targetUser := r.FormValue("target_user")
 	if targetUser == "" {
 		targetUser = username
 	}
 	if !validUsername.MatchString(targetUser) {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
+		return
+	}
+	if !isAdmin && targetUser != username {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
 		return
 	}
 

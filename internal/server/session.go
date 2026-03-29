@@ -189,7 +189,7 @@ func getAvatar(r *http.Request) string {
 }
 
 func getTheme(r *http.Request) string {
-	c, err := r.Cookie("pam_theme")
+	c, err := r.Cookie("identree_theme")
 	if err != nil || c.Value == "" {
 		return "" // system default
 	}

@@ -25,6 +25,7 @@ const (
 	EscrowBackendVault            EscrowBackend = "vault"
 	EscrowBackendBitwarden        EscrowBackend = "bitwarden"
 	EscrowBackendInfisical        EscrowBackend = "infisical"
+	EscrowBackendLocal            EscrowBackend = "local"
 )
 
 // WebhookConfig is a single outbound notification destination.
@@ -55,6 +56,7 @@ type ServerConfig struct {
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	ListenAddr   string        // default ":8090"
 	ExternalURL  string        // public-facing URL (for OIDC redirects)
+	InstallURL   string        // URL reachable from client hosts (for install script); defaults to ExternalURL
 	SharedSecret string        // secret shared with PAM clients
 
 	// ── Session / auth flow ───────────────────────────────────────────────────
@@ -105,16 +107,17 @@ type ServerConfig struct {
 	Webhooks             []WebhookConfig
 
 	// ── Break-glass escrow ────────────────────────────────────────────────────
-	EscrowCommand        string
-	EscrowEnvPassthrough []string
-	EscrowBackend        EscrowBackend
-	EscrowURL            string
-	EscrowAuthID         string
-	EscrowAuthSecret     string
-	EscrowAuthSecretFile string
-	EscrowPath           string
-	EscrowWebURL         string
-	EscrowVaultMap       map[string]string
+	EscrowCommand          string
+	EscrowEnvPassthrough   []string
+	EscrowBackend          EscrowBackend
+	EscrowURL              string
+	EscrowAuthID           string
+	EscrowAuthSecret       string
+	EscrowAuthSecretFile   string
+	EscrowPath             string
+	EscrowWebURL           string
+	EscrowVaultMap         map[string]string
+	EscrowEncryptionKey    string // used by EscrowBackendLocal only
 	BreakglassRotateBefore time.Time // clients should rotate if their hash is older than this
 
 	// ── Host registry ─────────────────────────────────────────────────────────
@@ -161,15 +164,30 @@ type ClientConfig struct {
 }
 
 // LoadServerConfig reads ServerConfig from the config file and environment.
-// Environment variables take precedence over config file values.
+// Load priority (highest to lowest): environment variables > KEY=VALUE conf file > TOML config file > defaults.
 func LoadServerConfig() (*ServerConfig, error) {
-	env, err := loadConfigFile(DefaultConfigPath)
+	// Load TOML config (lowest file-level priority).
+	tomlEnv, err := LoadTOMLConfig(DefaultTOMLConfigPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("loading TOML config: %w", err)
+	}
+	if tomlEnv == nil {
+		tomlEnv = map[string]string{}
+	}
+
+	// Load KEY=VALUE conf (overrides TOML).
+	confEnv, err := loadConfigFile(DefaultConfigPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
-		env = map[string]string{}
+		confEnv = map[string]string{}
 	}
+	for k, v := range confEnv {
+		tomlEnv[k] = v
+	}
+	env := tomlEnv
+
 	get := func(key string) string {
 		if v := os.Getenv(key); v != "" {
 			return v
@@ -233,6 +251,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 
 		ListenAddr:   stringDefault(get("IDENTREE_LISTEN_ADDR"), ":8090"),
 		ExternalURL:  get("IDENTREE_EXTERNAL_URL"),
+		InstallURL:   get("IDENTREE_INSTALL_URL"),
 		SharedSecret: get("IDENTREE_SHARED_SECRET"),
 
 		ChallengeTTL: getDuration("IDENTREE_CHALLENGE_TTL", 120*time.Second),
@@ -270,6 +289,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		EscrowAuthSecretFile: get("IDENTREE_ESCROW_AUTH_SECRET_FILE"),
 		EscrowPath:           get("IDENTREE_ESCROW_PATH"),
 		EscrowWebURL:         get("IDENTREE_ESCROW_WEB_URL"),
+		EscrowEncryptionKey:  get("IDENTREE_ESCROW_ENCRYPTION_KEY"),
 
 		HostRegistryFile:       get("IDENTREE_HOST_REGISTRY_FILE"),
 		DefaultHistoryPageSize: getInt("IDENTREE_HISTORY_PAGE_SIZE", 10),

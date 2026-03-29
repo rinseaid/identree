@@ -33,6 +33,15 @@ func (lw *limitedWriter) Write(p []byte) (int, error) {
 }
 
 // truncateOutput trims whitespace and caps output for log messages.
+// commitShort returns the last 8 characters of a commit hash for display,
+// falling back to the full string if it is 8 characters or fewer.
+func commitShort(c string) string {
+	if len(c) <= 8 {
+		return c
+	}
+	return c[len(c)-8:]
+}
+
 func truncateOutput(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) > maxLogOutput {

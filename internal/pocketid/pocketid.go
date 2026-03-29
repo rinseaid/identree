@@ -243,6 +243,7 @@ func (c *PocketIDClient) fetchGroupData() (*pocketIDData, error) {
 type SSHUser struct {
 	Username string
 	Email    string
+	SSHKeys  []string // raw public key strings from sshPublicKey* claims
 }
 
 // UsersWithSSHKeys returns all PocketID users who have at least one non-empty
@@ -277,11 +278,14 @@ func (c *PocketIDClient) UsersWithSSHKeys() ([]SSHUser, error) {
 		}
 
 		for _, u := range result.Data {
+			var keys []string
 			for _, cl := range u.CustomClaims {
 				if sshKeyClaimRe.MatchString(cl.Key) && cl.Value != "" {
-					out = append(out, SSHUser{Username: u.Username, Email: u.Email})
-					break
+					keys = append(keys, cl.Value)
 				}
+			}
+			if len(keys) > 0 {
+				out = append(out, SSHUser{Username: u.Username, Email: u.Email, SSHKeys: keys})
 			}
 		}
 

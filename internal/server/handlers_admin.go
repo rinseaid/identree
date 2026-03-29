@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/pocketid"
 )
 
@@ -87,20 +89,17 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
 
-// handleAdminInfo shows server configuration and system information.
+// handleAdminInfo shows system information.
 // GET /admin/info
 func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	// Handle language change via query param
 	if setLanguageCookie(w, r) {
 		return
 	}
 	lang := detectLanguage(r)
-	t := T(lang)
 
 	username := s.getSessionUser(r)
 	if username == "" {
@@ -109,70 +108,14 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSessionCookie(w, username, s.getSessionRole(r))
-
 	if s.getSessionRole(r) != "admin" {
 		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
 		return
 	}
 
-	// Server configuration values
-	gracePeriod := formatDuration(s.cfg.GracePeriod)
-	challengeTTL := formatDuration(s.cfg.ChallengeTTL)
-
-	breakglassType := s.cfg.ClientBreakglassPasswordType
-	switch breakglassType {
-	case "":
-		breakglassType = t("not_configured")
-	case "random", "passphrase", "alphanumeric":
-		breakglassType = t("breakglass_" + breakglassType)
-	}
-
-	breakglassRotation := t("not_configured")
-	if s.cfg.ClientBreakglassRotationDays > 0 {
-		breakglassRotation = fmt.Sprintf("%d %s", s.cfg.ClientBreakglassRotationDays, t("days"))
-	}
-
-	tokenCache := t("disabled")
-	if s.cfg.ClientTokenCacheEnabled != nil && *s.cfg.ClientTokenCacheEnabled {
-		tokenCache = t("enabled")
-	}
-
-	escrowConfigured := t("not_configured")
-	if string(s.cfg.EscrowBackend) != "" {
-		escrowConfigured = string(s.cfg.EscrowBackend)
-	} else if s.cfg.EscrowCommand != "" {
-		escrowConfigured = t("configured")
-	}
-
-	notifyConfigured := t("not_configured")
-	if s.cfg.NotifyCommand != "" {
-		notifyConfigured = t("configured")
-	}
-
-	hostRegistryEnabled := s.hostRegistry.IsEnabled()
-	hostRegistryStatus := t("host_registry_global_secret")
-	if hostRegistryEnabled {
-		hostRegistryStatus = fmt.Sprintf(t("enabled_n_hosts"), len(s.hostRegistry.RegisteredHosts()))
-	}
-
-	sessionPersistence := t("disabled")
-	if s.cfg.SessionStateFile != "" {
-		sessionPersistence = s.cfg.SessionStateFile
-	}
-
-	// System info
-	uptime := time.Since(serverStartTime)
-	uptimeStr := formatDuration(uptime)
-
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
-	allocMB := float64(memStats.Alloc) / 1024 / 1024
-	sysMB := float64(memStats.Sys) / 1024 / 1024
-	memUsage := fmt.Sprintf("%.1f MB alloc / %.1f MB sys", allocMB, sysMB)
 
-	activeSessions := len(s.store.AllActiveSessions())
-
-	// Read timezone from cookie for profile dropdown display
 	adminTZ := "UTC"
 	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
 		if _, err := time.LoadLocation(c.Value); err == nil {
@@ -187,38 +130,422 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"Avatar":              getAvatar(r),
 		"Timezone":            adminTZ,
 		"Flashes":             []string(nil),
+		"FlashErrors":         []string(nil),
 		"ActivePage":          "admin",
 		"AdminTab":            "info",
 		"BridgeMode":          s.isBridgeMode(),
 		"Theme":               getTheme(r),
-		"CSPNonce":            r.Context().Value("csp-nonce"),
+		"CSPNonce":            cspNonce(r),
 		"T":                   T(lang),
 		"Lang":                lang,
 		"Languages":           supportedLanguages,
 		"IsAdmin":             true,
 		"Version":             version,
+		"CommitShort":         commitShort(commit),
 		"Commit":              commit,
-		"GracePeriod":         gracePeriod,
-		"ChallengeTTL":        challengeTTL,
-		"BreakglassType":      breakglassType,
-		"BreakglassRotation":  breakglassRotation,
-		"TokenCache":          tokenCache,
-		"DefaultPageSize":     s.cfg.DefaultHistoryPageSize,
-		"EscrowConfigured":    escrowConfigured,
-		"NotifyConfigured":    notifyConfigured,
-		"HostRegistry":        hostRegistryStatus,
-		"SessionPersistence":  sessionPersistence,
-		"OneTapMaxAge":        formatDuration(s.cfg.OneTapMaxAge),
-		"AdminGroups":         func() string { if len(s.cfg.AdminGroups) == 0 { return t("not_configured") }; return strings.Join(s.cfg.AdminGroups, ", ") }(),
-		"AdminApprovalHosts":  func() string { if len(s.cfg.AdminApprovalHosts) == 0 { return t("not_configured") }; return strings.Join(s.cfg.AdminApprovalHosts, ", ") }(),
-		"Uptime":              uptimeStr,
+		"Uptime":              formatDuration(time.Since(serverStartTime)),
 		"GoVersion":           runtime.Version(),
 		"OSArch":              runtime.GOOS + "/" + runtime.GOARCH,
 		"Goroutines":          runtime.NumGoroutine(),
-		"MemUsage":            memUsage,
-		"ActiveSessionsCount": activeSessions,
+		"MemUsage":            fmt.Sprintf("%.1f MB alloc / %.1f MB sys", float64(memStats.Alloc)/1024/1024, float64(memStats.Sys)/1024/1024),
+		"ActiveSessionsCount": len(s.store.AllActiveSessions()),
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
+	}
+}
+
+// handleAdminConfig shows and processes the server configuration page.
+// GET /admin/config — render config form
+// POST /admin/config — save config to TOML, apply live changes
+func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if setLanguageCookie(w, r) {
+		return
+	}
+	lang := detectLanguage(r)
+	t := T(lang)
+
+	username := s.getSessionUser(r)
+	if username == "" {
+		setFlashCookie(w, "expired:")
+		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		return
+	}
+	s.setSessionCookie(w, username, s.getSessionRole(r))
+
+	if r.Method == http.MethodPost {
+		// Custom form auth with 64 KB body limit (config form exceeds default 8 KB).
+		r.Body = http.MaxBytesReader(w, r.Body, 65536)
+		if err := r.ParseForm(); err != nil {
+			revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_form")
+			return
+		}
+		formUser := r.FormValue("username")
+		csrfToken := r.FormValue("csrf_token")
+		csrfTs := r.FormValue("csrf_ts")
+		if formUser == "" || csrfToken == "" || csrfTs == "" {
+			revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "missing_fields")
+			return
+		}
+		if !validUsername.MatchString(formUser) {
+			revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_username_format")
+			return
+		}
+		if s.getSessionUser(r) != formUser {
+			revokeErrorPage(w, r, http.StatusForbidden, "session_expired", "session_expired_sign_in")
+			return
+		}
+		tsInt, err := strconv.ParseInt(csrfTs, 10, 64)
+		if err != nil || time.Since(time.Unix(tsInt, 0)).Abs() > 5*time.Minute {
+			revokeErrorPage(w, r, http.StatusForbidden, "form_expired", "form_expired_message")
+			return
+		}
+		expected := computeCSRFToken(s.cfg.SharedSecret, formUser, csrfTs)
+		if subtle.ConstantTimeCompare([]byte(expected), []byte(csrfToken)) != 1 {
+			revokeErrorPage(w, r, http.StatusForbidden, "invalid_request", "invalid_csrf")
+			return
+		}
+
+		// Collect non-locked form values.
+		values := make(map[string]string)
+		for _, sec := range config.TOMLSections {
+			for _, fld := range sec.Fields {
+				if config.IsEnvSourced(fld.EnvKey) {
+					continue
+				}
+				if fld.IsBool {
+					v := r.FormValue(fld.EnvKey)
+					if v == "true" || v == "on" {
+						values[fld.EnvKey] = "true"
+					} else {
+						values[fld.EnvKey] = "false"
+					}
+				} else {
+					values[fld.EnvKey] = strings.TrimSpace(r.FormValue(fld.EnvKey))
+				}
+			}
+		}
+
+		// Validate.
+		if err := validateConfigValues(values); err != nil {
+			setFlashCookie(w, "config_error:"+err.Error())
+			http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/config", http.StatusSeeOther)
+			return
+		}
+
+		// Write TOML.
+		if err := config.SaveTOMLConfig(config.DefaultTOMLConfigPath, values); err != nil {
+			setFlashCookie(w, "config_error:"+err.Error())
+			http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/config", http.StatusSeeOther)
+			return
+		}
+
+		// Apply live-safe changes.
+		s.applyLiveConfigUpdates(values)
+
+		setFlashCookie(w, "config_saved:")
+		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/config", http.StatusSeeOther)
+		return
+	}
+
+	// GET: parse flash messages.
+	var flashes []string
+	var flashErrors []string
+	if fp := getAndClearFlash(w, r); fp != "" {
+		for _, f := range strings.Split(fp, ",") {
+			parts := strings.SplitN(f, ":", 2)
+			if len(parts) == 2 {
+				switch parts[0] {
+				case "config_saved":
+					flashes = append(flashes, t("config_saved"))
+				case "config_error":
+					flashErrors = append(flashErrors, parts[1])
+				}
+			}
+		}
+	}
+
+	now := time.Now()
+	csrfTs := fmt.Sprintf("%d", now.Unix())
+	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+
+	adminTZ := "UTC"
+	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
+		if _, err := time.LoadLocation(c.Value); err == nil {
+			adminTZ = c.Value
+		}
+	}
+
+	apiKeyCount := len(s.cfg.APIKeys)
+	apiKeyStr := t("not_configured")
+	if apiKeyCount > 0 {
+		apiKeyStr = fmt.Sprintf(t("n_keys"), apiKeyCount)
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	if err := adminTmpl.Execute(w, map[string]interface{}{
+		"Username":      username,
+		"Initial":       strings.ToUpper(username[:1]),
+		"Avatar":        getAvatar(r),
+		"Timezone":      adminTZ,
+		"Flashes":       flashes,
+		"FlashErrors":   flashErrors,
+		"ActivePage":    "admin",
+		"AdminTab":      "config",
+		"BridgeMode":    s.isBridgeMode(),
+		"Theme":         getTheme(r),
+		"CSPNonce":      cspNonce(r),
+		"T":             T(lang),
+		"Lang":          lang,
+		"Languages":     supportedLanguages,
+		"IsAdmin":       true,
+		"CSRFToken":     csrfToken,
+		"CSRFTs":        csrfTs,
+		"ConfigValues":  configToValues(s.cfg),
+		"ConfigLocked":  configLockedKeys(),
+		"ConfigSecrets": configSecretStatus(s.cfg),
+		"APIKeyCount":   apiKeyStr,
+	}); err != nil {
+		log.Printf("ERROR: template execution: %v", err)
+	}
+}
+
+// configToValues converts a ServerConfig to a flat map of env-key → string value
+// suitable for pre-populating the config form.
+func configToValues(cfg *config.ServerConfig) map[string]string {
+	tokenCache := ""
+	if cfg.ClientTokenCacheEnabled != nil {
+		if *cfg.ClientTokenCacheEnabled {
+			tokenCache = "true"
+		} else {
+			tokenCache = "false"
+		}
+	}
+	return map[string]string{
+		"IDENTREE_OIDC_ISSUER_URL":                 cfg.IssuerURL,
+		"IDENTREE_OIDC_ISSUER_PUBLIC_URL":          cfg.IssuerPublicURL,
+		"IDENTREE_OIDC_CLIENT_ID":                  cfg.ClientID,
+		"IDENTREE_POCKETID_API_URL":                cfg.APIURL,
+		"IDENTREE_LISTEN_ADDR":                     cfg.ListenAddr,
+		"IDENTREE_EXTERNAL_URL":                    cfg.ExternalURL,
+		"IDENTREE_INSTALL_URL":                     cfg.InstallURL,
+		"IDENTREE_CHALLENGE_TTL":                   formatDuration(cfg.ChallengeTTL),
+		"IDENTREE_GRACE_PERIOD":                    formatDuration(cfg.GracePeriod),
+		"IDENTREE_ONE_TAP_MAX_AGE":                 formatDuration(cfg.OneTapMaxAge),
+		"IDENTREE_LDAP_ENABLED":                    boolToString(cfg.LDAPEnabled),
+		"IDENTREE_LDAP_LISTEN_ADDR":                cfg.LDAPListenAddr,
+		"IDENTREE_LDAP_BASE_DN":                    cfg.LDAPBaseDN,
+		"IDENTREE_LDAP_BIND_DN":                    cfg.LDAPBindDN,
+		"IDENTREE_LDAP_REFRESH_INTERVAL":           formatDuration(cfg.LDAPRefreshInterval),
+		"IDENTREE_LDAP_UID_MAP_FILE":               cfg.LDAPUIDMapFile,
+		"IDENTREE_SUDO_NO_AUTHENTICATE":            cfg.LDAPSudoNoAuthenticate,
+		"IDENTREE_SUDO_RULES_FILE":                 cfg.SudoRulesFile,
+		"IDENTREE_LDAP_UID_BASE":                   strconv.Itoa(cfg.LDAPUIDBase),
+		"IDENTREE_LDAP_GID_BASE":                   strconv.Itoa(cfg.LDAPGIDBase),
+		"IDENTREE_LDAP_DEFAULT_SHELL":              cfg.LDAPDefaultShell,
+		"IDENTREE_LDAP_DEFAULT_HOME":               cfg.LDAPDefaultHome,
+		"IDENTREE_ADMIN_GROUPS":                    strings.Join(cfg.AdminGroups, ", "),
+		"IDENTREE_ADMIN_APPROVAL_HOSTS":            strings.Join(cfg.AdminApprovalHosts, ", "),
+		"IDENTREE_NOTIFY_COMMAND":                  cfg.NotifyCommand,
+		"IDENTREE_NOTIFY_USERS_FILE":               cfg.NotifyUsersFile,
+		"IDENTREE_ESCROW_BACKEND":                  string(cfg.EscrowBackend),
+		"IDENTREE_ESCROW_URL":                      cfg.EscrowURL,
+		"IDENTREE_ESCROW_AUTH_ID":                  cfg.EscrowAuthID,
+		"IDENTREE_ESCROW_PATH":                     cfg.EscrowPath,
+		"IDENTREE_ESCROW_WEB_URL":                  cfg.EscrowWebURL,
+		"IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE": cfg.ClientBreakglassPasswordType,
+		"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS": strconv.Itoa(cfg.ClientBreakglassRotationDays),
+		"IDENTREE_CLIENT_TOKEN_CACHE_ENABLED":      tokenCache,
+		"IDENTREE_HOST_REGISTRY_FILE":              cfg.HostRegistryFile,
+		"IDENTREE_HISTORY_PAGE_SIZE":               strconv.Itoa(cfg.DefaultHistoryPageSize),
+		"IDENTREE_SESSION_STATE_FILE":              cfg.SessionStateFile,
+		"IDENTREE_DEV_LOGIN":                       boolToString(cfg.DevLoginEnabled),
+	}
+}
+
+func boolToString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// configLockedKeys returns the set of env var keys that are currently sourced from the environment.
+func configLockedKeys() map[string]bool {
+	locked := make(map[string]bool)
+	for _, sec := range config.TOMLSections {
+		for _, fld := range sec.Fields {
+			if config.IsEnvSourced(fld.EnvKey) {
+				locked[fld.EnvKey] = true
+			}
+		}
+	}
+	for _, key := range []string{
+		"IDENTREE_OIDC_CLIENT_SECRET", "IDENTREE_POCKETID_API_KEY",
+		"IDENTREE_SHARED_SECRET", "IDENTREE_LDAP_BIND_PASSWORD",
+		"IDENTREE_ESCROW_AUTH_SECRET", "IDENTREE_ESCROW_ENCRYPTION_KEY", "IDENTREE_WEBHOOK_SECRET", "IDENTREE_API_KEYS",
+	} {
+		if config.IsEnvSourced(key) {
+			locked[key] = true
+		}
+	}
+	return locked
+}
+
+// configSecretStatus returns true for each secret key if the secret is currently set.
+func configSecretStatus(cfg *config.ServerConfig) map[string]bool {
+	return map[string]bool{
+		"IDENTREE_OIDC_CLIENT_SECRET": cfg.ClientSecret != "",
+		"IDENTREE_POCKETID_API_KEY":   cfg.APIKey != "",
+		"IDENTREE_SHARED_SECRET":      cfg.SharedSecret != "",
+		"IDENTREE_LDAP_BIND_PASSWORD": cfg.LDAPBindPassword != "",
+		"IDENTREE_ESCROW_AUTH_SECRET":     cfg.EscrowAuthSecret != "",
+		"IDENTREE_ESCROW_ENCRYPTION_KEY": cfg.EscrowEncryptionKey != "",
+		"IDENTREE_WEBHOOK_SECRET":     cfg.WebhookSecret != "",
+	}
+}
+
+// validateConfigValues validates form-submitted config values.
+func validateConfigValues(values map[string]string) error {
+	for _, key := range []string{
+		"IDENTREE_CHALLENGE_TTL", "IDENTREE_GRACE_PERIOD",
+		"IDENTREE_ONE_TAP_MAX_AGE", "IDENTREE_LDAP_REFRESH_INTERVAL",
+	} {
+		if v := values[key]; v != "" {
+			if _, err := time.ParseDuration(v); err != nil {
+				return fmt.Errorf("invalid duration for %s: %q", key, v)
+			}
+		}
+	}
+	for _, key := range []string{
+		"IDENTREE_LDAP_UID_BASE", "IDENTREE_LDAP_GID_BASE",
+		"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", "IDENTREE_HISTORY_PAGE_SIZE",
+	} {
+		if v := values[key]; v != "" {
+			if _, err := strconv.Atoi(v); err != nil {
+				return fmt.Errorf("invalid integer for %s: %q", key, v)
+			}
+		}
+	}
+	if v := values["IDENTREE_SUDO_NO_AUTHENTICATE"]; v != "" {
+		switch v {
+		case "true", "false", "claims":
+		default:
+			return fmt.Errorf("invalid value for IDENTREE_SUDO_NO_AUTHENTICATE: %q (must be true, false, or claims)", v)
+		}
+	}
+	if v := values["IDENTREE_ESCROW_BACKEND"]; v != "" {
+		switch v {
+		case "1password-connect", "vault", "bitwarden", "infisical":
+		default:
+			return fmt.Errorf("invalid escrow backend: %q", v)
+		}
+	}
+	if v := values["IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"]; v != "" {
+		switch v {
+		case "random", "passphrase", "alphanumeric":
+		default:
+			return fmt.Errorf("invalid breakglass password type: %q", v)
+		}
+	}
+	return nil
+}
+
+// applyLiveConfigUpdates applies the subset of config changes that are safe without a restart.
+func (s *Server) applyLiveConfigUpdates(values map[string]string) {
+	parseDur := func(key string, def time.Duration) time.Duration {
+		if v := values[key]; v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				return d
+			}
+		}
+		return def
+	}
+	parseInt := func(key string, def int) int {
+		if v := values[key]; v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				return n
+			}
+		}
+		return def
+	}
+	parseSlice := func(key string) []string {
+		v := values[key]
+		if v == "" {
+			return nil
+		}
+		var out []string
+		for _, item := range strings.Split(v, ",") {
+			if t := strings.TrimSpace(item); t != "" {
+				out = append(out, t)
+			}
+		}
+		return out
+	}
+
+	if !config.IsEnvSourced("IDENTREE_CHALLENGE_TTL") {
+		s.cfg.ChallengeTTL = parseDur("IDENTREE_CHALLENGE_TTL", s.cfg.ChallengeTTL)
+	}
+	if !config.IsEnvSourced("IDENTREE_GRACE_PERIOD") {
+		s.cfg.GracePeriod = parseDur("IDENTREE_GRACE_PERIOD", s.cfg.GracePeriod)
+	}
+	if !config.IsEnvSourced("IDENTREE_ONE_TAP_MAX_AGE") {
+		s.cfg.OneTapMaxAge = parseDur("IDENTREE_ONE_TAP_MAX_AGE", s.cfg.OneTapMaxAge)
+	}
+	if !config.IsEnvSourced("IDENTREE_ADMIN_GROUPS") {
+		s.cfg.AdminGroups = parseSlice("IDENTREE_ADMIN_GROUPS")
+	}
+	if !config.IsEnvSourced("IDENTREE_ADMIN_APPROVAL_HOSTS") {
+		s.cfg.AdminApprovalHosts = parseSlice("IDENTREE_ADMIN_APPROVAL_HOSTS")
+	}
+	if !config.IsEnvSourced("IDENTREE_NOTIFY_COMMAND") {
+		s.cfg.NotifyCommand = values["IDENTREE_NOTIFY_COMMAND"]
+	}
+	if !config.IsEnvSourced("IDENTREE_NOTIFY_USERS_FILE") {
+		s.cfg.NotifyUsersFile = values["IDENTREE_NOTIFY_USERS_FILE"]
+	}
+	if !config.IsEnvSourced("IDENTREE_ESCROW_BACKEND") {
+		s.cfg.EscrowBackend = config.EscrowBackend(values["IDENTREE_ESCROW_BACKEND"])
+	}
+	if !config.IsEnvSourced("IDENTREE_ESCROW_URL") {
+		s.cfg.EscrowURL = values["IDENTREE_ESCROW_URL"]
+	}
+	if !config.IsEnvSourced("IDENTREE_ESCROW_AUTH_ID") {
+		s.cfg.EscrowAuthID = values["IDENTREE_ESCROW_AUTH_ID"]
+	}
+	if !config.IsEnvSourced("IDENTREE_ESCROW_PATH") {
+		s.cfg.EscrowPath = values["IDENTREE_ESCROW_PATH"]
+	}
+	if !config.IsEnvSourced("IDENTREE_ESCROW_WEB_URL") {
+		s.cfg.EscrowWebURL = values["IDENTREE_ESCROW_WEB_URL"]
+	}
+	if !config.IsEnvSourced("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE") {
+		s.cfg.ClientBreakglassPasswordType = values["IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"]
+	}
+	if !config.IsEnvSourced("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS") {
+		s.cfg.ClientBreakglassRotationDays = parseInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", s.cfg.ClientBreakglassRotationDays)
+	}
+	if !config.IsEnvSourced("IDENTREE_CLIENT_TOKEN_CACHE_ENABLED") {
+		if v := values["IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"]; v != "" {
+			if b, err := strconv.ParseBool(v); err == nil {
+				s.cfg.ClientTokenCacheEnabled = &b
+			}
+		}
+	}
+	if !config.IsEnvSourced("IDENTREE_HISTORY_PAGE_SIZE") {
+		s.cfg.DefaultHistoryPageSize = parseInt("IDENTREE_HISTORY_PAGE_SIZE", s.cfg.DefaultHistoryPageSize)
+	}
+	if !config.IsEnvSourced("IDENTREE_SUDO_NO_AUTHENTICATE") {
+		if v := values["IDENTREE_SUDO_NO_AUTHENTICATE"]; v == "true" || v == "false" || v == "claims" {
+			s.cfg.LDAPSudoNoAuthenticate = v
+		}
 	}
 }
 
@@ -277,6 +604,19 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Build snapshot of recently-removed users to exclude from PocketID merge.
+	s.removedUsersMu.Lock()
+	for u, t := range s.removedUsers {
+		if time.Since(t) > 10*time.Minute {
+			delete(s.removedUsers, u)
+		}
+	}
+	recentlyRemoved := make(map[string]bool, len(s.removedUsers))
+	for u := range s.removedUsers {
+		recentlyRemoved[u] = true
+	}
+	s.removedUsersMu.Unlock()
+
 	// Merge Pocket ID users that haven't yet used identree
 	if userPerms != nil {
 		userSet := make(map[string]bool, len(users))
@@ -284,7 +624,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			userSet[u] = true
 		}
 		for uname := range userPerms {
-			if !userSet[uname] {
+			if !userSet[uname] && !recentlyRemoved[uname] {
 				users = append(users, uname)
 				userSet[uname] = true
 			}
@@ -302,9 +642,18 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		ActiveSessions int
 		LastActive     string
 		LastActiveAgo  string
+		LastActiveTime time.Time
 		Groups         []pocketid.GroupInfo
 		Sessions       []userSessionView
 	}
+
+	adminTZ := "UTC"
+	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
+		if _, err := time.LoadLocation(c.Value); err == nil {
+			adminTZ = c.Value
+		}
+	}
+	adminLoc, _ := time.LoadLocation(adminTZ)
 
 	now := time.Now()
 	csrfTs := fmt.Sprintf("%d", now.Unix())
@@ -316,6 +665,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		history := s.store.ActionHistory(u)
 		lastActive := ""
 		lastActiveAgo := ""
+		var lastActiveTime time.Time
 		if len(history) > 0 {
 			// Find most recent entry
 			var latest time.Time
@@ -324,8 +674,9 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 					latest = e.Timestamp
 				}
 			}
-			lastActive = latest.Format("2006-01-02 15:04")
+			lastActive = latest.In(adminLoc).Format("2006-01-02 15:04")
 			lastActiveAgo = timeAgoI18n(latest, t)
+			lastActiveTime = latest
 		}
 		var sessionViews []userSessionView
 		for _, sess := range sessions {
@@ -340,6 +691,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			ActiveSessions: len(sessions),
 			LastActive:     lastActive,
 			LastActiveAgo:  lastActiveAgo,
+			LastActiveTime: lastActiveTime,
 			Sessions:       sessionViews,
 		}
 		// Filter to only sudo-relevant groups (those with sudoCommands claim)
@@ -358,12 +710,30 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		userViews = append(userViews, uv)
 	}
 
-	adminTZ := "UTC"
-	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
-		if _, err := time.LoadLocation(c.Value); err == nil {
-			adminTZ = c.Value
-		}
+	// Sort user views
+	userSortBy := r.URL.Query().Get("sort")
+	userSortDir := r.URL.Query().Get("dir")
+	if userSortDir != "desc" {
+		userSortDir = "asc"
 	}
+	if userSortBy == "" {
+		userSortBy = "name"
+	}
+	sort.Slice(userViews, func(i, j int) bool {
+		var less bool
+		switch userSortBy {
+		case "sessions":
+			less = userViews[i].ActiveSessions < userViews[j].ActiveSessions
+		case "lastactive":
+			less = userViews[i].LastActiveTime.Before(userViews[j].LastActiveTime)
+		default:
+			less = userViews[i].Username < userViews[j].Username
+		}
+		if userSortDir == "desc" {
+			return !less
+		}
+		return less
+	})
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := adminTmpl.Execute(w, map[string]interface{}{
@@ -376,12 +746,14 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		"AdminTab":   "users",
 		"BridgeMode": s.isBridgeMode(),
 		"Theme":      getTheme(r),
-		"CSPNonce":   r.Context().Value("csp-nonce"),
+		"CSPNonce":   cspNonce(r),
 		"T":          T(lang),
 		"Lang":       lang,
 		"Languages":  supportedLanguages,
 		"IsAdmin":    true,
 		"Users":      userViews,
+		"UserSort":   userSortBy,
+		"UserDir":    userSortDir,
 		"CSRFToken":  csrfToken,
 		"CSRFTs":     csrfTs,
 	}); err != nil {
@@ -475,7 +847,50 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(gv.Members)
 		groups = append(groups, gv)
 	}
-	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
+
+	sortBy := r.URL.Query().Get("sort")
+	sortDir := r.URL.Query().Get("dir")
+	if sortDir != "desc" {
+		sortDir = "asc"
+	}
+	switch sortBy {
+	case "members":
+		sort.Slice(groups, func(i, j int) bool {
+			if sortDir == "desc" {
+				return len(groups[i].Members) > len(groups[j].Members)
+			}
+			return len(groups[i].Members) < len(groups[j].Members)
+		})
+	case "commands":
+		sort.Slice(groups, func(i, j int) bool {
+			if sortDir == "desc" {
+				return groups[i].SudoCommands > groups[j].SudoCommands
+			}
+			return groups[i].SudoCommands < groups[j].SudoCommands
+		})
+	case "hosts":
+		sort.Slice(groups, func(i, j int) bool {
+			if sortDir == "desc" {
+				return groups[i].SudoHosts > groups[j].SudoHosts
+			}
+			return groups[i].SudoHosts < groups[j].SudoHosts
+		})
+	case "runas":
+		sort.Slice(groups, func(i, j int) bool {
+			if sortDir == "desc" {
+				return groups[i].SudoRunAs > groups[j].SudoRunAs
+			}
+			return groups[i].SudoRunAs < groups[j].SudoRunAs
+		})
+	default:
+		sortBy = "name"
+		sort.Slice(groups, func(i, j int) bool {
+			if sortDir == "desc" {
+				return groups[i].Name > groups[j].Name
+			}
+			return groups[i].Name < groups[j].Name
+		})
+	}
 
 	now := time.Now()
 	csrfTs := fmt.Sprintf("%d", now.Unix())
@@ -497,12 +912,14 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		"AdminTab":   "groups",
 		"BridgeMode": s.isBridgeMode(),
 		"Groups":     groups,
+		"GroupSort":  sortBy,
+		"GroupDir":   sortDir,
 		"Flashes":    []string{},
 		"CSRFToken":  csrfToken,
 		"CSRFTs":     csrfTs,
 		"ActivePage": "admin",
 		"Theme":      getTheme(r),
-		"CSPNonce":   r.Context().Value("csp-nonce"),
+		"CSPNonce":   cspNonce(r),
 		"T":          t,
 		"Lang":       lang,
 		"Languages":  supportedLanguages,
@@ -595,13 +1012,25 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	hosts := s.store.KnownHosts(username)
+	var hosts []string
+	if s.getSessionRole(r) == "admin" {
+		if s.hostRegistry.IsEnabled() {
+			// When the registry is enabled, it is the authoritative list of managed hosts.
+			// Removing a host from the registry should immediately remove it from this page.
+			hosts = s.hostRegistry.RegisteredHosts()
+		} else {
+			hosts = s.store.AllKnownHosts()
+		}
+	} else {
+		hosts = s.store.KnownHosts(username)
+	}
 	escrowed := s.store.EscrowedHosts()
 
 	// Merge escrowed hosts into the known hosts list
 	escrowedSet := make(map[string]bool)
+	isAdmin := s.getSessionRole(r) == "admin"
 	for h := range escrowed {
-		if s.hostRegistry.IsEnabled() && !s.hostRegistry.IsUserAuthorized(h, username) {
+		if !isAdmin && s.hostRegistry.IsEnabled() && !s.hostRegistry.IsUserAuthorized(h, username) {
 			continue
 		}
 		escrowedSet[h] = true
@@ -649,13 +1078,15 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type hostView struct {
-		Hostname      string
-		HostUsers     []hostUserView
-		Escrowed      bool
-		EscrowAge     string
-		EscrowExpired bool
-		EscrowLink    string
-		Group         string
+		Hostname           string
+		HostUsers          []hostUserView
+		ActiveSessionCount int
+		Escrowed           bool
+		EscrowAge          string
+		EscrowExpired      bool
+		EscrowLink         string
+		EscrowRevealable   bool // true when backend supports in-UI reveal
+		Group              string
 	}
 
 	// usersForHost returns sorted usernames with sudo access to hostname from Pocket ID claims.
@@ -720,6 +1151,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		for _, sess := range s.store.ActiveSessionsForHost(h) {
 			activeMap[sess.Username] = formatDuration(time.Until(sess.ExpiresAt))
 		}
+		hv.ActiveSessionCount = len(activeMap)
 
 		// Build per-user rows from Pocket ID claims (or fallback to all known users)
 		seen := make(map[string]bool)
@@ -751,6 +1183,9 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 			hv.EscrowAge = formatDuration(time.Since(escrowRecord.Timestamp))
 			hv.EscrowExpired = time.Since(escrowRecord.Timestamp) > time.Duration(rotationDays)*24*time.Hour
 			hv.EscrowLink = deriveEscrowLink(string(s.cfg.EscrowBackend), s.cfg.EscrowURL, s.cfg.EscrowPath, escrowRecord.ItemID, escrowRecord.VaultID, s.cfg.EscrowWebURL, h)
+			// Reveal is available for all native backends (local, 1password-connect, vault, bitwarden, infisical).
+			// Command-based escrow has no standardised retrieval API.
+			hv.EscrowRevealable = isAdmin && s.cfg.EscrowBackend != "" && s.cfg.EscrowCommand == ""
 		}
 		if _, group, _, ok := s.hostRegistry.GetHost(h); ok {
 			hv.Group = group
@@ -771,6 +1206,29 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		allGroups = append(allGroups, g)
 	}
 	sort.Strings(allGroups)
+
+	// Sort host views
+	hostSortBy := r.URL.Query().Get("sort")
+	hostSortDir := r.URL.Query().Get("dir")
+	if hostSortDir != "desc" {
+		hostSortDir = "asc"
+	}
+	if hostSortBy == "" {
+		hostSortBy = "hostname"
+	}
+	sort.Slice(hostViews, func(i, j int) bool {
+		var less bool
+		switch hostSortBy {
+		case "sessions":
+			less = len(hostViews[i].HostUsers) < len(hostViews[j].HostUsers)
+		default:
+			less = hostViews[i].Hostname < hostViews[j].Hostname
+		}
+		if hostSortDir == "desc" {
+			return !less
+		}
+		return less
+	})
 
 	now := time.Now()
 	csrfTs := fmt.Sprintf("%d", now.Unix())
@@ -840,7 +1298,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"ActivePage":       "admin",
 		"AdminTab":         "hosts",
 		"Theme":            getTheme(r),
-		"CSPNonce":         r.Context().Value("csp-nonce"),
+		"CSPNonce":         cspNonce(r),
 		"T":                T(lang),
 		"Lang":             lang,
 		"Languages":        supportedLanguages,
@@ -848,6 +1306,8 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"HasEscrowedHosts": hasEscrowed,
 		"AllGroups":        allGroups,
 		"GroupFilter":      groupFilter,
+		"HostSort":         hostSortBy,
+		"HostDir":          hostSortDir,
 		"InstallURL":       strings.TrimRight(s.cfg.ExternalURL, "/") + "/install.sh",
 		"DeployEnabled":    true,
 	}); err != nil {
@@ -886,6 +1346,9 @@ func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 
 	s.store.LogAction(targetUser, "user_removed", "", "", adminUser)
 	s.store.RemoveUser(targetUser)
+	s.removedUsersMu.Lock()
+	s.removedUsers[targetUser] = time.Now()
+	s.removedUsersMu.Unlock()
 	log.Printf("USER_REMOVED: admin %q removed user %q from %s", adminUser, targetUser, remoteAddr(r))
 
 	setFlashCookie(w, "removed_user:"+targetUser)

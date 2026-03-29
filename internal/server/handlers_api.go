@@ -20,6 +20,7 @@ import (
 
 	"github.com/rinseaid/identree/internal/breakglass"
 	challpkg "github.com/rinseaid/identree/internal/challenge"
+	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/escrow"
 	"github.com/rinseaid/identree/internal/notify"
 )
@@ -548,7 +549,12 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	var itemID, vaultID string
 
 	if hasNativeEscrow {
-		backend := escrow.NewEscrowBackend(s.cfg)
+		var backend escrow.Backend
+		if s.cfg.EscrowBackend == config.EscrowBackendLocal {
+			backend = escrow.NewLocalEscrowBackend(s.escrowKey, s.store)
+		} else {
+			backend = escrow.NewEscrowBackend(s.cfg)
+		}
 		vault := escrow.ResolveEscrowVault(req.Hostname, s.cfg.EscrowVaultMap, s.cfg.EscrowPath)
 		var err error
 		itemID, vaultID, err = backend.Store(ctx, req.Hostname, req.Password, vault)
@@ -627,5 +633,78 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
 		log.Printf("ERROR: writing JSON response: %v", err)
+	}
+}
+
+// handleBreakglassReveal retrieves an escrowed break-glass password for a host
+// and returns it to an authenticated admin. The reveal is logged to the action log.
+// POST /api/breakglass/reveal
+func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Verify admin session via form auth (includes CSRF check).
+	actor := s.verifyFormAuth(w, r)
+	if actor == "" {
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		http.Error(w, "admin access required", http.StatusForbidden)
+		return
+	}
+
+	hostname := r.FormValue("hostname")
+	if hostname == "" || !validHostname.MatchString(hostname) {
+		http.Error(w, "invalid hostname", http.StatusBadRequest)
+		return
+	}
+
+	// Confirm this host has an escrow record.
+	escrowed := s.store.EscrowedHosts()
+	record, ok := escrowed[hostname]
+	if !ok {
+		http.Error(w, "no escrow record for host", http.StatusNotFound)
+		return
+	}
+
+	if s.cfg.EscrowBackend == "" {
+		http.Error(w, "no escrow backend configured", http.StatusNotImplemented)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), escrowTimeout)
+	defer cancel()
+
+	var backend escrow.Backend
+	if s.cfg.EscrowBackend == config.EscrowBackendLocal {
+		backend = escrow.NewLocalEscrowBackend(s.escrowKey, s.store)
+	} else {
+		backend = escrow.NewEscrowBackend(s.cfg)
+	}
+
+	password, err := backend.Retrieve(ctx, hostname, record.ItemID, record.VaultID)
+	if err != nil {
+		log.Printf("BREAKGLASS: reveal failed for host %q by admin %q: %v", hostname, actor, err)
+		http.Error(w, "failed to retrieve password", http.StatusInternalServerError)
+		return
+	}
+
+	// Log the reveal for every user with activity on this host so it is
+	// visible in their history, with the admin as actor.
+	for _, user := range s.store.UsersWithHostActivity(hostname) {
+		s.store.LogAction(user, "revealed_breakglass", hostname, "", actor)
+	}
+	// Also log against the actor themselves so it always appears in their history.
+	s.store.LogAction(actor, "revealed_breakglass", hostname, "", actor)
+	log.Printf("BREAKGLASS: password revealed for host %q by admin %q from %s", hostname, actor, remoteAddr(r))
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"password":    password,
+		"escrowed_at": record.Timestamp.UTC().Format(time.RFC3339),
+	}); err != nil {
+		log.Printf("ERROR: writing reveal JSON response: %v", err)
 	}
 }

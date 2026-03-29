@@ -144,6 +144,7 @@ type ChallengeStore struct {
 	rotateBreakglassBefore map[string]time.Time  // hostname -> per-host rotate-before timestamp
 	actionLog              map[string][]ActionLogEntry // username -> last N action log entries
 	escrowedHosts          map[string]EscrowRecord // hostname -> escrow metadata
+	escrowedCiphertexts    map[string]string       // hostname -> base64(nonce||ciphertext) for local backend
 	oneTapUsed         map[string]bool       // challenge ID -> whether one-tap was consumed
 	lastOIDCAuth       map[string]time.Time  // username -> last OIDC authentication time
 	ttl                time.Duration
@@ -161,6 +162,7 @@ type persistedState struct {
 	RotateBreakglassBefore map[string]time.Time        `json:"rotate_breakglass_before_hosts,omitempty"`
 	ActionLog              map[string][]ActionLogEntry  `json:"action_log,omitempty"`
 	EscrowedHosts          map[string]EscrowRecord      `json:"escrowed_hosts,omitempty"`
+	EscrowedCiphertexts    map[string]string            `json:"escrowed_ciphertexts,omitempty"`
 	LastOIDCAuth           map[string]time.Time         `json:"last_oidc_auth,omitempty"`
 }
 
@@ -175,7 +177,8 @@ func NewChallengeStore(ttl, gracePeriod time.Duration, persistPath string) *Chal
 		revokeTokensBefore:     make(map[string]time.Time),
 		rotateBreakglassBefore: make(map[string]time.Time),
 		actionLog:              make(map[string][]ActionLogEntry),
-		escrowedHosts:      make(map[string]EscrowRecord),
+		escrowedHosts:       make(map[string]EscrowRecord),
+		escrowedCiphertexts: make(map[string]string),
 		oneTapUsed:         make(map[string]bool),
 		lastOIDCAuth:       make(map[string]time.Time),
 		ttl:                ttl,
@@ -627,6 +630,30 @@ func (s *ChallengeStore) UsersWithHostActivity(hostname string) []string {
 	return users
 }
 
+// RemoveHost removes all state for a hostname: action log entries, escrow record,
+// and grace sessions.
+func (s *ChallengeStore) RemoveHost(hostname string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for user, entries := range s.actionLog {
+		var kept []ActionLogEntry
+		for _, e := range entries {
+			if e.Hostname != hostname {
+				kept = append(kept, e)
+			}
+		}
+		s.actionLog[user] = kept
+	}
+	delete(s.escrowedHosts, hostname)
+	suffix := "@" + hostname
+	for key := range s.lastApproval {
+		if strings.HasSuffix(key, suffix) {
+			delete(s.lastApproval, key)
+		}
+	}
+	s.saveStateLocked()
+}
+
 // ActiveSessionsForHost returns all users with active grace sessions on a host.
 func (s *ChallengeStore) ActiveSessionsForHost(hostname string) []GraceSession {
 	s.mu.RLock()
@@ -649,13 +676,35 @@ func (s *ChallengeStore) ActiveSessionsForHost(hostname string) []GraceSession {
 }
 
 // KnownHosts returns unique hostnames from the action log for a given user, sorted alphabetically.
+// Entries with action "removed_host" are excluded so removed hosts do not reappear.
 func (s *ChallengeStore) KnownHosts(username string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	seen := make(map[string]bool)
 	for _, entry := range s.actionLog[username] {
-		if entry.Hostname != "" && entry.Hostname != "(unknown)" {
+		if entry.Hostname != "" && entry.Hostname != "(unknown)" && entry.Action != "removed_host" {
 			seen[entry.Hostname] = true
+		}
+	}
+	hosts := make([]string, 0, len(seen))
+	for h := range seen {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	return hosts
+}
+
+// AllKnownHosts returns unique hostnames from the action log across all users, sorted alphabetically.
+// Entries with action "removed_host" are excluded so removed hosts do not reappear.
+func (s *ChallengeStore) AllKnownHosts() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := make(map[string]bool)
+	for _, entries := range s.actionLog {
+		for _, entry := range entries {
+			if entry.Hostname != "" && entry.Hostname != "(unknown)" && entry.Action != "removed_host" {
+				seen[entry.Hostname] = true
+			}
 		}
 	}
 	hosts := make([]string, 0, len(seen))
@@ -683,6 +732,24 @@ func (s *ChallengeStore) RecordEscrow(hostname, itemID, vaultID string) {
 	defer s.mu.Unlock()
 	s.escrowedHosts[hostname] = EscrowRecord{Timestamp: time.Now(), ItemID: itemID, VaultID: vaultID}
 	s.saveStateLocked()
+}
+
+// StoreEscrowCiphertext stores an encrypted break-glass password for the local escrow backend.
+// Implements escrow.EscrowStorer. Must NOT be called while holding the write lock.
+func (s *ChallengeStore) StoreEscrowCiphertext(hostname, ciphertext string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.escrowedCiphertexts[hostname] = ciphertext
+	s.saveStateLocked()
+}
+
+// GetEscrowCiphertext returns the encrypted ciphertext for a host, if any.
+// Implements escrow.EscrowStorer.
+func (s *ChallengeStore) GetEscrowCiphertext(hostname string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.escrowedCiphertexts[hostname]
+	return v, ok
 }
 
 // EscrowedHosts returns all hosts with escrowed passwords and their escrow records.
@@ -763,6 +830,28 @@ func (s *ChallengeStore) ForceExtendGraceSession(username, hostname string) time
 	graceSessions.Set(float64(len(s.lastApproval)))
 	s.saveStateLocked()
 	return s.gracePeriod
+}
+
+// ExtendGraceSessionFor extends a grace session to the given duration from now,
+// capped at the configured grace period. Returns the new remaining duration, or 0 if no session exists.
+func (s *ChallengeStore) ExtendGraceSessionFor(username, hostname string, dur time.Duration) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gracePeriod <= 0 {
+		return 0
+	}
+	key := graceKey(username, hostname)
+	if _, ok := s.lastApproval[key]; !ok {
+		return 0
+	}
+	if dur > s.gracePeriod {
+		dur = s.gracePeriod
+	}
+	newExpiry := time.Now().Add(dur)
+	s.lastApproval[key] = newExpiry
+	graceSessions.Set(float64(len(s.lastApproval)))
+	s.saveStateLocked()
+	return dur
 }
 
 // RevokeSession removes a grace session for a user on a specific hostname
@@ -1031,6 +1120,9 @@ func (s *ChallengeStore) loadState() {
 	for host, rec := range state.EscrowedHosts {
 		s.escrowedHosts[host] = rec
 	}
+	for host, ct := range state.EscrowedCiphertexts {
+		s.escrowedCiphertexts[host] = ct
+	}
 	for host, ts := range state.RotateBreakglassBefore {
 		s.rotateBreakglassBefore[host] = ts
 	}
@@ -1072,6 +1164,12 @@ func (s *ChallengeStore) saveStateLocked() {
 		state.EscrowedHosts = make(map[string]EscrowRecord, len(s.escrowedHosts))
 		for host, rec := range s.escrowedHosts {
 			state.EscrowedHosts[host] = rec
+		}
+	}
+	if len(s.escrowedCiphertexts) > 0 {
+		state.EscrowedCiphertexts = make(map[string]string, len(s.escrowedCiphertexts))
+		for host, ct := range s.escrowedCiphertexts {
+			state.EscrowedCiphertexts[host] = ct
 		}
 	}
 	if len(s.rotateBreakglassBefore) > 0 {

@@ -313,6 +313,45 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	hasActiveSessions := len(activeMap) > 0
 
+	// Admin: build all-users active sessions view, with optional ?user= / ?host= filters.
+	type allSessionView struct {
+		Username  string
+		Hostname  string
+		Remaining string
+	}
+	var allSessions []allSessionView
+	filterUser := ""
+	filterHost := ""
+	if isAdmin {
+		filterUser = r.URL.Query().Get("user")
+		filterHost = r.URL.Query().Get("host")
+		if filterUser != "" && !validUsername.MatchString(filterUser) {
+			filterUser = ""
+		}
+		if filterHost != "" && !validHostname.MatchString(filterHost) {
+			filterHost = ""
+		}
+		for _, sess := range s.store.AllActiveSessions() {
+			if filterUser != "" && sess.Username != filterUser {
+				continue
+			}
+			if filterHost != "" && sess.Hostname != filterHost {
+				continue
+			}
+			allSessions = append(allSessions, allSessionView{
+				Username:  sess.Username,
+				Hostname:  sess.Hostname,
+				Remaining: formatDuration(time.Until(sess.ExpiresAt)),
+			})
+		}
+		sort.Slice(allSessions, func(i, j int) bool {
+			if allSessions[i].Hostname != allSessions[j].Hostname {
+				return allSessions[i].Hostname < allSessions[j].Hostname
+			}
+			return allSessions[i].Username < allSessions[j].Username
+		})
+	}
+
 	// Build elevate duration options filtered by GracePeriod (same logic as admin hosts page).
 	type durationOption struct {
 		Value int
@@ -360,13 +399,18 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"HasActiveSessions": hasActiveSessions,
 		"CSRFToken":         csrfToken,
 		"CSRFTs":            csrfTs,
-		"ActivePage":        "access",
+		"ActivePage":        "sessions",
+		"AllSessions":       allSessions,
+		"FilterUser":        filterUser,
+		"FilterHost":        filterHost,
 		"Theme":             getTheme(r),
-		"CSPNonce":          r.Context().Value("csp-nonce"),
+		"CSPNonce":          cspNonce(r),
 		"T":                 T(lang),
 		"Lang":              lang,
 		"Languages":         supportedLanguages,
 		"IsAdmin":           isAdmin,
+		"AdminTab":          "",
+		"BridgeMode":        s.isBridgeMode(),
 		"Durations":         elevateDurations,
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
@@ -376,6 +420,325 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // handleSessionsRedirect redirects /sessions to the dashboard.
 func (s *Server) handleSessionsRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+}
+
+// handleAccess renders the /access page showing per-host sudo permissions
+// and providing elevate/extend/revoke actions.
+// Users see their own access; admins can select any user via ?user=X.
+func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if setLanguageCookie(w, r) {
+		return
+	}
+	lang := detectLanguage(r)
+	t := T(lang)
+
+	username := s.getSessionUser(r)
+	if username == "" {
+		setFlashCookie(w, "expired:")
+		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		return
+	}
+	s.setSessionCookie(w, username, s.getSessionRole(r))
+	isAdmin := s.getSessionRole(r) == "admin"
+
+	// Target user: admin can view any user, others view themselves.
+	targetUser := username
+	accessFilterUser := ""
+	if isAdmin {
+		if u := r.URL.Query().Get("user"); u != "" && validUsername.MatchString(u) {
+			targetUser = u
+			accessFilterUser = u
+		}
+	}
+
+	// Build snapshot of recently-removed users to exclude from PocketID merge.
+	s.removedUsersMu.Lock()
+	for u, t := range s.removedUsers {
+		if time.Since(t) > 10*time.Minute {
+			delete(s.removedUsers, u)
+		}
+	}
+	accessRemovedUsers := make(map[string]bool, len(s.removedUsers))
+	for u := range s.removedUsers {
+		accessRemovedUsers[u] = true
+	}
+	s.removedUsersMu.Unlock()
+
+	// Build AllUsers list for admin dropdown.
+	var allUsers []string
+	if isAdmin {
+		allUsers = s.store.AllUsers()
+		if s.pocketIDClient != nil {
+			if perms, err := s.pocketIDClient.GetUserPermissions(); err == nil {
+				userSet := make(map[string]bool, len(allUsers))
+				for _, u := range allUsers {
+					userSet[u] = true
+				}
+				for u := range perms {
+					if !userSet[u] && !accessRemovedUsers[u] {
+						allUsers = append(allUsers, u)
+					}
+				}
+				sort.Strings(allUsers)
+			}
+		}
+		// Ensure targetUser appears in the list even if they have no history yet.
+		found := false
+		for _, u := range allUsers {
+			if u == targetUser {
+				found = true
+				break
+			}
+		}
+		if !found {
+			allUsers = append(allUsers, targetUser)
+			sort.Strings(allUsers)
+		}
+	}
+
+	// Fetch group permissions from Pocket ID (cached).
+	var userPerms map[string][]pocketid.GroupInfo
+	if s.pocketIDClient != nil {
+		if perms, err := s.pocketIDClient.GetUserPermissions(); err == nil {
+			userPerms = perms
+		}
+	}
+
+	// Build known host list for targetUser.
+	// allHostsFn returns all registered/known hosts for ALL-access users.
+	allHostsFn := func() []string {
+		if s.hostRegistry.IsEnabled() {
+			return s.hostRegistry.RegisteredHosts()
+		}
+		return s.store.AllKnownHosts()
+	}
+	knownHosts := s.store.KnownHosts(targetUser)
+	hostSet := make(map[string]bool)
+	for _, h := range knownHosts {
+		hostSet[h] = true
+	}
+	hasAllHosts := false
+	for _, g := range userPerms[targetUser] {
+		sudoH := strings.TrimSpace(g.SudoHosts)
+		if sudoH == "" || sudoH == "ALL" {
+			hasAllHosts = true
+			continue
+		}
+		for _, part := range strings.Split(sudoH, ",") {
+			h := strings.TrimSpace(part)
+			if h != "" && !hostSet[h] {
+				hostSet[h] = true
+				knownHosts = append(knownHosts, h)
+			}
+		}
+	}
+	if hasAllHosts {
+		for _, h := range allHostsFn() {
+			if !hostSet[h] {
+				hostSet[h] = true
+				knownHosts = append(knownHosts, h)
+			}
+		}
+	}
+	sort.Strings(knownHosts)
+
+	// Active sessions for targetUser.
+	activeMap := make(map[string]string)
+	for _, sess := range s.store.ActiveSessions(targetUser) {
+		activeMap[sess.Hostname] = formatDuration(time.Until(sess.ExpiresAt))
+	}
+
+	type accessView struct {
+		Username string
+		Hostname string
+		Active   bool
+		Remaining string
+		Commands []string
+		AllCmds  bool
+	}
+
+	type userAccessGroup struct {
+		Username    string
+		Hosts       []accessView
+		ActiveCount int
+	}
+
+	// buildAccessViews builds the host access list for a single user.
+	buildAccessViews := func(u string, hosts []string) []accessView {
+		uActiveMap := make(map[string]string)
+		for _, sess := range s.store.ActiveSessions(u) {
+			uActiveMap[sess.Hostname] = formatDuration(time.Until(sess.ExpiresAt))
+		}
+		var views []accessView
+		for _, h := range hosts {
+			remaining, active := uActiveMap[h]
+			var cmds []string
+			allCmds := false
+			seen := make(map[string]bool)
+			for _, g := range userPerms[u] {
+				if g.SudoCommands == "" {
+					continue
+				}
+				sudoH := strings.TrimSpace(g.SudoHosts)
+				applies := sudoH == "" || sudoH == "ALL"
+				if !applies {
+					for _, part := range strings.Split(sudoH, ",") {
+						if strings.TrimSpace(part) == h {
+							applies = true
+							break
+						}
+					}
+				}
+				if !applies {
+					continue
+				}
+				if strings.TrimSpace(g.SudoCommands) == "ALL" {
+					allCmds = true
+					continue
+				}
+				for _, c := range strings.Split(g.SudoCommands, ",") {
+					c = strings.TrimSpace(c)
+					if c != "" && !seen[c] {
+						seen[c] = true
+						cmds = append(cmds, c)
+					}
+				}
+			}
+			displayH := h
+			if displayH == "(unknown)" {
+				displayH = t("unknown_host")
+			}
+			views = append(views, accessView{
+				Username:  u,
+				Hostname:  displayH,
+				Active:    active,
+				Remaining: remaining,
+				Commands:  cmds,
+				AllCmds:   allCmds,
+			})
+		}
+		sort.Slice(views, func(i, j int) bool {
+			return views[i].Hostname < views[j].Hostname
+		})
+		return views
+	}
+
+	// Per-user view for non-admins (or admin single-user view, unused now).
+	accessViews := buildAccessViews(targetUser, knownHosts)
+
+	// Admin combined view: one group per user, each with all their hosts.
+	var allUserGroups []userAccessGroup
+	if isAdmin {
+		for _, u := range allUsers {
+			uHosts := s.store.KnownHosts(u)
+			uHostSet := make(map[string]bool)
+			for _, h := range uHosts {
+				uHostSet[h] = true
+			}
+			uHasAll := false
+			for _, g := range userPerms[u] {
+				sudoH := strings.TrimSpace(g.SudoHosts)
+				if sudoH == "" || sudoH == "ALL" {
+					uHasAll = true
+					continue
+				}
+				for _, part := range strings.Split(sudoH, ",") {
+					h := strings.TrimSpace(part)
+					if h != "" && !uHostSet[h] {
+						uHostSet[h] = true
+						uHosts = append(uHosts, h)
+					}
+				}
+			}
+			if uHasAll {
+				for _, h := range allHostsFn() {
+					if !uHostSet[h] {
+						uHostSet[h] = true
+						uHosts = append(uHosts, h)
+					}
+				}
+			}
+			sort.Strings(uHosts)
+			views := buildAccessViews(u, uHosts)
+			activeCount := 0
+			for _, v := range views {
+				if v.Active {
+					activeCount++
+				}
+			}
+			allUserGroups = append(allUserGroups, userAccessGroup{
+				Username:    u,
+				Hosts:       views,
+				ActiveCount: activeCount,
+			})
+		}
+	}
+
+	csrfTs := fmt.Sprintf("%d", time.Now().Unix())
+	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+
+	// Elevate duration options clamped to GracePeriod.
+	type durationOption struct {
+		Value int
+		Label string
+	}
+	allDurations := []durationOption{
+		{3600, "1h"},
+		{14400, "4h"},
+		{28800, "8h"},
+		{86400, "1d"},
+	}
+	var elevateDurations []durationOption
+	graceSec := int(s.cfg.GracePeriod.Seconds())
+	if graceSec <= 0 {
+		graceSec = 86400
+	}
+	for _, d := range allDurations {
+		if d.Value <= graceSec {
+			elevateDurations = append(elevateDurations, d)
+		}
+	}
+	if len(elevateDurations) == 0 {
+		elevateDurations = []durationOption{{graceSec, formatDuration(s.cfg.GracePeriod)}}
+	}
+
+	dashTZ := "UTC"
+	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
+		if _, err := time.LoadLocation(c.Value); err == nil {
+			dashTZ = c.Value
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	if err := accessTmpl.Execute(w, map[string]interface{}{
+		"Username":   username,
+		"Initial":    strings.ToUpper(username[:1]),
+		"Avatar":     getAvatar(r),
+		"Timezone":   dashTZ,
+		"TargetUser":      targetUser,
+		"AllUsers":        allUsers,
+		"HostAccess":      accessViews,
+		"AllUserGroups":   allUserGroups,
+		"CSRFToken":  csrfToken,
+		"CSRFTs":     csrfTs,
+		"ActivePage": "access",
+		"Theme":      getTheme(r),
+		"CSPNonce":   cspNonce(r),
+		"T":          T(lang),
+		"Lang":       lang,
+		"Languages":  supportedLanguages,
+		"IsAdmin":    isAdmin,
+		"AdminTab":   "",
+		"BridgeMode": s.isBridgeMode(),
+		"Durations":  elevateDurations,
+		"FilterUser": accessFilterUser,
+	}); err != nil {
+		log.Printf("ERROR: template execution: %v", err)
+	}
 }
 
 // handleApprovalPage validates the code and redirects to OIDC login.
@@ -750,11 +1113,19 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 
 	// Parse hours_ago filter (applied before other filters so they can combine)
 	hoursAgoStr := r.URL.Query().Get("hours_ago")
+	hoursWindowStr := r.URL.Query().Get("hours_window")
+	hoursWindow := 1
+	if w, err := strconv.Atoi(hoursWindowStr); err == nil && w >= 1 && w <= 24 {
+		hoursWindow = w
+	}
+	if hoursAgoStr == "" {
+		hoursWindowStr = "" // don't carry hours_window without hours_ago
+	}
 	if hoursAgoStr != "" {
 		if h, err := strconv.Atoi(hoursAgoStr); err == nil && h >= 0 && h < 24 {
 			activeHoursAgo = h
-			hourStart := nowInTZ.Add(-time.Duration(h+1) * time.Hour).Truncate(time.Hour)
-			hourEnd := hourStart.Add(time.Hour)
+			hourStart := nowInTZ.Add(-time.Duration(h+hoursWindow) * time.Hour).Truncate(time.Hour)
+			hourEnd := hourStart.Add(time.Duration(hoursWindow) * time.Hour)
 			var filtered []challpkg.ActionLogEntryWithUser
 			for _, e := range allHistory {
 				if e.Timestamp.After(hourStart) && e.Timestamp.Before(hourEnd) {
@@ -903,14 +1274,17 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"PerPageOptions":  perPageOptions,
 		"TZName":          tzName,
 		"Timezone":        tzName,
-		"CSPNonce":        r.Context().Value("csp-nonce"),
+		"CSPNonce":        cspNonce(r),
 		"T":               T(lang),
 		"Lang":            lang,
 		"Languages":       supportedLanguages,
 		"Timeline":        timeline,
 		"HoursAgo":        hoursAgoStr,
+		"HoursWindow":     hoursWindow,
 		"ActiveHoursAgo":  activeHoursAgo,
 		"IsAdmin":         isAdmin,
+		"AdminTab":        "",
+		"BridgeMode":      s.isBridgeMode(),
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
 	}

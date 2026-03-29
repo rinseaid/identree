@@ -21,12 +21,67 @@ set -euo pipefail
 # Usage: curl -fsSL {{.ServerURL}}/install.sh | sudo bash
 # Automated: SHARED_SECRET=xxx curl -fsSL {{.ServerURL}}/install.sh | sudo bash
 
-REPO="rinseaid/identree"
 SERVER_URL="{{.ServerURL}}"
+MACHINE_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
+echo "IDENTREE_HOSTNAME=$MACHINE_HOSTNAME"
 INSTALL_DIR="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
 CONFIG_DIR="/etc/identree"
 CONFIG_FILE="/etc/identree/client.conf"
+
+# ── Download helper (curl → wget fallback) ───────────────────────────────────
+
+_dl() {
+    # Usage: _dl <url>              → stdout
+    #        _dl <url> <dest-file>  → file
+    local url="$1" dest="${2:-}"
+    if command -v curl >/dev/null 2>&1; then
+        if [ -n "$dest" ]; then curl -fsSL -o "$dest" "$url"
+        else curl -fsSL "$url"; fi
+    elif command -v wget >/dev/null 2>&1; then
+        if [ -n "$dest" ]; then wget -qO "$dest" "$url"
+        else wget -qO- "$url"; fi
+    elif command -v python3 >/dev/null 2>&1; then
+        if [ -n "$dest" ]; then
+            python3 -c "
+import urllib.request, sys
+try:
+    urllib.request.urlretrieve('$url', '$dest')
+except Exception as e:
+    sys.stderr.write('Error: ' + str(e) + '\n'); sys.exit(1)
+"
+        else
+            python3 -c "
+import urllib.request, sys
+try:
+    sys.stdout.buffer.write(urllib.request.urlopen('$url').read())
+except Exception as e:
+    sys.stderr.write('Error: ' + str(e) + '\n'); sys.exit(1)
+"
+        fi
+    elif command -v python >/dev/null 2>&1; then
+        if [ -n "$dest" ]; then
+            python -c "
+import urllib2, sys
+try:
+    open('$dest','wb').write(urllib2.urlopen('$url').read())
+except Exception as e:
+    sys.stderr.write('Error: ' + str(e) + '\n'); sys.exit(1)
+"
+        else
+            python -c "
+import urllib2, sys
+try:
+    sys.stdout.write(urllib2.urlopen('$url').read())
+except Exception as e:
+    sys.stderr.write('Error: ' + str(e) + '\n'); sys.exit(1)
+"
+        fi
+    else
+        echo "Error: no download tool found (tried curl, wget, python3, python) — install one and retry" >&2
+        exit 1
+    fi
+}
 
 # ── Preflight ───────────────────────────────────────────────────────────────
 
@@ -52,50 +107,35 @@ esac
 
 # ── Binary ──────────────────────────────────────────────────────────────────
 
-echo "Finding latest release..."
-VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-    | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+echo "Fetching version from $SERVER_URL..."
+VERSION=$(_dl "$SERVER_URL/download/version" 2>&1) || {
+    echo "Error: could not reach identree server at $SERVER_URL" >&2
+    echo "$VERSION" >&2
+    exit 1
+}
+VERSION=$(echo "$VERSION" | tr -d '[:space:]')
 if [ -z "$VERSION" ]; then
-    echo "Error: could not determine latest version" >&2
+    echo "Error: server returned empty version" >&2
     exit 1
 fi
-echo "Latest version: $VERSION"
+echo "Server version: $VERSION"
 
 CURRENT="none"
 if [ -f "$INSTALL_DIR/identree" ]; then
-    CURRENT=$("$INSTALL_DIR/identree" --version 2>/dev/null || echo "unknown")
+    CURRENT=$("$INSTALL_DIR/identree" --version 2>/dev/null | awk '{print $1}' || echo "unknown")
 fi
 
-if [ "$CURRENT" = "$VERSION" ]; then
+if [ "$CURRENT" = "$VERSION" ] && [ "$VERSION" != "dev" ]; then
     echo "Binary already at $VERSION — skipping download."
 else
-    BIN_URL="https://github.com/$REPO/releases/download/$VERSION/identree-$SUFFIX"
-    SUMS_URL="https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS"
+    BIN_URL="$SERVER_URL/download/identree-$SUFFIX"
     TMP_BIN=$(mktemp /tmp/identree-XXXXXX)
-    TMP_SUMS=$(mktemp /tmp/identree-sums-XXXXXX)
-    trap 'rm -f "$TMP_BIN" "$TMP_SUMS"' EXIT
+    trap 'rm -f "$TMP_BIN"' EXIT
 
-    echo "Downloading $BIN_URL..."
-    curl -fsSL -o "$TMP_BIN" "$BIN_URL"
-    curl -fsSL -o "$TMP_SUMS" "$SUMS_URL"
+    echo "Downloading identree $VERSION ($SUFFIX)..."
+    _dl "$BIN_URL" "$TMP_BIN"
 
-    # Rename to expected filename for sha256sum check
-    NAMED_TMP="/tmp/identree-$SUFFIX"
-    cp "$TMP_BIN" "$NAMED_TMP"
-    trap 'rm -f "$TMP_BIN" "$TMP_SUMS" "$NAMED_TMP"' EXIT
-
-    cd /tmp
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum -c --ignore-missing "$(basename "$TMP_SUMS")" 2>/dev/null \
-            || { echo "ERROR: checksum mismatch — aborting" >&2; exit 1; }
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 -c --ignore-missing "$(basename "$TMP_SUMS")" 2>/dev/null \
-            || { echo "ERROR: checksum mismatch — aborting" >&2; exit 1; }
-    else
-        echo "WARNING: no sha256sum available — skipping checksum verification"
-    fi
-
-    install -m 755 "$NAMED_TMP" "$INSTALL_DIR/identree"
+    install -m 755 "$TMP_BIN" "$INSTALL_DIR/identree"
     echo "Installed identree $VERSION"
 fi
 
@@ -165,17 +205,25 @@ fi
 
 # ── Systemd rotation timer ───────────────────────────────────────────────────
 
-if command -v systemctl >/dev/null 2>&1; then
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     for UNIT in identree-rotate.service identree-rotate.timer; do
-        curl -fsSL -o "$SYSTEMD_DIR/$UNIT" \
-            "https://raw.githubusercontent.com/$REPO/$VERSION/systemd/$UNIT"
+        _dl "$SERVER_URL/download/systemd/$UNIT" "$SYSTEMD_DIR/$UNIT"
     done
     systemctl daemon-reload
     systemctl enable --now identree-rotate.timer
     echo "Enabled weekly break-glass rotation timer"
+elif command -v crontab >/dev/null 2>&1 || [ -d /etc/cron.d ]; then
+    CRON_FILE="/etc/cron.d/identree-rotate"
+    if [ -f "$CRON_FILE" ]; then
+        echo "Cron job already configured: $CRON_FILE"
+    else
+        printf '# identree weekly break-glass rotation\n0 3 * * 0 root /usr/local/bin/identree rotate-breakglass\n' > "$CRON_FILE"
+        chmod 644 "$CRON_FILE"
+        echo "Installed weekly rotation cron job: $CRON_FILE"
+    fi
 else
-    echo "Warning: systemd not found — set up a weekly cron job for rotation:"
-    echo "  0 3 * * 0 root /usr/local/bin/identree rotate-breakglass"
+    echo "Warning: neither systemd nor cron found — run weekly manually:"
+    echo "  sudo /usr/local/bin/identree rotate-breakglass"
 fi
 
 # ── PAM configuration ────────────────────────────────────────────────────────
@@ -226,6 +274,122 @@ if [ "${CONFIG_WRITTEN:-0}" != "1" ]; then
 fi
 `
 
+// uninstallScriptTmpl is the shell script run on the remote host to remove identree.
+const uninstallScriptTmpl = `#!/bin/bash
+set -euo pipefail
+
+INSTALL_DIR="/usr/local/bin"
+CONFIG_DIR="/etc/identree"
+SYSTEMD_DIR="/etc/systemd/system"
+UNCONFIGURE_PAM="{{.UnconfigurePAM}}"
+REMOVE_FILES="{{.RemoveFiles}}"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: must be run as root" >&2
+    exit 1
+fi
+
+# ── PAM ──────────────────────────────────────────────────────────────────────
+if [ "$UNCONFIGURE_PAM" = "true" ]; then
+    for PAM_FILE in /etc/pam.d/sudo /etc/pam.d/sudo-i; do
+        [ -f "$PAM_FILE" ] || continue
+        if grep -q "identree" "$PAM_FILE" 2>/dev/null; then
+            cp "$PAM_FILE" "${PAM_FILE}.bak"
+            grep -v "identree" "${PAM_FILE}.bak" > "$PAM_FILE"
+            echo "Removed identree from $PAM_FILE"
+        else
+            echo "identree not configured in $PAM_FILE"
+        fi
+    done
+fi
+
+# ── Systemd / cron ────────────────────────────────────────────────────────────
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl disable --now identree-rotate.timer 2>/dev/null || true
+    rm -f "$SYSTEMD_DIR/identree-rotate.service" "$SYSTEMD_DIR/identree-rotate.timer"
+    systemctl daemon-reload 2>/dev/null || true
+    echo "Disabled and removed systemd units"
+elif [ -f /etc/cron.d/identree-rotate ]; then
+    rm -f /etc/cron.d/identree-rotate
+    echo "Removed cron job"
+fi
+
+# ── Binary and config ─────────────────────────────────────────────────────────
+if [ "$REMOVE_FILES" = "true" ]; then
+    rm -f "$INSTALL_DIR/identree" "$INSTALL_DIR/identree-linux-amd64" "$INSTALL_DIR/identree-linux-arm64"
+    rm -f /etc/identree-breakglass
+    rm -rf "$CONFIG_DIR"
+    echo "Removed identree binary and config"
+fi
+
+echo ""
+echo "identree removed from this host."
+`
+
+// renderUninstallScript returns the rendered uninstall script.
+func (s *Server) renderUninstallScript(unconfigurePAM, removeFiles bool) ([]byte, error) {
+	tmpl, err := template.New("uninstall").Parse(uninstallScriptTmpl)
+	if err != nil {
+		return nil, err
+	}
+	data := struct {
+		UnconfigurePAM string
+		RemoveFiles    string
+	}{
+		UnconfigurePAM: fmt.Sprintf("%v", unconfigurePAM),
+		RemoveFiles:    fmt.Sprintf("%v", removeFiles),
+	}
+	var buf strings.Builder
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, err
+	}
+	return []byte(buf.String()), nil
+}
+
+// installServerURL returns the URL the install script should use to reach this
+// server from client hosts. Uses IDENTREE_INSTALL_URL if set, otherwise
+// falls back to ExternalURL.
+func (s *Server) installServerURL() string {
+	if s.cfg.InstallURL != "" {
+		return strings.TrimRight(s.cfg.InstallURL, "/")
+	}
+	return strings.TrimRight(s.cfg.ExternalURL, "/")
+}
+
+// renderInstallScript returns the rendered install script as bytes.
+// Used by the deploy handler to pipe the script directly over SSH.
+func (s *Server) renderInstallScript() ([]byte, error) {
+	tmpl, err := template.New("install").Parse(installScriptTmpl)
+	if err != nil {
+		return nil, err
+	}
+	data := struct{ ServerURL string }{ServerURL: s.installServerURL()}
+	var buf strings.Builder
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, err
+	}
+	return []byte(buf.String()), nil
+}
+
+// handleUninstallScript serves the rendered uninstall script.
+// GET /api/deploy/uninstall-script?pam=true&files=true
+func (s *Server) handleUninstallScript(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pam := r.URL.Query().Get("pam") != "false"
+	files := r.URL.Query().Get("files") != "false"
+	script, err := s.renderUninstallScript(pam, files)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(script)
+}
+
 // handleInstallScript serves a pre-configured shell installer script.
 // GET /install.sh
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +408,7 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	data := struct {
 		ServerURL string
 	}{
-		ServerURL: strings.TrimRight(s.cfg.ExternalURL, "/"),
+		ServerURL: s.installServerURL(),
 	}
 
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")

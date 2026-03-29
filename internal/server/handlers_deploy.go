@@ -193,12 +193,13 @@ func (s *Server) handleDeployUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type userEntry struct {
-		Username string `json:"username"`
-		Email    string `json:"email"`
+		Username string   `json:"username"`
+		Email    string   `json:"email"`
+		SSHKeys  []string `json:"ssh_keys"`
 	}
 	out := make([]userEntry, 0, len(users))
 	for _, u := range users {
-		out = append(out, userEntry{Username: u.Username, Email: u.Email})
+		out = append(out, userEntry{Username: u.Username, Email: u.Email, SSHKeys: u.SSHKeys})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
@@ -292,20 +293,24 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	s.deployJobs[jobID] = job
 	s.deployMu.Unlock()
 
+	// Render the install script server-side so the remote host needs no curl.
+	installScript, err := s.renderInstallScript()
+	if err != nil {
+		<-deploySemaphore
+		http.Error(w, "failed to render install script", http.StatusInternalServerError)
+		return
+	}
+
 	// Use sudo only when not connecting as root; many systems (e.g. Proxmox) don't have sudo.
 	sudoPrefix := ""
 	if req.SSHUser != "root" {
 		sudoPrefix = "sudo "
 	}
-	baseURL := strings.TrimRight(s.cfg.ExternalURL, "/")
-	installCmd := fmt.Sprintf(
-		"curl -fsSL %s/install.sh | SHARED_SECRET=%s %sbash",
-		baseURL, shellQuote(s.cfg.SharedSecret), sudoPrefix,
-	)
+	remoteCmd := fmt.Sprintf("SHARED_SECRET=%s %sbash", shellQuote(s.cfg.SharedSecret), sudoPrefix)
 
 	go func() {
 		defer func() { <-deploySemaphore }()
-		runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, installCmd)
+		s.runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, installScript)
 		// zero the signer (best-effort, GC will handle the rest)
 		signer = nil
 		// Schedule job cleanup after TTL to prevent unbounded map growth.
@@ -406,8 +411,134 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// runDeployJob connects via SSH and runs the install command, streaming output to job.
-func runDeployJob(job *deployJob, hostname string, port int, sshUser string, signer gossh.Signer, cmd string) {
+// handleRemoveHost removes a host from identree's store without SSH cleanup.
+// POST /api/hosts/remove-host
+func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		http.Error(w, "admin required", http.StatusForbidden)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	var req struct {
+		Hostname string `json:"hostname"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Hostname == "" || !validHostname.MatchString(req.Hostname) {
+		http.Error(w, "invalid hostname", http.StatusBadRequest)
+		return
+	}
+
+	adminUser := s.getSessionUser(r)
+	s.store.RemoveHost(req.Hostname)
+	_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
+	s.store.LogAction(adminUser, "removed_host", req.Hostname, "", "")
+	log.Printf("HOST_REMOVED: admin %q removed host %q from %s", adminUser, req.Hostname, clientIP(r))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleRemoveDeploy SSHes into a host, runs the uninstall script, then removes it from the store.
+// POST /api/deploy/remove
+func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		http.Error(w, "admin required", http.StatusForbidden)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize*64)
+	var req struct {
+		Hostname       string `json:"hostname"`
+		Port           int    `json:"port"`
+		SSHUser        string `json:"ssh_user"`
+		PrivateKey     string `json:"private_key"`
+		UnconfigurePAM bool   `json:"unconfigure_pam"`
+		RemoveFiles    bool   `json:"remove_files"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Hostname == "" || !validHostname.MatchString(req.Hostname) {
+		http.Error(w, "hostname required", http.StatusBadRequest)
+		return
+	}
+	if req.Port <= 0 || req.Port > 65535 {
+		req.Port = 22
+	}
+	if req.SSHUser == "" {
+		req.SSHUser = "root"
+	}
+	if req.PrivateKey == "" {
+		http.Error(w, "private_key required", http.StatusBadRequest)
+		return
+	}
+
+	signer, err := gossh.ParsePrivateKey([]byte(req.PrivateKey))
+	if err != nil {
+		http.Error(w, "invalid private key: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	uninstallScript, err := s.renderUninstallScript(req.UnconfigurePAM, req.RemoveFiles)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	adminUser := s.getSessionUser(r)
+	if adminUser == "" {
+		http.Error(w, "not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	jobID, err := randomHex(8)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	job := newDeployJob(jobID, req.Hostname, req.SSHUser, adminUser)
+
+	s.deployMu.Lock()
+	s.deployJobs[jobID] = job
+	s.deployMu.Unlock()
+
+	sudoPrefix := ""
+	if req.SSHUser != "root" {
+		sudoPrefix = "sudo "
+	}
+	remoteCmd := fmt.Sprintf("%sbash", sudoPrefix)
+
+	go func() {
+		s.runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, uninstallScript)
+		if !job.failed {
+			s.store.RemoveHost(req.Hostname)
+			_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
+			s.store.LogAction(adminUser, "removed_host", req.Hostname, "", "")
+		}
+	}()
+
+	log.Printf("REMOVE: admin %q starting removal of %s:%d as %s (job %s)", adminUser, req.Hostname, req.Port, req.SSHUser, jobID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"id": jobID})
+}
+
+// runDeployJob connects via SSH, pipes installScript to stdin of cmd, and streams output to job.
+func (s *Server) runDeployJob(job *deployJob, hostname string, port int, sshUser string, signer gossh.Signer, cmd string, installScript []byte) {
 	addr := fmt.Sprintf("%s:%d", hostname, port)
 	job.appendLine(fmt.Sprintf("Connecting to %s as %s …", addr, sshUser))
 
@@ -434,6 +565,9 @@ func runDeployJob(job *deployJob, hostname string, port int, sshUser string, sig
 		return
 	}
 	defer sess.Close()
+
+	// Pipe the install script to bash's stdin on the remote host.
+	sess.Stdin = bytes.NewReader(installScript)
 
 	// Stream stdout and stderr back to the job buffer via a pipe
 	pr, pw := io.Pipe()
@@ -481,6 +615,21 @@ func runDeployJob(job *deployJob, hostname string, port int, sshUser string, sig
 		} else {
 			job.appendLine("Install completed successfully.")
 			job.finish(false)
+			// Extract the hostname the install script reported, falling back to
+			// the address the admin entered if the line isn't present.
+			logHost := hostname
+			job.mu.Lock()
+			for _, line := range strings.Split(job.buf.String(), "\n") {
+				if h := strings.TrimPrefix(line, "IDENTREE_HOSTNAME="); h != line {
+					h = strings.TrimSpace(h)
+					if h != "" && validHostname.MatchString(h) {
+						logHost = h
+					}
+					break
+				}
+			}
+			job.mu.Unlock()
+			s.store.LogAction(job.initiator, "deployed", logHost, "", "")
 		}
 	case <-timer.C:
 		sess.Signal(gossh.SIGKILL)

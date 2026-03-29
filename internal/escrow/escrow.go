@@ -3,6 +3,11 @@ package escrow
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/crypto/hkdf"
 
 	"github.com/rinseaid/identree/internal/config"
 )
@@ -39,8 +46,89 @@ func truncateOutput(s string) string {
 // vault name/UUID for 1password-connect, KV path prefix for Vault,
 // {orgId}/{projectId} for Bitwarden, {workspaceId}/{env} for Infisical.
 // Pass empty string to use the backend's configured default (ESCROW_PATH).
+//
+// Retrieve fetches the live password for hostname using the stored itemID and
+// vaultID from the EscrowRecord. For the local backend, itemID/vaultID are
+// unused and the password is decrypted from local state instead.
 type Backend interface {
 	Store(ctx context.Context, hostname, password, vault string) (itemID, vaultID string, err error)
+	Retrieve(ctx context.Context, hostname, itemID, vaultID string) (password string, err error)
+}
+
+// EscrowStorer is the subset of challenge.ChallengeStore needed by the local backend.
+// Using an interface avoids an import cycle between the escrow and challenge packages.
+type EscrowStorer interface {
+	StoreEscrowCiphertext(hostname, ciphertext string)
+	GetEscrowCiphertext(hostname string) (string, bool)
+}
+
+// DeriveEscrowKey derives a 32-byte AES key from rawKey using HKDF-SHA256.
+func DeriveEscrowKey(rawKey string) ([]byte, error) {
+	h := hkdf.New(sha256.New, []byte(rawKey), nil, []byte("identree-breakglass-v1"))
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(h, key); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+// NewLocalEscrowBackend returns a Backend that encrypts passwords with
+// AES-256-GCM and stores/retrieves them via the provided EscrowStorer.
+// key must be 32 bytes (use DeriveEscrowKey).
+func NewLocalEscrowBackend(key []byte, storer EscrowStorer) Backend {
+	return &localEscrowBackend{key: key, storer: storer}
+}
+
+type localEscrowBackend struct {
+	key    []byte
+	storer EscrowStorer
+}
+
+func (b *localEscrowBackend) Store(_ context.Context, hostname, password, _ string) (string, string, error) {
+	block, err := aes.NewCipher(b.key)
+	if err != nil {
+		return "", "", fmt.Errorf("local escrow: create cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", "", fmt.Errorf("local escrow: create GCM: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", "", fmt.Errorf("local escrow: generate nonce: %w", err)
+	}
+	// Seal appends ciphertext+tag to nonce, producing nonce||ciphertext||tag.
+	blob := gcm.Seal(nonce, nonce, []byte(password), nil)
+	b.storer.StoreEscrowCiphertext(hostname, base64.StdEncoding.EncodeToString(blob))
+	return "", "", nil
+}
+
+func (b *localEscrowBackend) Retrieve(_ context.Context, hostname, _, _ string) (string, error) {
+	encoded, ok := b.storer.GetEscrowCiphertext(hostname)
+	if !ok {
+		return "", fmt.Errorf("local escrow: no ciphertext stored for %q", hostname)
+	}
+	blob, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", fmt.Errorf("local escrow: decode ciphertext: %w", err)
+	}
+	block, err := aes.NewCipher(b.key)
+	if err != nil {
+		return "", fmt.Errorf("local escrow: create cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("local escrow: create GCM: %w", err)
+	}
+	ns := gcm.NonceSize()
+	if len(blob) < ns {
+		return "", fmt.Errorf("local escrow: blob too short")
+	}
+	plaintext, err := gcm.Open(nil, blob[:ns], blob[ns:], nil)
+	if err != nil {
+		return "", fmt.Errorf("local escrow: decrypt failed (wrong key?)")
+	}
+	return string(plaintext), nil
 }
 
 // resolveEscrowVault returns the vault/path to use for a given hostname by
@@ -274,6 +362,32 @@ func (b *opConnectBackend) Store(ctx context.Context, hostname, password, vault 
 	return itemID, vaultID, nil
 }
 
+func (b *opConnectBackend) Retrieve(ctx context.Context, hostname, itemID, vaultID string) (string, error) {
+	if vaultID == "" || itemID == "" {
+		return "", fmt.Errorf("1password-connect: missing vault or item ID for retrieval")
+	}
+	path := fmt.Sprintf("%s/v1/vaults/%s/items/%s", b.baseURL, vaultID, itemID)
+	respData, err := doJSONRequest(ctx, b.client, "GET", path, nil, "Bearer "+b.token)
+	if err != nil {
+		return "", fmt.Errorf("1password-connect: get item: %w", err)
+	}
+	var item struct {
+		Fields []struct {
+			Purpose string `json:"purpose"`
+			Value   string `json:"value"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(respData, &item); err != nil {
+		return "", fmt.Errorf("1password-connect: parse item: %w", err)
+	}
+	for _, f := range item.Fields {
+		if f.Purpose == "PASSWORD" {
+			return f.Value, nil
+		}
+	}
+	return "", fmt.Errorf("1password-connect: no PASSWORD field in item")
+}
+
 func (b *opConnectBackend) resolveVaultName(ctx context.Context, name string) (string, error) {
 	if looksLikeID(name) {
 		return name, nil
@@ -363,6 +477,47 @@ func (b *hcVaultBackend) Store(ctx context.Context, hostname, password, vault st
 		return "", "", fmt.Errorf("vault: write secret: %w", err)
 	}
 	return b.baseURL + kvPath, "", nil
+}
+
+func (b *hcVaultBackend) Retrieve(ctx context.Context, hostname, _, _ string) (string, error) {
+	token, err := b.getToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("vault: auth: %w", err)
+	}
+	mount, prefix, hasPrefix := strings.Cut(b.path, "/")
+	var kvPath string
+	if hasPrefix {
+		kvPath = fmt.Sprintf("/v1/%s/data/%s/%s", mount, prefix, hostname)
+	} else {
+		kvPath = fmt.Sprintf("/v1/%s/data/%s", mount, hostname)
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", b.baseURL+kvPath, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("X-Vault-Token", token)
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respData, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("vault: HTTP %d: %s", resp.StatusCode, truncateOutput(string(respData)))
+	}
+	var result struct {
+		Data struct {
+			Data map[string]string `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &result); err != nil {
+		return "", fmt.Errorf("vault: parse response: %w", err)
+	}
+	pw, ok := result.Data.Data["password"]
+	if !ok {
+		return "", fmt.Errorf("vault: no 'password' key in secret")
+	}
+	return pw, nil
 }
 
 // writeSecret writes to Vault KV v2, trying POST then PUT (some Vault versions
@@ -524,6 +679,30 @@ func (b *bitwardenBackend) Store(ctx context.Context, hostname, password, vault 
 	return secretID, "", nil
 }
 
+func (b *bitwardenBackend) Retrieve(ctx context.Context, _, itemID, _ string) (string, error) {
+	if itemID == "" {
+		return "", fmt.Errorf("bitwarden: missing secret ID for retrieval")
+	}
+	accessToken, err := b.getToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("bitwarden: auth: %w", err)
+	}
+	respData, err := doJSONRequest(ctx, b.client, "GET", b.apiURL+"/secrets/"+itemID, nil, "Bearer "+accessToken)
+	if err != nil {
+		return "", fmt.Errorf("bitwarden: get secret: %w", err)
+	}
+	var result struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(respData, &result); err != nil {
+		return "", fmt.Errorf("bitwarden: parse secret: %w", err)
+	}
+	if result.Value == "" {
+		return "", fmt.Errorf("bitwarden: empty secret value")
+	}
+	return result.Value, nil
+}
+
 func (b *bitwardenBackend) getToken(ctx context.Context) (string, error) {
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
@@ -642,6 +821,36 @@ func (b *infisicalBackend) Store(ctx context.Context, hostname, password, vault 
 	}
 
 	return fmt.Sprintf("%s/%s/%s", workspaceID, environment, secretName), "", nil
+}
+
+func (b *infisicalBackend) Retrieve(ctx context.Context, hostname, _, _ string) (string, error) {
+	token, err := b.getToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("infisical: auth: %w", err)
+	}
+	secretName := "BREAKGLASS_" + strings.ToUpper(strings.ReplaceAll(hostname, "-", "_"))
+	workspaceID, environment, _ := strings.Cut(b.projectEnv, "/")
+	if environment == "" {
+		environment = "prod"
+	}
+	getURL := fmt.Sprintf("%s/api/v3/secrets/raw/%s?workspaceId=%s&environment=%s&secretPath=/",
+		b.baseURL, url.PathEscape(secretName), url.QueryEscape(workspaceID), url.QueryEscape(environment))
+	respData, err := doJSONRequest(ctx, b.client, "GET", getURL, nil, "Bearer "+token)
+	if err != nil {
+		return "", fmt.Errorf("infisical: get secret: %w", err)
+	}
+	var result struct {
+		Secret struct {
+			SecretValue string `json:"secretValue"`
+		} `json:"secret"`
+	}
+	if err := json.Unmarshal(respData, &result); err != nil {
+		return "", fmt.Errorf("infisical: parse response: %w", err)
+	}
+	if result.Secret.SecretValue == "" {
+		return "", fmt.Errorf("infisical: empty secret value")
+	}
+	return result.Secret.SecretValue, nil
 }
 
 func (b *infisicalBackend) getToken(ctx context.Context) (string, error) {
