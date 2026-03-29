@@ -26,7 +26,7 @@ jobs:
           VERSION: ci
 
       - name: Start services
-        run: docker compose -f test/docker-compose.yml up -d pocketid identree
+        run: docker compose -f test/docker-compose.yml up -d pocketid identree testclient
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ci
@@ -57,6 +57,18 @@ jobs:
           done
           curl -sf http://localhost:8090/healthz || { echo "identree never became healthy"; exit 1; }
 
+      - name: Wait for testclient to be ready
+        run: |
+          echo "Waiting for testclient..."
+          for i in $(seq 1 20); do
+            if docker exec identree-test-client test -f /etc/identree/client.conf 2>/dev/null; then
+              echo "testclient ready."
+              break
+            fi
+            echo "  attempt $i/20..."
+            sleep 3
+          done
+
       - name: Seed test data
         run: bash ci/seed-data.sh
 
@@ -73,6 +85,9 @@ jobs:
       - name: Take screenshots
         run: node ci/screenshots.mjs
 
+      - name: Take elevation screenshots
+        run: node ci/elevation.mjs
+
       - name: Install Pillow
         run: pip install Pillow
 
@@ -85,6 +100,7 @@ jobs:
           git rm -f docs/screenshots/*.png 2>/dev/null || true
           mkdir -p docs/screenshots
           cp screenshots/*-split.png docs/screenshots/ 2>/dev/null || true
+          cp screenshots/elevation-*.png docs/screenshots/ 2>/dev/null || true
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/screenshots/

@@ -73,6 +73,7 @@ services:
       context: ..
       dockerfile: test/testclient/Dockerfile
     container_name: identree-test-client
+    hostname: prod-web-01
     restart: unless-stopped
     depends_on:
       identree:
