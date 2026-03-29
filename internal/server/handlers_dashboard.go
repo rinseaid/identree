@@ -46,7 +46,7 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 // GET /signout
 func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
-	loginURL := strings.TrimRight(s.cfg.ExternalURL, "/") + "/sessions/login"
+	loginURL := s.baseURL + "/sessions/login"
 	http.Redirect(w, r, loginURL, http.StatusSeeOther)
 }
 
@@ -159,7 +159,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	username := s.getSessionUser(r)
 	if username == "" {
 		// Auto-redirect to OIDC login — no intermediate page
-		loginURL := strings.TrimRight(s.cfg.ExternalURL, "/") + "/sessions/login"
+		loginURL := s.baseURL + "/sessions/login"
 		http.Redirect(w, r, loginURL, http.StatusSeeOther)
 		return
 	}
@@ -251,21 +251,57 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(knownHosts)
 
-	// Build active-session map for quick lookup
-	activeMap := make(map[string]string) // hostname -> remaining
+	// Duration options for extend/elevate dropdowns.
+	type durationOption struct {
+		Value int
+		Label string
+	}
+	allDurations := []durationOption{
+		{3600, "1h"},
+		{7200, "2h"},
+		{14400, "4h"},
+		{28800, "8h"},
+		{86400, "1d"},
+	}
+	graceSec := int(s.cfg.GracePeriod.Seconds())
+	if graceSec <= 0 {
+		graceSec = 86400
+	}
+	// extendDurationsFor returns only the options where the extension would
+	// fit within the remaining grace period headroom.
+	extendDurationsFor := func(remainingSec int) []durationOption {
+		headroom := graceSec - remainingSec
+		var out []durationOption
+		for _, d := range allDurations {
+			if d.Value <= headroom {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+
+	// Build active-session map for quick lookup (hostname -> remaining time)
+	type activeInfo struct {
+		remaining    string
+		remainingSec int
+	}
+	activeMap := make(map[string]activeInfo)
 	for _, sess := range s.store.ActiveSessions(username) {
-		activeMap[sess.Hostname] = formatDuration(time.Until(sess.ExpiresAt))
+		rem := time.Until(sess.ExpiresAt)
+		activeMap[sess.Hostname] = activeInfo{formatDuration(rem), int(rem.Seconds())}
 	}
 
 	type hostAccessView struct {
-		Hostname    string
-		Active      bool
-		Remaining   string
-		SudoSummary string
+		Hostname       string
+		Active         bool
+		Remaining      string
+		SudoSummary    string
+		ExtendDurations []durationOption
 	}
 	var hostAccessViews []hostAccessView
 	for _, h := range knownHosts {
-		remaining, active := activeMap[h]
+		info, active := activeMap[h]
+		remaining := info.remaining
 		// Build sudo summary for this specific host
 		var rules []string
 		seen := make(map[string]bool)
@@ -300,10 +336,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			displayH = t("unknown_host")
 		}
 		hostAccessViews = append(hostAccessViews, hostAccessView{
-			Hostname:    displayH,
-			Active:      active,
-			Remaining:   remaining,
-			SudoSummary: strings.Join(rules, "; "),
+			Hostname:        displayH,
+			Active:          active,
+			Remaining:       remaining,
+			SudoSummary:     strings.Join(rules, "; "),
+			ExtendDurations: extendDurationsFor(activeMap[h].remainingSec),
 		})
 	}
 	// Sort alphabetically — user can filter to active-only via the UI toggle.
@@ -315,9 +352,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	// Admin: build all-users active sessions view, with optional ?user= / ?host= filters.
 	type allSessionView struct {
-		Username  string
-		Hostname  string
-		Remaining string
+		Username        string
+		Hostname        string
+		Remaining       string
+		ExtendDurations []durationOption
 	}
 	var allSessions []allSessionView
 	filterUser := ""
@@ -338,10 +376,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			if filterHost != "" && sess.Hostname != filterHost {
 				continue
 			}
+			remSec := int(time.Until(sess.ExpiresAt).Seconds())
 			allSessions = append(allSessions, allSessionView{
-				Username:  sess.Username,
-				Hostname:  sess.Hostname,
-				Remaining: formatDuration(time.Until(sess.ExpiresAt)),
+				Username:        sess.Username,
+				Hostname:        sess.Hostname,
+				Remaining:       formatDuration(time.Until(sess.ExpiresAt)),
+				ExtendDurations: extendDurationsFor(remSec),
 			})
 		}
 		sort.Slice(allSessions, func(i, j int) bool {
@@ -352,22 +392,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Build elevate duration options filtered by GracePeriod (same logic as admin hosts page).
-	type durationOption struct {
-		Value int
-		Label string
-	}
-	allDurations := []durationOption{
-		{3600, "1h"},
-		{14400, "4h"},
-		{28800, "8h"},
-		{86400, "1d"},
-	}
+	// Build elevate duration options filtered by GracePeriod.
 	var elevateDurations []durationOption
-	graceSec := int(s.cfg.GracePeriod.Seconds())
-	if graceSec <= 0 {
-		graceSec = 86400
-	}
 	for _, d := range allDurations {
 		if d.Value <= graceSec {
 			elevateDurations = append(elevateDurations, d)
@@ -419,7 +445,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleSessionsRedirect redirects /sessions to the dashboard.
 func (s *Server) handleSessionsRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
 // handleAccess renders the /access page showing per-host sudo permissions
@@ -439,7 +465,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 	username := s.getSessionUser(r)
 	if username == "" {
 		setFlashCookie(w, "expired:")
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 	s.setSessionCookie(w, username, s.getSessionRole(r))
@@ -552,13 +578,41 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		activeMap[sess.Hostname] = formatDuration(time.Until(sess.ExpiresAt))
 	}
 
+	// Duration options for access page extend dropdowns.
+	type durationOption struct {
+		Value int
+		Label string
+	}
+	accessAllDurations := []durationOption{
+		{3600, "1h"},
+		{7200, "2h"},
+		{14400, "4h"},
+		{28800, "8h"},
+		{86400, "1d"},
+	}
+	accessGraceSec := int(s.cfg.GracePeriod.Seconds())
+	if accessGraceSec <= 0 {
+		accessGraceSec = 86400
+	}
+	accessExtendDurationsFor := func(remainingSec int) []durationOption {
+		headroom := accessGraceSec - remainingSec
+		var out []durationOption
+		for _, d := range accessAllDurations {
+			if d.Value <= headroom {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+
 	type accessView struct {
-		Username string
-		Hostname string
-		Active   bool
-		Remaining string
-		Commands []string
-		AllCmds  bool
+		Username        string
+		Hostname        string
+		Active          bool
+		Remaining       string
+		Commands        []string
+		AllCmds         bool
+		ExtendDurations []durationOption
 	}
 
 	type userAccessGroup struct {
@@ -569,13 +623,19 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 
 	// buildAccessViews builds the host access list for a single user.
 	buildAccessViews := func(u string, hosts []string) []accessView {
-		uActiveMap := make(map[string]string)
+		type uSessionInfo struct {
+			remaining    string
+			remainingSec int
+		}
+		uActiveMap := make(map[string]uSessionInfo)
 		for _, sess := range s.store.ActiveSessions(u) {
-			uActiveMap[sess.Hostname] = formatDuration(time.Until(sess.ExpiresAt))
+			rem := time.Until(sess.ExpiresAt)
+			uActiveMap[sess.Hostname] = uSessionInfo{formatDuration(rem), int(rem.Seconds())}
 		}
 		var views []accessView
 		for _, h := range hosts {
-			remaining, active := uActiveMap[h]
+			info, active := uActiveMap[h]
+			remaining := info.remaining
 			var cmds []string
 			allCmds := false
 			seen := make(map[string]bool)
@@ -613,12 +673,13 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 				displayH = t("unknown_host")
 			}
 			views = append(views, accessView{
-				Username:  u,
-				Hostname:  displayH,
-				Active:    active,
-				Remaining: remaining,
-				Commands:  cmds,
-				AllCmds:   allCmds,
+				Username:        u,
+				Hostname:        displayH,
+				Active:          active,
+				Remaining:       remaining,
+				Commands:        cmds,
+				AllCmds:         allCmds,
+				ExtendDurations: accessExtendDurationsFor(uActiveMap[h].remainingSec),
 			})
 		}
 		sort.Slice(views, func(i, j int) bool {
@@ -682,28 +743,14 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
 	// Elevate duration options clamped to GracePeriod.
-	type durationOption struct {
-		Value int
-		Label string
-	}
-	allDurations := []durationOption{
-		{3600, "1h"},
-		{14400, "4h"},
-		{28800, "8h"},
-		{86400, "1d"},
-	}
 	var elevateDurations []durationOption
-	graceSec := int(s.cfg.GracePeriod.Seconds())
-	if graceSec <= 0 {
-		graceSec = 86400
-	}
-	for _, d := range allDurations {
-		if d.Value <= graceSec {
+	for _, d := range accessAllDurations {
+		if d.Value <= accessGraceSec {
 			elevateDurations = append(elevateDurations, d)
 		}
 	}
 	if len(elevateDurations) == 0 {
-		elevateDurations = []durationOption{{graceSec, formatDuration(s.cfg.GracePeriod)}}
+		elevateDurations = []durationOption{{accessGraceSec, formatDuration(s.cfg.GracePeriod)}}
 	}
 
 	dashTZ := "UTC"
@@ -796,7 +843,7 @@ func (s *Server) handleApprovalPage(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to OIDC login — after authentication the user lands on the
 	// dashboard where they can explicitly approve or reject the pending challenge.
-	loginURL := strings.TrimRight(s.cfg.ExternalURL, "/") + "/sessions/login"
+	loginURL := s.baseURL + "/sessions/login"
 	http.Redirect(w, r, loginURL, http.StatusSeeOther)
 }
 
@@ -898,7 +945,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	username := s.getSessionUser(r)
 	if username == "" {
 		setFlashCookie(w, "expired:")
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 	s.setSessionCookie(w, username, s.getSessionRole(r))
@@ -1101,39 +1148,65 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		timeline = append(timeline, timelineEntry{
-			Hour:      hourStart.Hour(),
-			HourLabel: fmt.Sprintf("%d:00", hourStart.Hour()),
-			Count:     count,
-			Height:    height,
-			IsNow:     i == 0,
-			HoursAgo:  hoursAgo,
-			Details:   strings.Join(detailParts, "\n"),
+			Hour:         hourStart.Hour(),
+			HourLabel:    fmt.Sprintf("%d:00", hourStart.Hour()),
+			Count:        count,
+			Height:       height,
+			IsNow:        i == 0,
+			HoursAgo:     hoursAgo,
+			Details:      strings.Join(detailParts, "\n"),
+			HourStartISO: hourStart.Format("2006-01-02T15:04"),
+			HourEndISO:   hourEnd.Format("2006-01-02T15:04"),
 		})
 	}
 
-	// Parse hours_ago filter (applied before other filters so they can combine)
-	hoursAgoStr := r.URL.Query().Get("hours_ago")
-	hoursWindowStr := r.URL.Query().Get("hours_window")
-	hoursWindow := 1
-	if w, err := strconv.Atoi(hoursWindowStr); err == nil && w >= 1 && w <= 24 {
-		hoursWindow = w
-	}
-	if hoursAgoStr == "" {
-		hoursWindowStr = "" // don't carry hours_window without hours_ago
-	}
-	if hoursAgoStr != "" {
-		if h, err := strconv.Atoi(hoursAgoStr); err == nil && h >= 0 && h < 24 {
-			activeHoursAgo = h
-			hourStart := nowInTZ.Add(-time.Duration(h+hoursWindow) * time.Hour).Truncate(time.Hour)
-			hourEnd := hourStart.Add(time.Duration(hoursWindow) * time.Hour)
-			var filtered []challpkg.ActionLogEntryWithUser
-			for _, e := range allHistory {
-				if e.Timestamp.After(hourStart) && e.Timestamp.Before(hourEnd) {
-					filtered = append(filtered, e)
-				}
-			}
-			allHistory = filtered
+	// Parse from/to datetime filter (datetime-local format in user's timezone).
+	const dtLocalFmt = "2006-01-02T15:04"
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	var filterFrom, filterTo time.Time
+	if fromStr != "" {
+		if t, err := time.ParseInLocation(dtLocalFmt, fromStr, tzLoc); err == nil {
+			filterFrom = t
+		} else {
+			fromStr = ""
 		}
+	}
+	if toStr != "" {
+		if t, err := time.ParseInLocation(dtLocalFmt, toStr, tzLoc); err == nil {
+			filterTo = t
+		} else {
+			toStr = ""
+		}
+	}
+	// Backwards compat: support legacy hours_ago for timeline bar links.
+	if fromStr == "" && toStr == "" {
+		hoursAgoStr := r.URL.Query().Get("hours_ago")
+		if hoursAgoStr != "" {
+			if h, err := strconv.Atoi(hoursAgoStr); err == nil && h >= 0 && h < 24 {
+				activeHoursAgo = h
+				hourStart := nowInTZ.Add(-time.Duration(h+1) * time.Hour).Truncate(time.Hour)
+				hourEnd := hourStart.Add(time.Hour)
+				filterFrom = hourStart
+				filterTo = hourEnd
+				fromStr = hourStart.Format(dtLocalFmt)
+				toStr = hourEnd.Format(dtLocalFmt)
+			}
+		}
+	}
+	if !filterFrom.IsZero() || !filterTo.IsZero() {
+		var filtered []challpkg.ActionLogEntryWithUser
+		for _, e := range allHistory {
+			ts := e.Timestamp
+			if !filterFrom.IsZero() && ts.Before(filterFrom) {
+				continue
+			}
+			if !filterTo.IsZero() && ts.After(filterTo) {
+				continue
+			}
+			filtered = append(filtered, e)
+		}
+		allHistory = filtered
 	}
 
 	history := allHistory
@@ -1279,9 +1352,9 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"Lang":            lang,
 		"Languages":       supportedLanguages,
 		"Timeline":        timeline,
-		"HoursAgo":        hoursAgoStr,
-		"HoursWindow":     hoursWindow,
 		"ActiveHoursAgo":  activeHoursAgo,
+		"FilterFrom":      fromStr,
+		"FilterTo":        toStr,
 		"IsAdmin":         isAdmin,
 		"AdminTab":        "",
 		"BridgeMode":      s.isBridgeMode(),

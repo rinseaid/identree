@@ -302,4 +302,6 @@
   "remove_warning": "Cela supprimera identree de l'hôte. Avec un accès SSH, PAM sera décconfiguré et le client optionnellement supprimé. Sinon, seuls les enregistrements côté serveur seront effacés.",
   "no_members": "Aucun membre",
   "uninstall_script": "Script de désinstallation"
+,
+  "skip_to_content": "Passer au contenu"
 }

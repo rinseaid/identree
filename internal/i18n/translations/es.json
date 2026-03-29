@@ -302,4 +302,6 @@
   "remove_warning": "Esto eliminará identree del host. Con acceso SSH se desconfigurará PAM y opcionalmente se eliminará el cliente. De lo contrario, solo se borrarán los registros del servidor.",
   "no_members": "Sin miembros",
   "uninstall_script": "Script de desinstalación"
+,
+  "skip_to_content": "Saltar al contenido"
 }

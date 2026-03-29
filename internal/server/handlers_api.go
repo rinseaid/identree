@@ -204,51 +204,61 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	clientCfg := s.buildClientConfig()
 
 	// Auto-approve if within grace period, but only for hosts that don't require admin approval.
-	if s.store.WithinGracePeriod(req.Username, req.Hostname) && !s.requiresAdminApproval(req.Hostname) {
-		if err := s.store.AutoApprove(challenge.ID); err == nil {
-			challengesAutoApproved.Inc()
-			challpkg.ActiveChallenges.Dec()
-			challengeDuration.Observe(0)
-			log.Printf("GRACE: auto-approved sudo for user %q (challenge %s) — recent authentication within grace period", req.Username, challenge.ID[:8])
-			hostname := req.Hostname
-			if hostname == "" {
-				hostname = "(unknown)"
-			}
-			s.store.LogAction(req.Username, "auto_approved", hostname, challenge.UserCode, "")
-
-			w.Header().Set("Content-Type", "application/json")
-			resp := map[string]interface{}{
-				"challenge_id":    challenge.ID,
-				"user_code":       challenge.UserCode,
-				"expires_in":      int(s.cfg.ChallengeTTL.Seconds()),
-				"status":          "approved",
-				"grace_remaining": int(s.store.GraceRemaining(req.Username, req.Hostname).Seconds()),
-			}
-			if s.cfg.SharedSecret != "" {
-				resp["approval_token"] = s.computeStatusHMAC(challenge.ID, req.Username, "approved", challenge.BreakglassRotateBefore, challenge.RevokeTokensBefore)
-			}
-			if challenge.BreakglassRotateBefore != "" {
-				resp["rotate_breakglass_before"] = challenge.BreakglassRotateBefore
-			}
-			if challenge.RevokeTokensBefore != "" {
-				resp["revoke_tokens_before"] = challenge.RevokeTokensBefore
-			}
-			if clientCfg != nil {
-				resp["client_config"] = clientCfg
-			}
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				log.Printf("ERROR: writing JSON response: %v", err)
-			}
-			return
+	// AutoApproveIfWithinGracePeriod performs the check and approval atomically,
+	// eliminating the TOCTOU race between a separate WithinGracePeriod + AutoApprove pair.
+	// AutoApproveIfWithinGracePeriod performs the grace-period check and approval
+	// atomically under a single write lock, eliminating the TOCTOU race between
+	// a separate WithinGracePeriod check and AutoApprove call.
+	if !s.requiresAdminApproval(req.Hostname) && s.store.AutoApproveIfWithinGracePeriod(req.Username, req.Hostname, challenge.ID) {
+		challengesAutoApproved.Inc()
+		challpkg.ActiveChallenges.Dec()
+		challengeDuration.Observe(0)
+		log.Printf("GRACE: auto-approved sudo for user %q (challenge %s) — recent authentication within grace period", req.Username, challenge.ID[:8])
+		hostname := req.Hostname
+		if hostname == "" {
+			hostname = "(unknown)"
 		}
+		s.store.LogAction(req.Username, "auto_approved", hostname, challenge.UserCode, "")
+		s.sendWebhookNotifications(notify.WebhookData{
+			Event:     "auto_approved",
+			Username:  req.Username,
+			Hostname:  hostname,
+			UserCode:  challenge.UserCode,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"challenge_id":    challenge.ID,
+			"user_code":       challenge.UserCode,
+			"expires_in":      int(s.cfg.ChallengeTTL.Seconds()),
+			"status":          "approved",
+			"grace_remaining": int(s.store.GraceRemaining(req.Username, req.Hostname).Seconds()),
+		}
+		if s.cfg.SharedSecret != "" {
+			resp["approval_token"] = s.computeStatusHMAC(challenge.ID, req.Username, "approved", challenge.BreakglassRotateBefore, challenge.RevokeTokensBefore)
+		}
+		if challenge.BreakglassRotateBefore != "" {
+			resp["rotate_breakglass_before"] = challenge.BreakglassRotateBefore
+		}
+		if challenge.RevokeTokensBefore != "" {
+			resp["revoke_tokens_before"] = challenge.RevokeTokensBefore
+		}
+		if clientCfg != nil {
+			resp["client_config"] = clientCfg
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			log.Printf("ERROR: writing JSON response: %v", err)
+		}
+		return
 	}
 
-	approvalURL := fmt.Sprintf("%s/approve/%s", strings.TrimRight(s.cfg.ExternalURL, "/"), challenge.UserCode)
+	approvalURL := fmt.Sprintf("%s/approve/%s", s.baseURL, challenge.UserCode)
 
 	oneTapToken := s.computeOneTapToken(challenge.ID, challenge.ExpiresAt)
 	oneTapURL := ""
 	if oneTapToken != "" {
-		oneTapURL = strings.TrimRight(s.cfg.ExternalURL, "/") + "/api/onetap/" + oneTapToken
+		oneTapURL = s.baseURL + "/api/onetap/" + oneTapToken
 	}
 
 	// Fire push notification asynchronously (no-op if not configured).
@@ -256,6 +266,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	// sendWebhookNotifications spawns one goroutine per configured webhook; no
 	// extra goroutine wrapper needed here.
 	s.sendWebhookNotifications(notify.WebhookData{
+		Event:       "challenge_created",
 		Username:    challenge.Username,
 		Hostname:    challenge.Hostname,
 		UserCode:    challenge.UserCode,

@@ -468,6 +468,35 @@ func (s *ChallengeStore) AutoApprove(id string) error {
 	return nil
 }
 
+// AutoApproveIfWithinGracePeriod atomically checks the grace period and approves
+// the challenge in a single write-lock acquisition, eliminating the TOCTOU window
+// between a separate WithinGracePeriod check and AutoApprove call.
+// Returns true if the challenge was auto-approved; false if the grace period
+// had expired (or never existed) by the time the lock was acquired.
+func (s *ChallengeStore) AutoApproveIfWithinGracePeriod(username, hostname, id string) bool {
+	if s.gracePeriod <= 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := graceKey(username, hostname)
+	expiry, ok := s.lastApproval[key]
+	if !ok || !time.Now().Before(expiry) {
+		return false
+	}
+
+	c, ok := s.challenges[id]
+	if !ok || c.Status != StatusPending {
+		return false
+	}
+	c.Status = StatusApproved
+	c.ApprovedBy = c.Username
+	c.ApprovedAt = time.Now()
+	s.decPending(c.Username)
+	return true
+}
+
 // ActiveSessions returns all active grace sessions for a given username.
 func (s *ChallengeStore) ActiveSessions(username string) []GraceSession {
 	s.mu.RLock()

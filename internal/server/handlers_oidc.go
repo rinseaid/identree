@@ -116,7 +116,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	// Check for IdP error
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		log.Printf("OIDC error during sessions login from %s: %s", remoteAddr(r), sanitizeForTerminal(errParam))
-		loginURL := strings.TrimRight(s.cfg.ExternalURL, "/") + "/sessions/login"
+		loginURL := s.baseURL + "/sessions/login"
 		revokeErrorPageWithLink(w, r, http.StatusForbidden, "auth_failed", "idp_auth_incomplete", loginURL, "try_again")
 		return
 	}
@@ -234,7 +234,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		parts := strings.SplitN(onetapCookie.Value, ".", 3)
 		if len(parts) == 3 {
 			if challenge, ok := s.store.Get(parts[0]); ok && challenge.Username == username {
-				onetapURL := strings.TrimRight(s.cfg.ExternalURL, "/") + "/api/onetap/" + onetapCookie.Value
+				onetapURL := s.baseURL + "/api/onetap/" + onetapCookie.Value
 				http.Redirect(w, r, onetapURL, http.StatusSeeOther)
 				return
 			}
@@ -242,6 +242,6 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		// Token invalid or challenge not for this user — fall through to dashboard
 	}
 
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 

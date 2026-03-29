@@ -126,8 +126,9 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 		return
 	}
 
-	// Service-account bind — must match configured bind DN and password
-	if s.cfg.LDAPBindDN != "" && msg.UserName == s.cfg.LDAPBindDN {
+	// Service-account bind — must match configured bind DN and password.
+	// RFC 4511 §2.1 requires case-insensitive DN comparison.
+	if s.cfg.LDAPBindDN != "" && strings.EqualFold(msg.UserName, s.cfg.LDAPBindDN) {
 		if s.cfg.LDAPBindPassword != "" && string(msg.Password) == s.cfg.LDAPBindPassword {
 			resp.SetResultCode(gldap.ResultSuccess)
 		}

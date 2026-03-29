@@ -522,7 +522,17 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	remoteCmd := fmt.Sprintf("%sbash", sudoPrefix)
 
+	// Acquire semaphore (non-blocking) before starting the goroutine so we
+	// can return a synchronous error to the caller, matching the install flow.
+	select {
+	case deploySemaphore <- struct{}{}:
+	default:
+		http.Error(w, "server busy — too many concurrent deploys", http.StatusServiceUnavailable)
+		return
+	}
+
 	go func() {
+		defer func() { <-deploySemaphore }()
 		s.runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, uninstallScript)
 		if !job.failed {
 			s.store.RemoveHost(req.Hostname)

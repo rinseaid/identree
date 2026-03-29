@@ -72,6 +72,15 @@ const sharedCSS = `
       --chip-cmd-bg: rgba(124,58,237,0.08); --chip-cmd-border: rgba(124,58,237,0.20);
       --chip-host-bg: rgba(5,150,105,0.08); --chip-host-border: rgba(5,150,105,0.20);
       --chip-all-bg: rgba(217,70,239,0.09); --chip-all-text: #a21caf; --chip-all-border: rgba(217,70,239,0.20);
+      --info-bg: #eff6ff; --info-border: #bfdbfe;
+      /* typographic scale — use these instead of bare font-size values */
+      --fs-2xs: 0.625rem;   /* 10px */
+      --fs-xs:  0.6875rem;  /* 11px */
+      --fs-sm:  0.75rem;    /* 12px */
+      --fs-md:  0.8125rem;  /* 13px */
+      --fs-base: 0.875rem;  /* 14px */
+      --fs-lg:  1rem;       /* 16px */
+      --fs-xl:  1.0625rem;  /* 17px */
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -80,7 +89,7 @@ const sharedCSS = `
         --surface-2: #1d1a32;
         --text: #f0eeff;
         --text-2: #9b97c4;
-        --text-3: #56527a;
+        --text-3: #7c78a4;
         --border: #2a2647;
         --primary: #c084fc;
         --primary-h: #a855f7;
@@ -101,6 +110,7 @@ const sharedCSS = `
         --chip-cmd-bg: rgba(192,132,252,0.13); --chip-cmd-border: rgba(192,132,252,0.28);
         --chip-host-bg: rgba(52,211,153,0.10); --chip-host-border: rgba(52,211,153,0.22);
         --chip-all-bg: rgba(232,121,249,0.12); --chip-all-text: #e879f9; --chip-all-border: rgba(232,121,249,0.25);
+        --info-bg: #0d1829; --info-border: #1e3a5f;
       }
     }
     .theme-light {
@@ -116,10 +126,11 @@ const sharedCSS = `
       --chip-cmd-bg: rgba(124,58,237,0.08); --chip-cmd-border: rgba(124,58,237,0.20);
       --chip-host-bg: rgba(5,150,105,0.08); --chip-host-border: rgba(5,150,105,0.20);
       --chip-all-bg: rgba(217,70,239,0.09); --chip-all-text: #a21caf; --chip-all-border: rgba(217,70,239,0.20);
+      --info-bg: #eff6ff; --info-border: #bfdbfe;
     }
     .theme-dark {
       --bg: #07060e; --surface: #100e1e; --surface-2: #1d1a32;
-      --text: #f0eeff; --text-2: #9b97c4; --text-3: #56527a;
+      --text: #f0eeff; --text-2: #9b97c4; --text-3: #7c78a4;
       --border: #2a2647; --primary: #c084fc; --primary-h: #a855f7;
       --primary-fg: #ffffff; --primary-sub: rgba(192,132,252,0.18);
       --success: #34d399; --success-bg: #031510; --success-border: #064e3b;
@@ -130,6 +141,7 @@ const sharedCSS = `
       --chip-cmd-bg: rgba(192,132,252,0.13); --chip-cmd-border: rgba(192,132,252,0.28);
       --chip-host-bg: rgba(52,211,153,0.10); --chip-host-border: rgba(52,211,153,0.22);
       --chip-all-bg: rgba(232,121,249,0.12); --chip-all-text: #e879f9; --chip-all-border: rgba(232,121,249,0.25);
+      --info-bg: #0d1829; --info-border: #1e3a5f;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -224,7 +236,7 @@ const sharedCSS = `
       padding: 10px 8px;
       display: flex;
       flex-direction: column;
-      gap: 1px;
+      gap: 4px;
     }
     @media (max-width: 768px) {
       .sidebar-nav { flex-direction: row; padding: 8px; overflow-x: auto; gap: 2px; }
@@ -578,17 +590,35 @@ const sharedCSS = `
     .gtcol-filter-input:focus { border-color: var(--primary); }
     .gtcol-filter-wrap { padding: 0 6px; min-width: 0; width: 100%; }
     /* Users table */
-    .users-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-    .users-table-header { display: grid; grid-template-columns: 200px 2fr 3fr; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .users-table-filter { display: grid; grid-template-columns: 200px 2fr 3fr; gap: 0; padding: 5px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .users-table-row { display: grid; grid-template-columns: 200px 2fr 3fr; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .users-table { display: grid; grid-template-columns: 200px 2fr auto; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .users-table-header { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); align-items: center; }
+    .users-table-header > .gtcol { padding: 8px 0; }
+    .users-table-header > .gtcol:first-child { padding-left: 12px; }
+    .users-table-header > .gtcol:last-child { padding-right: 12px; }
+    .users-table-filter { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .users-table-filter > * { padding: 5px 0; }
+    .users-table-filter > *:first-child { padding-left: 6px; }
+    .users-table-filter > *:last-child { padding-right: 6px; }
+    .users-table-row { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; border-bottom: 1px solid var(--border); align-items: center; }
+    .users-table-row > .gtcol { padding: 10px 0; }
+    .users-table-row > .gtcol:first-child { padding-left: 12px; }
+    .users-table-row > .gtcol:last-child { padding-right: 12px; }
     .users-table-row:last-child { border-bottom: none; }
     .users-table-row:hover { background: var(--surface-2); }
     /* Hosts table */
-    .hosts-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-    .hosts-table-header { display: grid; grid-template-columns: 200px 2fr 3fr; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .hosts-table-filter { display: grid; grid-template-columns: 200px 2fr 3fr; gap: 0; padding: 5px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .hosts-table-row { display: grid; grid-template-columns: 200px 2fr 3fr; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .hosts-table { display: grid; grid-template-columns: 200px 2fr auto; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .hosts-table-header { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); align-items: center; }
+    .hosts-table-header > .gtcol { padding: 8px 0; }
+    .hosts-table-header > .gtcol:first-child { padding-left: 12px; }
+    .hosts-table-header > .gtcol:last-child { padding-right: 12px; }
+    .hosts-table-filter { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .hosts-table-filter > * { padding: 5px 0; }
+    .hosts-table-filter > *:first-child { padding-left: 6px; }
+    .hosts-table-filter > *:last-child { padding-right: 6px; }
+    .hosts-table-row { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; border-bottom: 1px solid var(--border); align-items: center; }
+    .hosts-table-row > .gtcol { padding: 10px 0; }
+    .hosts-table-row > .gtcol:first-child { padding-left: 12px; }
+    .hosts-table-row > .gtcol:last-child { padding-right: 12px; }
     .hosts-table-row:last-child { border-bottom: none; }
     .hosts-table-row:hover { background: var(--surface-2); }
     /* Session count pill */
@@ -604,6 +634,46 @@ const sharedCSS = `
     .user-name { font-weight: 700; font-size: 1.0625rem; }
     .timestamp { display: inline; }
     .time-ago { display: inline; font-size: 0.8125rem; color: var(--text-2); }
+    /* Claims panels */
+    .claims-toggle-btn { background: none; border: 1px solid var(--border); border-radius: 5px; cursor: pointer; color: var(--text-3); font-size: 0.75rem; padding: 2px 8px; font-weight: 500; white-space: nowrap; line-height: 1.5; }
+    .claims-toggle-btn:hover { background: var(--surface-2); color: var(--primary); border-color: var(--primary); }
+    .claims-panel { display: none; background: var(--surface-2); border-top: 1px solid var(--border); padding: 14px 16px 16px; }
+    .group-wrapper .claims-panel { border-bottom: 1px solid var(--border); }
+    .user-claims-panel { grid-column: 1/-1; display: none; background: var(--surface-2); border-top: 1px solid var(--border); padding: 14px 16px 16px; }
+    .claims-form { display: grid; grid-template-columns: 160px 1fr; gap: 6px 10px; align-items: start; max-width: 760px; }
+    .claims-form-label { font-size: 0.8125rem; font-weight: 500; color: var(--text-3); font-family: monospace; white-space: nowrap; padding-top: 5px; }
+    .claims-form-field { display: flex; flex-direction: column; gap: 2px; }
+    .claims-form-field input[type=text] { width: 100%; padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font-size: 0.8125rem; font-family: monospace; box-sizing: border-box; }
+    .claims-form-field input[type=text]:focus { border-color: var(--primary); outline: none; }
+    .claims-form-field input[type=text]::placeholder { color: var(--text-3); opacity: 0.55; font-style: italic; }
+    .claims-form-hint { font-size: 0.7rem; color: var(--text-3); line-height: 1.3; }
+    .claims-form-actions { grid-column: 2; display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+    .claims-readonly { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 0.8125rem; color: var(--text-3); }
+    .claims-readonly-row { display: flex; gap: 10px; padding: 2px 0; font-family: monospace; font-size: 0.8125rem; }
+    .claims-readonly-key { color: var(--text-3); min-width: 140px; flex-shrink: 0; }
+    .claims-readonly-val { color: var(--text-2); word-break: break-all; }
+    .ssh-keys-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+    .ssh-key-row { display: flex; gap: 6px; align-items: flex-start; }
+    .ssh-key-row textarea { flex: 1; font-family: monospace; font-size: 0.75rem; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); resize: vertical; min-height: 38px; max-height: 80px; box-sizing: border-box; }
+    .ssh-key-row textarea:focus { border-color: var(--primary); outline: none; }
+    .ssh-key-remove { flex-shrink: 0; background: none; border: 1px solid var(--border); border-radius: 5px; cursor: pointer; color: var(--danger); padding: 3px 7px; font-size: 0.75rem; line-height: 1.4; }
+    .ssh-key-remove:hover { background: var(--danger); color: #fff; }
+    .ssh-keys-empty { font-size: 0.8125rem; color: var(--text-3); font-style: italic; padding: 4px 0; }
+    .claims-panel-title { font-size: 0.75rem; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px; }
+    /* Accessibility */
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .skip-link { position: absolute; top: -100%; left: 8px; z-index: 9999; padding: 8px 16px; background: var(--primary); color: var(--primary-fg); border-radius: 0 0 8px 8px; font-weight: 600; font-size: 0.875rem; text-decoration: none; }
+    .skip-link:focus { top: 0; }
+    /* Mobile touch targets: btn-sm grows to 44px on touch devices */
+    @media (pointer: coarse) {
+      .btn-sm { min-height: 44px; min-width: 44px; padding: 10px 14px; }
+      .filter-toggle-btn { min-height: 36px; padding: 6px 10px; }
+    }
+    /* Responsive: table overflow on narrow screens */
+    @media (max-width: 600px) {
+      .sessions-table, .hosts-table, .gtable { overflow-x: auto; }
+      .modal-box { padding: 18px 14px; max-width: calc(100vw - 24px); }
+    }
 `
 
 // formatTime formats a time as "2006-01-02 15:04 UTC".
@@ -656,13 +726,15 @@ type historyViewEntry struct {
 
 // timelineEntry represents one hour-slot in the 24-hour activity timeline.
 type timelineEntry struct {
-	Hour      int
-	HourLabel string // "14:00"
-	Count     int
-	Height    int // bar height in pixels (2-40)
-	IsNow     bool
-	HoursAgo  int    // offset from now (0 = current hour)
-	Details   string // rich tooltip text
+	Hour         int
+	HourLabel    string // "14:00"
+	Count        int
+	Height       int // bar height in pixels (2-40)
+	IsNow        bool
+	HoursAgo     int    // offset from now (0 = current hour)
+	Details      string // rich tooltip text
+	HourStartISO string // "2006-01-02T15:04" for datetime-local input
+	HourEndISO   string // "2006-01-02T15:04" for datetime-local input
 }
 
 // ActionOption represents a value/label pair for dropdown select options.
@@ -679,7 +751,7 @@ const navCSS = ``
 // It uses Go template variables: .ActivePage, .IsAdmin, .AdminTab.
 // The caller must embed this inside <nav class="sidebar"><div class="sidebar-nav">...</div></nav>.
 const sidebarNavHTML = `
-      <a href="/" class="nav-item{{if eq .ActivePage "sessions"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>{{call .T "sessions"}}</a>
+      <a href="/" class="nav-item{{if eq .ActivePage "sessions"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{{call .T "sessions"}}</a>
       <a href="/access" class="nav-item{{if eq .ActivePage "access"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>{{call .T "access"}}</a>
       <a href="/history" class="nav-item{{if eq .ActivePage "history"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call .T "history"}}</a>
       {{if .IsAdmin}}<a href="/admin" class="nav-item{{if eq .ActivePage "admin"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>{{call .T "admin"}}</a>
@@ -742,13 +814,13 @@ const dashboardHTML = `<!DOCTYPE html>
     .view-all:hover { text-decoration: underline; }
     .sessions-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
     .sessions-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-    .sessions-table-header { display: grid; grid-template-columns: 200px 1.8fr 1.2fr 1.8fr; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .sessions-table-filter { display: grid; grid-template-columns: 200px 1.8fr 1.2fr 1.8fr; gap: 0; padding: 5px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .sessions-table-header { display: grid; grid-template-columns: 200px 1.8fr 1.2fr 210px; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .sessions-table-filter { display: grid; grid-template-columns: 200px 1.8fr 1.2fr 210px; gap: 0; padding: 5px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
     .sessions-table-header .gtcol { align-items: center; }
-    .sessions-table-row { display: grid; grid-template-columns: 200px 1.8fr 1.2fr 1.8fr; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .sessions-table-row { display: grid; grid-template-columns: 200px 1.8fr 1.2fr 210px; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
     .sessions-table--user .sessions-table-header,
     .sessions-table--user .sessions-table-filter,
-    .sessions-table--user .sessions-table-row { grid-template-columns: 200px 1.5fr 2.2fr; }
+    .sessions-table--user .sessions-table-row { grid-template-columns: 200px 1.5fr 210px; }
     .sessions-table-row:last-child { border-bottom: none; }
     .sessions-table-row:hover { background: var(--surface-2); }
     .saction-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 6px; font-size: 0.8125rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1.4; white-space: nowrap; }
@@ -800,6 +872,7 @@ const dashboardHTML = `<!DOCTYPE html>
   </script>
 </head>
 <body class="app">
+  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>
   <nav class="sidebar" aria-label="Main navigation">
     <div class="sidebar-brand">
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>
@@ -830,7 +903,8 @@ const dashboardHTML = `<!DOCTYPE html>
       </button>
     </div>
   </nav>
-  <main class="main">
+  <main class="main" id="main-content">
+    <h1 class="sr-only">{{call .T "sessions"}} - {{call .T "app_name"}}</h1>
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
     {{if .Pending}}
@@ -894,13 +968,13 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="sessions-table" id="sessions-table" data-prefilter-user="{{.FilterUser}}" data-prefilter-host="{{.FilterHost}}">
       <div class="sessions-table-header">
         <div class="gtcol gtcol-suser" style="gap:10px;align-items:center;flex-wrap:wrap">
-          <button type="button" class="filter-toggle-btn" id="sessions-admin-filter-toggle" title="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+          <button type="button" class="filter-toggle-btn" id="sessions-admin-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <span class="col-sort-link">{{call .T "user"}}</span>
           <div class="toggle-wrap" id="just-mine-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div>
         </div>
         <div class="gtcol gtcol-shost"><span class="col-sort-link">{{call .T "host"}}</span></div>
         <div class="gtcol gtcol-sremaining"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
-        <div class="gtcol gtcol-sactions" style="justify-content:flex-end"><span class="col-sort-link">{{call .T "action"}}</span></div>
+        <div class="gtcol gtcol-sactions"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
       <div class="sessions-table-filter" id="sessions-admin-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="suser" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -913,7 +987,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <div class="gtcol gtcol-suser"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
         <div class="gtcol gtcol-shost"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
         <div class="gtcol gtcol-sremaining"><span class="row-sub" style="font-size:0.8125rem">{{.Remaining}}</span></div>
-        <div class="gtcol gtcol-sactions" style="gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end">
+        <div class="gtcol gtcol-sactions" style="gap:6px;flex-wrap:nowrap;align-items:center;">
           <div class="elevate-wrap">
             <button type="button" class="saction-btn saction-primary elevate-toggle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "extend"}}<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>
             <form method="POST" action="/api/sessions/extend" class="elevate-menu">
@@ -923,7 +997,7 @@ const dashboardHTML = `<!DOCTYPE html>
               <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
               <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
               <input type="hidden" name="from" value="/">
-              {{range $.Durations}}<button type="submit" name="duration" value="{{.Value}}">{{.Label}}</button>{{end}}
+              {{range .ExtendDurations}}<button type="submit" name="duration" value="{{.Value}}">{{.Label}}</button>{{end}}
               <button type="submit" name="duration" value="max">{{call $.T "max"}}</button>
             </form>
           </div>
@@ -1003,17 +1077,21 @@ const dashboardHTML = `<!DOCTYPE html>
       var sac=document.getElementById('sessions-admin-clear');
       if(sac)sac.addEventListener('click',function(){document.querySelectorAll('#sessions-table .gtcol-filter-input').forEach(function(i){i.value='';});filterSessions();});
       (function(){var ftb=document.getElementById('sessions-admin-filter-toggle');var ftr=document.getElementById('sessions-admin-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
+      document.querySelectorAll('.elevate-toggle').forEach(function(btn){
+        btn.addEventListener('click',function(e){e.stopPropagation();var m=btn.parentElement.querySelector('.elevate-menu');var open=m.classList.contains('open');document.querySelectorAll('.elevate-menu.open').forEach(function(x){x.classList.remove('open');});if(!open){var r=btn.getBoundingClientRect();m.style.top=(r.bottom+4)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';m.classList.add('open');}});
+      });
+      document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
     })();
     </script>
     {{else}}
     <div class="sessions-table sessions-table--user" id="user-sessions-table">
       <div class="sessions-table-header">
         <div class="gtcol gtcol-shost" style="gap:8px;align-items:center">
-          <button type="button" class="filter-toggle-btn" id="user-sessions-filter-toggle" title="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+          <button type="button" class="filter-toggle-btn" id="user-sessions-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <span class="col-sort-link">{{call .T "host"}}</span>
         </div>
         <div class="gtcol gtcol-sremaining"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
-        <div class="gtcol gtcol-sactions" style="justify-content:flex-end"><span class="col-sort-link">{{call .T "action"}}</span></div>
+        <div class="gtcol gtcol-sactions"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
       <div class="sessions-table-filter" id="user-sessions-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="shost" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -1025,7 +1103,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <div class="gtcol gtcol-shost"><span style="font-size:0.875rem;font-weight:500;color:var(--text)">{{.Hostname}}</span></div>
         {{if .Active}}
         <div class="gtcol gtcol-sremaining"><span class="row-sub" style="font-size:0.8125rem">{{.Remaining}}</span></div>
-        <div class="gtcol gtcol-sactions" style="gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end">
+        <div class="gtcol gtcol-sactions" style="gap:6px;flex-wrap:nowrap;align-items:center;">
           <div class="elevate-wrap">
             <button type="button" class="saction-btn saction-primary elevate-toggle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "extend"}}<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>
             <form method="POST" action="/api/sessions/extend" class="elevate-menu">
@@ -1033,7 +1111,7 @@ const dashboardHTML = `<!DOCTYPE html>
               <input type="hidden" name="username" value="{{$.Username}}">
               <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
               <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-              {{range $.Durations}}<button type="submit" name="duration" value="{{.Value}}">{{.Label}}</button>{{end}}
+              {{range .ExtendDurations}}<button type="submit" name="duration" value="{{.Value}}">{{.Label}}</button>{{end}}
               <button type="submit" name="duration" value="max">{{call $.T "max"}}</button>
             </form>
           </div>
@@ -1135,6 +1213,10 @@ const dashboardHTML = `<!DOCTYPE html>
       });
       document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
     })();
+    // L5: prevent double-submit on approve/reject forms
+    document.querySelectorAll('.list form, .bulk-row form').forEach(function(f){
+      f.addEventListener('submit',function(){var btn=f.querySelector('button[type=submit]');if(btn){btn.disabled=true;}});
+    });
     </script>
     {{end}}{{/* end non-admin branch */}}
 
@@ -1187,9 +1269,15 @@ const historyPageHTML = `<!DOCTYPE html>
     .timeline-bar.timeline-active.now { outline-color: var(--success); }
     .timeline-axis { position: relative; height: 16px; margin-top: 3px; }
     .timeline-axis-label { position: absolute; font-size: 0.6875rem; color: var(--text-3); transform: translateX(-50%); white-space: nowrap; }
-    .time-filter-banner { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 7px; background: var(--primary-sub); border: 1px solid var(--border); margin-bottom: 12px; font-size: 0.8125rem; color: var(--text-2); }
-    .time-filter-clear { color: var(--danger); text-decoration: none; font-weight: 600; margin-left: auto; font-size: 0.75rem; }
-    .time-filter-clear:hover { text-decoration: underline; }
+    .time-range-form { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 12px; font-size: 0.8125rem; color: var(--text-2); flex-wrap: wrap; }
+    .time-range-form label { font-weight: 500; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.75rem; white-space: nowrap; }
+    .time-range-form input[type="datetime-local"] { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 0.8125rem; padding: 3px 7px; font-family: inherit; min-width: 160px; }
+    .time-range-form input[type="datetime-local"]:focus { outline: none; border-color: var(--primary); }
+    .time-range-form .time-range-sep { color: var(--text-3); font-size: 0.75rem; }
+    .time-range-form .time-range-apply { padding: 4px 12px; border-radius: 5px; background: var(--primary-sub); color: var(--primary); border: 1px solid var(--primary); font-size: 0.8125rem; font-weight: 500; cursor: pointer; font-family: inherit; white-space: nowrap; }
+    .time-range-form .time-range-apply:hover { background: var(--primary); color: #fff; }
+    .time-range-form .time-range-clear { color: var(--text-3); text-decoration: none; font-size: 0.75rem; padding: 4px 8px; border-radius: 5px; border: 1px solid transparent; white-space: nowrap; }
+    .time-range-form .time-range-clear:hover { color: var(--danger); border-color: var(--danger); }
   </style>
   <script nonce="{{.CSPNonce}}">
   if(!document.cookie.split(';').some(function(c){return c.trim().indexOf('pam_tz=')===0;})){
@@ -1261,6 +1349,7 @@ const historyPageHTML = `<!DOCTYPE html>
   </script>
 </head>
 <body class="app">
+  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>
   <nav class="sidebar" aria-label="Main navigation">
     <div class="sidebar-brand">
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>
@@ -1277,7 +1366,7 @@ const historyPageHTML = `<!DOCTYPE html>
           <form method="GET" action="/history"><select name="lang" class="lang-select" aria-label="{{call .T "language"}}">{{range .Languages}}<option value="{{.Code}}" {{if eq .Code $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}</select></form>
           <div class="user-dropdown-divider"></div>
           <div class="user-dropdown-label">{{call .T "timezone"}}</div>
-          <form method="GET" action="/history"><select name="tz" class="tz-select" aria-label="{{call .T "timezone"}}">` + tzOptionsHTML + `</select></form>
+          <form method="GET" action="/history"><select name="tz" class="tz-select" class="tz-select" aria-label="{{call .T "timezone"}}">` + tzOptionsHTML + `</select></form>
           <div class="user-dropdown-divider"></div>
           <div class="user-dropdown-label">{{call .T "theme"}}</div>
           <div class="theme-opts">
@@ -1291,47 +1380,42 @@ const historyPageHTML = `<!DOCTYPE html>
       </button>
     </div>
   </nav>
-  <main class="main">
+  <main class="main" id="main-content">
+    <h1 class="sr-only">{{call .T "history"}} - {{call .T "app_name"}}</h1>
 
 
     {{if .Timeline}}
     <div class="timeline">
       <div class="timeline-bars" id="timeline-bars">
-        {{range .Timeline}}<a href="/history?hours_ago={{.HoursAgo}}&per_page={{$.PerPage}}&user={{$.UserFilter}}" class="timeline-bar{{if .IsNow}} now{{end}}{{if eqInt .HoursAgo $.ActiveHoursAgo}} timeline-active{{end}}" style="height:{{.Height}}px" title="{{.Details}}" aria-label="{{.Details}}" data-hours-ago="{{.HoursAgo}}"></a>{{end}}
+        {{range .Timeline}}<a href="/history?from={{.HourStartISO}}&to={{.HourEndISO}}&per_page={{$.PerPage}}&user={{$.UserFilter}}" class="timeline-bar{{if .IsNow}} now{{end}}{{if eqInt .HoursAgo $.ActiveHoursAgo}} timeline-active{{end}}" style="height:{{.Height}}px" title="{{.Details}}" aria-label="{{.Details}}" data-hours-ago="{{.HoursAgo}}"></a>{{end}}
       </div>
       <div class="timeline-axis" id="timeline-axis"></div>
     </div>
     {{end}}
 
-    {{if .HoursAgo}}
-    <div class="time-filter-banner">
-      <span>{{call .T "time_window"}}:</span>
-      <form method="GET" action="/history" style="display:inline;margin:0">
-        <input type="hidden" name="hours_ago" value="{{.HoursAgo}}">
-        <input type="hidden" name="q" value="{{.Query}}">
-        <input type="hidden" name="action" value="{{.ActionFilter}}">
-        <input type="hidden" name="hostname" value="{{.HostFilter}}">
-        <input type="hidden" name="user" value="{{.UserFilter}}">
-        <input type="hidden" name="sort" value="{{.Sort}}">
-        <input type="hidden" name="order" value="{{.Order}}">
-        <input type="hidden" name="per_page" value="{{.PerPage}}">
-        <select name="hours_window" class="time-window-select col-filter-select">
-          <option value="1" {{if eq .HoursWindow 1}}selected{{end}}>1h</option>
-          <option value="2" {{if eq .HoursWindow 2}}selected{{end}}>2h</option>
-          <option value="4" {{if eq .HoursWindow 4}}selected{{end}}>4h</option>
-          <option value="6" {{if eq .HoursWindow 6}}selected{{end}}>6h</option>
-          <option value="8" {{if eq .HoursWindow 8}}selected{{end}}>8h</option>
-          <option value="12" {{if eq .HoursWindow 12}}selected{{end}}>12h</option>
-        </select>
-      </form>
-      <a href="/history?q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&sort={{.Sort}}&order={{.Order}}&per_page={{.PerPage}}" class="time-filter-clear">{{call .T "clear_time_filter"}}</a>
-    </div>
+    {{if or .FilterFrom .FilterTo}}
+    <form method="GET" action="/history" class="time-range-form">
+      <input type="hidden" name="q" value="{{.Query}}">
+      <input type="hidden" name="action" value="{{.ActionFilter}}">
+      <input type="hidden" name="hostname" value="{{.HostFilter}}">
+      <input type="hidden" name="user" value="{{.UserFilter}}">
+      <input type="hidden" name="sort" value="{{.Sort}}">
+      <input type="hidden" name="order" value="{{.Order}}">
+      <input type="hidden" name="per_page" value="{{.PerPage}}">
+      <label for="history-from">From</label>
+      <input type="datetime-local" id="history-from" name="from" value="{{.FilterFrom}}">
+      <span class="time-range-sep">→</span>
+      <label for="history-to">To</label>
+      <input type="datetime-local" id="history-to" name="to" value="{{.FilterTo}}">
+      <button type="submit" class="time-range-apply">Apply</button>
+      <a href="/history?q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&sort={{.Sort}}&order={{.Order}}&per_page={{.PerPage}}" class="time-range-clear">Clear</a>
+    </form>
     {{end}}
 
     {{if .History}}
     <div class="history-gtable" id="history-gtable">
       <div class="history-gtable-header">
-        <div class="gtcol gtcol-htime" style="gap:8px;align-items:center"><button type="button" class="filter-toggle-btn" id="history-filter-toggle" title="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><a href="/history?sort=timestamp&order={{if eq .Sort "timestamp"}}{{if eq .Order "desc"}}asc{{else}}desc{{end}}{{else}}desc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "timestamp"}} active{{end}}">{{call .T "time"}}{{if eq .Sort "timestamp"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+        <div class="gtcol gtcol-htime" style="gap:8px;align-items:center"><button type="button" class="filter-toggle-btn" id="history-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><a href="/history?sort=timestamp&order={{if eq .Sort "timestamp"}}{{if eq .Order "desc"}}asc{{else}}desc{{end}}{{else}}desc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "timestamp"}} active{{end}}">{{call .T "time"}}{{if eq .Sort "timestamp"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
         <div class="gtcol gtcol-haction"><a href="/history?sort=action&order={{if eq .Sort "action"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "action"}} active{{end}}">{{call .T "action"}}{{if eq .Sort "action"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
         {{if .IsAdmin}}<div class="gtcol gtcol-huser"><a href="/history?sort=user&order={{if eq .Sort "user"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "user"}} active{{end}}">{{call .T "user"}}{{if eq .Sort "user"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>{{end}}
         <div class="gtcol gtcol-hhost"><a href="/history?sort=hostname&order={{if eq .Sort "hostname"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "hostname"}} active{{end}}">{{call .T "host"}}{{if eq .Sort "hostname"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
@@ -1462,6 +1546,14 @@ const adminPageHTML = `<!DOCTYPE html>
     .config-secret-badge.configured { color: var(--success); background: var(--success-bg); border-color: var(--success-border); }
     .config-env-note { font-size: 0.8125rem; color: var(--text-3); display: flex; align-items: center; gap: 6px; margin-bottom: 14px; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; border: 1px solid var(--border); }
     .config-save-btn { padding: 3px 10px; font-size: 0.75rem; }
+    .config-section-dirty { position: relative; }
+    .config-section-dirty .config-section-title::after { content: "unsaved"; font-size: 0.65rem; font-weight: 600; color: var(--warning,#d97706); background: rgba(217,119,6,0.12); border: 1px solid rgba(217,119,6,0.3); border-radius: 4px; padding: 1px 5px; margin-left: 8px; text-transform: uppercase; letter-spacing: 0.05em; vertical-align: middle; }
+    .banner-restart { background: rgba(217,119,6,0.1); border: 1px solid rgba(217,119,6,0.35); color: var(--text); border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; font-size: 0.875rem; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .banner-restart-icon { color: #d97706; flex-shrink: 0; }
+    .banner-restart-text { flex: 1; min-width: 0; }
+    .banner-restart-sections { font-weight: 600; color: #d97706; }
+    .banner-restart-btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; border-radius: 6px; font-size: 0.8125rem; font-weight: 600; border: 1px solid rgba(217,119,6,0.5); background: rgba(217,119,6,0.12); color: #d97706; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+    .banner-restart-btn:hover { background: rgba(217,119,6,0.22); }
     /* Info grid table */
     .info-gtable { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }
     .info-gtable-header { display: grid; grid-template-columns: 220px 1fr; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-3); align-items: center; }
@@ -1739,6 +1831,7 @@ const adminPageHTML = `<!DOCTYPE html>
   </script>
 </head>
 <body class="app">
+  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>
   <nav class="sidebar" aria-label="Main navigation">
     <div class="sidebar-brand">
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>
@@ -1769,7 +1862,8 @@ const adminPageHTML = `<!DOCTYPE html>
       </button>
     </div>
   </nav>
-  <main class="main">
+  <main class="main" id="main-content">
+    <h1 class="sr-only">{{call .T "admin"}} - {{call .T "app_name"}}</h1>
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
     {{if eq .AdminTab "info"}}
@@ -1785,7 +1879,7 @@ const adminPageHTML = `<!DOCTYPE html>
     </div>
 
     {{else if eq .AdminTab "config"}}
-    {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
+    {{if .RestartSections}}<div class="banner-restart" role="alert"><svg class="banner-restart-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span class="banner-restart-text">Configuration saved. Changes to <span class="banner-restart-sections">{{range $i,$s := .RestartSections}}{{if $i}}, {{end}}{{$s}}{{end}}</span> require a server restart to take effect.</span><button type="button" class="banner-restart-btn" id="restart-server-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>Restart server</button></div>{{end}}
     {{range .FlashErrors}}<div class="banner banner-error" role="alert">{{.}}</div>{{end}}
     <div class="config-env-note"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{call .T "env_locked_note"}}</div>
     <form method="POST" action="/admin/config" autocomplete="off">
@@ -1794,7 +1888,7 @@ const adminPageHTML = `<!DOCTYPE html>
     <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
     <div class="config-table" id="config-table">
       <div class="config-filter-header">
-        <button type="button" class="filter-toggle-btn" id="config-filter-toggle" title="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+        <button type="button" class="filter-toggle-btn" id="config-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
         <span class="config-section-title" style="margin-left:4px">{{call .T "config"}}</span>
       </div>
       <div class="config-filter-row" id="config-filter-row" style="display:none">
@@ -1844,7 +1938,7 @@ const adminPageHTML = `<!DOCTYPE html>
       <div class="config-table-row config-locked" data-section="admin" data-search="IDENTREE_API_KEYS bearer tokens management api"><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_api_keys"}}</div><div class="config-label-env">IDENTREE_API_KEYS</div><div class="config-label-desc">Bearer tokens for calling identree's management API. Set via environment variable only.</div></div><div class="config-row-control"><span style="font-size:0.875rem;color:var(--text-2)">{{.APIKeyCount}}</span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span style="font-size:0.75rem;color:var(--text-3)">env only</span></div></div>
     {{/* Notifications */}}
       <div class="config-section-row" data-section="notifications"><span class="config-section-title">{{call .T "cfg_notifications"}}</span><button type="submit" class="saction-btn saction-primary config-save-btn">{{call .T "save"}}</button></div>
-      {{$v:=index .ConfigValues "IDENTREE_NOTIFY_COMMAND"}}{{$lk:=index .ConfigLocked "IDENTREE_NOTIFY_COMMAND"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="notifications" data-search="IDENTREE_NOTIFY_COMMAND Path to a script invoked on access events. Receives JSON event data on stdin."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_notify_command"}}</div><div class="config-label-env">IDENTREE_NOTIFY_COMMAND</div><div class="config-label-desc">Path to a script invoked on access events. Receives JSON event data on stdin.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_NOTIFY_COMMAND" value="{{$v}}" class="config-input" placeholder="/usr/local/bin/notify.sh">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
+      {{$v:=index .ConfigValues "IDENTREE_NOTIFY_COMMAND"}}{{$lk:=index .ConfigLocked "IDENTREE_NOTIFY_COMMAND"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="notifications" data-search="IDENTREE_NOTIFY_COMMAND Path to a script or command invoked on new access events. Event details are passed as NOTIFY_* environment variables."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_notify_command"}}</div><div class="config-label-env">IDENTREE_NOTIFY_COMMAND</div><div class="config-label-desc">Path to a script or command invoked on new access events. Event details are passed as NOTIFY_* environment variables.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_NOTIFY_COMMAND" value="{{$v}}" class="config-input" placeholder="/usr/local/bin/notify.sh">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
       {{$v:=index .ConfigValues "IDENTREE_NOTIFY_USERS_FILE"}}{{$lk:=index .ConfigLocked "IDENTREE_NOTIFY_USERS_FILE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="notifications" data-search="IDENTREE_NOTIFY_USERS_FILE JSON file mapping usernames to notification data passed to the notify command."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_notify_users_file"}}</div><div class="config-label-env">IDENTREE_NOTIFY_USERS_FILE</div><div class="config-label-desc">JSON file mapping usernames to notification data passed to the notify command.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_NOTIFY_USERS_FILE" value="{{$v}}" class="config-input" placeholder="/etc/identree/notify-users.json">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
     {{/* Break-glass Escrow */}}
       <div class="config-section-row" data-section="escrow"><span class="config-section-title">{{call .T "cfg_escrow"}}</span><button type="submit" class="saction-btn saction-primary config-save-btn">{{call .T "save"}}</button></div>
@@ -1868,13 +1962,10 @@ const adminPageHTML = `<!DOCTYPE html>
       {{$sc:=index .ConfigSecrets "IDENTREE_WEBHOOK_SECRET"}}<div class="config-table-row config-locked" data-section="misc" data-search="IDENTREE_WEBHOOK_SECRET HMAC secret for verifying Pocket ID webhook payloads."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_webhook_secret"}}</div><div class="config-label-env">IDENTREE_WEBHOOK_SECRET</div><div class="config-label-desc">HMAC secret for verifying Pocket ID webhook payloads.</div></div><div class="config-row-control"><span class="config-secret-badge{{if $sc}} configured{{end}}">{{if $sc}}{{call .T "configured"}}{{else}}{{call .T "not_configured"}}{{end}}</span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span style="font-size:0.75rem;color:var(--text-3)">env only</span></div></div>
       {{$v:=index .ConfigValues "IDENTREE_DEV_LOGIN"}}{{$lk:=index .ConfigLocked "IDENTREE_DEV_LOGIN"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="misc" data-search="IDENTREE_DEV_LOGIN Skip OIDC and accept any username. For development only — never enable in production."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_dev_login"}}</div><div class="config-label-env">IDENTREE_DEV_LOGIN</div><div class="config-label-desc">Skip OIDC and accept any username. For development only — never enable in production.</div></div><div class="config-row-control">{{if $lk}}<input type="checkbox" disabled {{if eq $v "true"}}checked{{end}}>{{else}}<input type="checkbox" name="IDENTREE_DEV_LOGIN" value="true" {{if eq $v "true"}}checked{{end}}>{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
     </div>
-    <div style="margin-top:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-      <button type="submit" class="saction-btn saction-primary" style="padding:7px 16px;font-size:0.875rem">{{call .T "save_config"}}</button>
-      <span style="font-size:0.8125rem;color:var(--text-3)">{{call .T "config_saved"}}</span>
-    </div>
     </form>
     <script nonce="{{.CSPNonce}}">
     (function(){
+      /* ── Filter ─────────────────────────────────────────────────────── */
       var ft=document.getElementById('config-filter-toggle');
       var fr=document.getElementById('config-filter-row');
       var fi=document.getElementById('config-filter-input');
@@ -1896,6 +1987,95 @@ const adminPageHTML = `<!DOCTYPE html>
       }
       if(fi)fi.addEventListener('input',filterConfig);
       if(fc)fc.addEventListener('click',function(){if(fi)fi.value='';filterConfig();});
+
+      /* ── Unsaved-changes tracking ────────────────────────────────────── */
+      var initialValues={};
+      var dirtySections={};
+      var submitted=false;
+      // Snapshot initial values of all editable inputs.
+      document.querySelectorAll('#config-table .config-input, #config-table input[type="checkbox"]').forEach(function(inp){
+        var key=inp.name||inp.id;
+        if(!key)return;
+        initialValues[key]=inp.type==='checkbox'?inp.checked:inp.value;
+      });
+      function getSectionRow(sec){return document.querySelector('#config-table .config-section-row[data-section="'+sec+'"]');}
+      function updateDirty(inp){
+        var row=inp.closest('.config-table-row');
+        if(!row)return;
+        var sec=row.dataset.section;
+        if(!sec)return;
+        var key=inp.name||inp.id;
+        var cur=inp.type==='checkbox'?inp.checked:inp.value;
+        var dirty=String(cur)!==String(initialValues[key]!==undefined?initialValues[key]:'');
+        if(dirty){dirtySections[sec]=true;}else{
+          // Re-check all inputs in this section.
+          var stillDirty=false;
+          document.querySelectorAll('#config-table .config-table-row[data-section="'+sec+'"] .config-input, #config-table .config-table-row[data-section="'+sec+'"] input[type="checkbox"]').forEach(function(i){
+            var k=i.name||i.id;
+            var v=i.type==='checkbox'?i.checked:i.value;
+            if(String(v)!==String(initialValues[k]!==undefined?initialValues[k]:''))stillDirty=true;
+          });
+          if(!stillDirty)delete dirtySections[sec];
+        }
+        var sr=getSectionRow(sec);
+        if(sr)sr.classList.toggle('config-section-dirty',!!dirtySections[sec]);
+      }
+      document.querySelectorAll('#config-table .config-input').forEach(function(inp){
+        inp.addEventListener('input',function(){updateDirty(inp);});
+      });
+      document.querySelectorAll('#config-table input[type="checkbox"]').forEach(function(inp){
+        inp.addEventListener('change',function(){updateDirty(inp);});
+      });
+      // Clear dirty state on form submit.
+      var form=document.querySelector('form[action="/admin/config"]');
+      if(form)form.addEventListener('submit',function(){submitted=true;});
+
+      /* ── Prevent double-submission ───────────────────────────────────── */
+      document.querySelectorAll('.config-save-btn').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          setTimeout(function(){btn.disabled=true;btn.textContent='Saving…';},0);
+        });
+      });
+
+      /* ── Nav interception ────────────────────────────────────────────── */
+      function dirtyNames(){
+        var sectionLabels={'oidc':'OIDC Authentication','pocketid':'PocketID API','server':'Server','auth':'Authentication','ldap':'LDAP','admin':'Admin Access','notifications':'Notifications','escrow':'Break-Glass Escrow','client_defaults':'Client Defaults','misc':'Miscellaneous'};
+        return Object.keys(dirtySections).map(function(s){return sectionLabels[s]||s;});
+      }
+      document.querySelectorAll('.nav-item, .sidebar-sub a').forEach(function(link){
+        link.addEventListener('click',function(e){
+          if(submitted||Object.keys(dirtySections).length===0)return;
+          e.preventDefault();
+          var href=link.href;
+          var names=dirtyNames();
+          if(window.confirm('You have unsaved changes in:\n  • '+names.join('\n  • ')+'\n\nLeave without saving?')){
+            submitted=true;
+            window.location.href=href;
+          }
+        });
+      });
+      window.addEventListener('beforeunload',function(e){
+        if(!submitted&&Object.keys(dirtySections).length>0){e.preventDefault();return e.returnValue='';}
+      });
+
+      /* ── Restart button ──────────────────────────────────────────────── */
+      var restartBtn=document.getElementById('restart-server-btn');
+      if(restartBtn){
+        restartBtn.addEventListener('click',function(){
+          if(!window.confirm('Restart the server now? You will be briefly disconnected.'))return;
+          restartBtn.disabled=true;restartBtn.textContent='Restarting…';
+          var form=document.querySelector('form[action="/admin/config"]');
+          var body=new URLSearchParams();
+          if(form){
+            var u=form.querySelector('[name=username]'),ct=form.querySelector('[name=csrf_token]'),ts=form.querySelector('[name=csrf_ts]');
+            if(u)body.set('username',u.value);
+            if(ct)body.set('csrf_token',ct.value);
+            if(ts)body.set('csrf_ts',ts.value);
+          }
+          fetch('/api/admin/restart',{method:'POST',body:body,headers:{'Content-Type':'application/x-www-form-urlencoded'}}).catch(function(){});
+          setTimeout(function(){window.location.reload();},3000);
+        });
+      }
     })();
     </script>
 
@@ -1905,11 +2085,11 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="users-table" id="users-table">
       <div class="users-table-header">
         <div class="gtcol gtcol-uname" style="gap:8px;align-items:center">
-          <button type="button" class="filter-toggle-btn" id="users-filter-toggle" title="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+          <button type="button" class="filter-toggle-btn" id="users-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <a href="/admin/users?sort=name&dir={{if and (eq .UserSort "name") (eq .UserDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .UserSort "name"}} active{{end}}">{{call .T "user"}}{{if eq .UserSort "name"}} {{if eq .UserDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
         </div>
         <div class="gtcol gtcol-ugroups"><span class="col-sort-link">{{call .T "groups"}}</span></div>
-        <div class="gtcol gtcol-uactions" style="justify-content:flex-end"><span class="col-sort-link">{{call .T "action"}}</span></div>
+        <div class="gtcol gtcol-uactions"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
       <div class="users-table-filter" id="users-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="uname" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -1922,8 +2102,8 @@ const adminPageHTML = `<!DOCTYPE html>
         <div class="gtcol gtcol-ugroups">
           <div class="pill-cell">{{if .Groups}}{{range .Groups}}<a href="/admin/groups#group-{{.Name}}" class="group-badge group-badge-link">{{.Name}}</a>{{end}}{{end}}</div>
         </div>
-        <div class="gtcol gtcol-uactions" style="gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end">
-          {{if gt .ActiveSessions 0}}<a href="/?user={{.Username}}" class="saction-btn saction-sessions saction-primary"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>{{call $.T "sessions"}} ({{.ActiveSessions}})</a>{{end}}
+        <div class="gtcol gtcol-uactions" style="gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end;">
+          {{if gt .ActiveSessions 0}}<a href="/?user={{.Username}}" class="saction-btn saction-sessions saction-primary"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{{call $.T "sessions"}} ({{.ActiveSessions}})</a>{{end}}
           <a href="/access?user={{.Username}}" class="saction-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>{{call $.T "access"}}</a>
           <a href="/history?user={{.Username}}" class="saction-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "history"}}</a>
           <form method="POST" action="/api/users/remove" style="display:inline">
@@ -1933,14 +2113,50 @@ const adminPageHTML = `<!DOCTYPE html>
             <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
             <button type="submit" class="saction-btn saction-danger confirm-submit" data-confirm="{{call $.T "confirm_remove_user"}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>{{call $.T "remove_user"}}</button>
           </form>
+          {{if .UserID}}<button type="button" class="saction-btn ssh-keys-toggle" data-claims-target="uclaims-{{.UserID}}" data-user-id="{{.UserID}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>Claims <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>{{end}}
         </div>
       </div>
+      {{if .UserID}}
+      <div class="user-claims-panel" id="uclaims-{{.UserID}}" data-user-id="{{.UserID}}" data-username="{{.Username}}">
+        <div class="claims-panel-title">User Claims — {{.Username}}</div>
+        <form method="POST" action="/api/admin/users/claims" class="ssh-keys-form">
+          <input type="hidden" name="user_id" value="{{.UserID}}">
+          <input type="hidden" name="username" value="{{$.Username}}">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+          <div class="claims-form" style="margin-bottom:14px">
+            <span class="claims-form-label">loginShell</span>
+            <div class="claims-form-field"><input type="text" name="loginShell" value="{{.LoginShell}}" placeholder="/bin/bash"><span class="claims-form-hint">Login shell assigned via LDAP. e.g. /bin/bash, /bin/zsh</span></div>
+            <span class="claims-form-label">homeDirectory</span>
+            <div class="claims-form-field"><input type="text" name="homeDirectory" value="{{.HomeDirectory}}" placeholder="/home/username"><span class="claims-form-hint">Home directory path assigned via LDAP.</span></div>
+          </div>
+          <div style="font-size:0.75rem;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">SSH Public Keys</div>
+          <div class="ssh-keys-list" id="ssh-list-{{.UserID}}">
+            {{if .SSHKeys}}
+            {{range .SSHKeys}}<div class="ssh-key-row"><textarea name="ssh_keys" rows="2">{{.}}</textarea><button type="button" class="ssh-key-remove" title="Remove">✕</button></div>{{end}}
+            {{else}}<div class="ssh-keys-empty" id="ssh-empty-{{.UserID}}">No SSH keys configured.</div>{{end}}
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+            <button type="button" class="saction-btn ssh-key-add" data-list="ssh-list-{{.UserID}}" data-empty="ssh-empty-{{.UserID}}">+ Add Key</button>
+            <button type="submit" class="saction-btn">Save</button>
+            <button type="button" class="saction-btn claims-panel-cancel" data-claims-target="uclaims-{{.UserID}}">Cancel</button>
+          </div>
+          {{if .OtherClaims}}
+          <div class="claims-readonly">
+            <div style="font-size:0.75rem;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Read-only claims (not managed by identree)</div>
+            {{range .OtherClaims}}<div class="claims-readonly-row"><span class="claims-readonly-key">{{.Key}}</span><span class="claims-readonly-val">{{.Value}}</span></div>{{end}}
+          </div>
+          {{end}}
+        </form>
+      </div>
+      {{end}}
       {{end}}
     </div>
     <div class="pagination-bar" id="users-pagination"></div>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var usersPage=1,usersPs=25;
+      function hideRowAndPanel(r){r.style.display='none';var p=r.nextElementSibling;if(p&&p.classList.contains('user-claims-panel')){p.style.display='none';}}
       function renderUsersPager(vis){
         var bar=document.getElementById('users-pagination');
         if(!bar)return;
@@ -1948,7 +2164,7 @@ const adminPageHTML = `<!DOCTYPE html>
         if(usersPage>totalPages)usersPage=1;
         var start=(usersPage-1)*usersPs;
         var allRows=Array.from(document.querySelectorAll('#users-table .users-table-row'));
-        allRows.forEach(function(r){r.style.display='none';});
+        allRows.forEach(function(r){hideRowAndPanel(r);});
         vis.slice(start,start+usersPs).forEach(function(r){r.style.display='';});
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
@@ -1975,6 +2191,69 @@ const adminPageHTML = `<!DOCTYPE html>
       document.querySelectorAll('.confirm-submit').forEach(function(btn){
         btn.addEventListener('click',function(e){ if(!confirm(btn.dataset.confirm)){ e.preventDefault(); } });
       });
+      // SSH Keys panel toggle
+      document.querySelectorAll('.ssh-keys-toggle').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var id=btn.dataset.claimsTarget;
+          var panel=document.getElementById(id);
+          if(!panel)return;
+          var open=panel.style.display==='block';
+          panel.style.display=open?'none':'block';
+          var chevron=btn.querySelector('svg:last-child');
+          if(chevron){chevron.style.transform=open?'':'rotate(180deg)';}
+        });
+      });
+      // SSH key add/remove
+      function addKeyRow(list,emptyEl){
+        if(emptyEl){emptyEl.style.display='none';}
+        var row=document.createElement('div');row.className='ssh-key-row';
+        var ta=document.createElement('textarea');ta.name='ssh_keys';ta.rows=2;ta.placeholder='ssh-ed25519 AAAA…';
+        var rm=document.createElement('button');rm.type='button';rm.className='ssh-key-remove';rm.title='Remove';rm.textContent='✕';
+        rm.addEventListener('click',function(){row.remove();if(!list.querySelector('.ssh-key-row')&&emptyEl){emptyEl.style.display='';}});
+        row.appendChild(ta);row.appendChild(rm);list.appendChild(row);ta.focus();
+      }
+      document.querySelectorAll('.ssh-key-add').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var list=document.getElementById(btn.dataset.list);
+          var emptyEl=document.getElementById(btn.dataset.empty);
+          if(list)addKeyRow(list,emptyEl);
+        });
+      });
+      document.querySelectorAll('.ssh-key-remove').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var row=btn.closest('.ssh-key-row');
+          var list=row&&row.parentElement;
+          row&&row.remove();
+          if(list&&!list.querySelector('.ssh-key-row')){var em=document.getElementById(list.id.replace('ssh-list-','ssh-empty-'));if(em)em.style.display='';}
+        });
+      });
+      // Claims cancel buttons
+      document.querySelectorAll('.claims-panel-cancel').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var id=btn.dataset.claimsTarget;
+          var panel=document.getElementById(id);
+          if(panel){panel.style.display='none';}
+          var toggle=document.querySelector('[data-claims-target="'+id+'"]');
+          if(toggle){var chevron=toggle.querySelector('svg:last-child');if(chevron){chevron.style.transform='';}}
+        });
+      });
+      // Submit claims forms via fetch to keep panel open
+      document.querySelectorAll('.ssh-keys-form').forEach(function(form){
+        form.addEventListener('submit',function(e){
+          e.preventDefault();
+          var saveBtn=form.querySelector('button[type=submit]');
+          if(saveBtn)saveBtn.disabled=true;
+          fetch(form.action,{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(form))})
+            .then(function(r){return r.ok?r.json():r.text().then(function(t){throw new Error(t);});})
+            .then(function(){
+              var ok=document.createElement('span');
+              ok.textContent=' ✓ Saved';ok.style.cssText='color:var(--success);font-size:0.8125rem;font-weight:600';
+              if(saveBtn){saveBtn.parentElement.appendChild(ok);setTimeout(function(){ok.remove();},2500);}
+            })
+            .catch(function(err){alert('Save failed: '+err.message);})
+            .finally(function(){if(saveBtn)saveBtn.disabled=false;});
+        });
+      });
       document.querySelectorAll('.pill-cell').forEach(function(cell){
         var items=Array.from(cell.querySelectorAll('.pill,.group-badge'));
         if(!items.length)return;
@@ -1997,7 +2276,7 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="groups-table" id="groups-table">
       <div class="groups-table-header">
         <div class="gtcol gtcol-name" style="gap:8px;align-items:center">
-          <button type="button" class="filter-toggle-btn" id="groups-filter-toggle" title="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+          <button type="button" class="filter-toggle-btn" id="groups-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <a href="/admin/groups?sort=name&dir={{if and (eq .GroupSort "name") (eq .GroupDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .GroupSort "name"}} active{{end}}">{{call .T "group"}}{{if eq .GroupSort "name"}} {{if eq .GroupDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
         </div>
         <div class="gtcol gtcol-cmds">
@@ -2022,8 +2301,12 @@ const adminPageHTML = `<!DOCTYPE html>
       </div>
       <div class="groups-list">
       {{range .Groups}}
+      <div class="group-wrapper">
       <div class="groups-table-row" id="group-{{.Name}}">
-        <div class="gtcol gtcol-name"><a href="/admin/groups#group-{{.Name}}" class="group-badge group-badge-link">{{.Name}}</a></div>
+        <div class="gtcol gtcol-name" style="gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between">
+          <a href="/admin/groups#group-{{.Name}}" class="group-badge group-badge-link">{{.Name}}</a>
+          {{if $.CanEditClaims}}<button type="button" class="claims-toggle-btn" style="margin-left:auto" data-claims-target="gclaims-{{.GroupID}}"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px;vertical-align:-1px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>Claims <span class="claims-chevron">▾</span></button>{{end}}
+        </div>
         <div class="gtcol gtcol-cmds">
           <div class="pill-cell">{{if .AllCmds}}<span class="pill cmd">{{call $.T "all_commands"}}</span>{{else}}{{range .CmdList}}<span class="pill cmd">{{.}}</span>{{end}}{{end}}</div>
         </div>
@@ -2036,6 +2319,42 @@ const adminPageHTML = `<!DOCTYPE html>
         <div class="gtcol gtcol-runas">
           {{if and .SudoRunAs (ne .SudoRunAs "root")}}<span class="pill cmd">{{.SudoRunAs}}</span>{{else}}<span class="row-sub" style="font-size:0.8125rem">root</span>{{end}}
         </div>
+      </div>
+      {{if $.CanEditClaims}}
+      <div class="claims-panel" id="gclaims-{{.GroupID}}">
+        <div class="claims-panel-title">Edit Claims — {{.Name}}</div>
+        <form method="POST" action="/api/admin/groups/claims">
+          <input type="hidden" name="group_id" value="{{.GroupID}}">
+          <input type="hidden" name="username" value="{{$.Username}}">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+          <div class="claims-form">
+            <span class="claims-form-label">sudoCommands</span>
+            <div class="claims-form-field"><input type="text" name="sudoCommands" value="{{.SudoCommands}}" placeholder="e.g. ALL or /usr/bin/apt,/usr/bin/systemctl"><span class="claims-form-hint">Commands this group may run via sudo. Comma-separated paths, or ALL.</span></div>
+            <span class="claims-form-label">sudoHosts</span>
+            <div class="claims-form-field"><input type="text" name="sudoHosts" value="{{.SudoHosts}}" placeholder="e.g. ALL or host1,host2"><span class="claims-form-hint">Hosts where sudo is permitted. Comma-separated hostnames, or ALL.</span></div>
+            <span class="claims-form-label">sudoRunAsUser</span>
+            <div class="claims-form-field"><input type="text" name="sudoRunAsUser" value="{{.SudoRunAs}}" placeholder="root"><span class="claims-form-hint">User to run as (sudo -u). Defaults to root if blank.</span></div>
+            <span class="claims-form-label">sudoRunAsGroup</span>
+            <div class="claims-form-field"><input type="text" name="sudoRunAsGroup" value="{{.SudoRunAsGroup}}" placeholder=""><span class="claims-form-hint">Group to run as (sudo -g). Optional.</span></div>
+            <span class="claims-form-label">sudoOptions</span>
+            <div class="claims-form-field"><input type="text" name="sudoOptions" value="{{.SudoOptions}}" placeholder=""><span class="claims-form-hint">Extra sudoers options, e.g. NOPASSWD, NOEXEC. Comma-separated.</span></div>
+            <span class="claims-form-label">accessHosts</span>
+            <div class="claims-form-field"><input type="text" name="accessHosts" value="{{.AccessHosts}}" placeholder="e.g. host1,host2"><span class="claims-form-hint">Hosts this group may log in to via PAM. Comma-separated. Blank = no PAM restriction.</span></div>
+            <div class="claims-form-actions">
+              <button type="submit" class="saction-btn">Save</button>
+              <button type="button" class="saction-btn claims-panel-cancel" data-claims-target="gclaims-{{.GroupID}}">Cancel</button>
+            </div>
+          </div>
+          {{if .OtherClaims}}
+          <div class="claims-readonly">
+            <div style="font-size:0.75rem;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Read-only claims (not managed by identree)</div>
+            {{range .OtherClaims}}<div class="claims-readonly-row"><span class="claims-readonly-key">{{.Key}}</span><span class="claims-readonly-val">{{.Value}}</span></div>{{end}}
+          </div>
+          {{end}}
+        </form>
+      </div>
+      {{end}}
       </div>
       {{end}}
       </div>
@@ -2050,8 +2369,8 @@ const adminPageHTML = `<!DOCTYPE html>
         var total=vis.length,totalPages=Math.max(1,Math.ceil(total/groupsPs));
         if(groupsPage>totalPages)groupsPage=1;
         var start=(groupsPage-1)*groupsPs;
-        var allRows=Array.from(document.querySelectorAll('.groups-table-row'));
-        allRows.forEach(function(r){r.style.display='none';});
+        var allWrappers=Array.from(document.querySelectorAll('.group-wrapper'));
+        allWrappers.forEach(function(r){r.style.display='none';});
         vis.slice(start,start+groupsPs).forEach(function(r){r.style.display='';});
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
@@ -2066,11 +2385,11 @@ const adminPageHTML = `<!DOCTYPE html>
         document.querySelectorAll('.gtcol-filter-input').forEach(function(inp){
           filters[inp.dataset.col]=inp.value.toLowerCase().trim();
         });
-        var allRows=Array.from(document.querySelectorAll('.groups-table-row'));
-        var vis=allRows.filter(function(row){
+        var allWrappers=Array.from(document.querySelectorAll('.group-wrapper'));
+        var vis=allWrappers.filter(function(wrapper){
           for(var col in filters){
             if(!filters[col]) continue;
-            var cell=row.querySelector('.gtcol-'+col);
+            var cell=wrapper.querySelector('.gtcol-'+col);
             if(cell&&cell.textContent.toLowerCase().indexOf(filters[col])===-1){return false;}
           }
           return true;
@@ -2083,6 +2402,47 @@ const adminPageHTML = `<!DOCTYPE html>
       var gc=document.getElementById('groups-clear');
       if(gc)gc.addEventListener('click',function(){document.querySelectorAll('.gtcol-filter-input').forEach(function(i){i.value='';});groupsPage=1;filterGroups();});
       (function(){var ftb=document.getElementById('groups-filter-toggle');var ftr=document.getElementById('groups-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
+      // Claims panel toggles
+      function setClaimsToggleState(btn,open){
+        var span=btn.querySelector('.claims-chevron');
+        if(span){span.textContent=open?'▴':'▾';}
+      }
+      document.querySelectorAll('.claims-toggle-btn').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var id=btn.dataset.claimsTarget;
+          var panel=document.getElementById(id);
+          if(!panel)return;
+          var open=panel.style.display!=='none'&&panel.style.display!=='';
+          panel.style.display=open?'none':'block';
+          setClaimsToggleState(btn,!open);
+        });
+      });
+      document.querySelectorAll('.claims-panel-cancel').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var id=btn.dataset.claimsTarget;
+          var panel=document.getElementById(id);
+          if(panel){panel.style.display='none';}
+          var toggle=document.querySelector('[data-claims-target="'+id+'"].claims-toggle-btn');
+          if(toggle){setClaimsToggleState(toggle,false);}
+        });
+      });
+      // Submit claims forms via fetch to keep panel open
+      document.querySelectorAll('.claims-panel form').forEach(function(form){
+        form.addEventListener('submit',function(e){
+          e.preventDefault();
+          var saveBtn=form.querySelector('button[type=submit]');
+          if(saveBtn)saveBtn.disabled=true;
+          fetch(form.action,{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(form))})
+            .then(function(r){return r.ok?r.json():r.text().then(function(t){throw new Error(t);});})
+            .then(function(){
+              var ok=document.createElement('span');
+              ok.textContent=' ✓ Saved';ok.style.cssText='color:var(--success);font-size:0.8125rem;font-weight:600';
+              if(saveBtn){saveBtn.parentElement.appendChild(ok);setTimeout(function(){ok.remove();},2500);}
+            })
+            .catch(function(err){alert('Save failed: '+err.message);})
+            .finally(function(){if(saveBtn)saveBtn.disabled=false;});
+        });
+      });
       document.querySelectorAll('.pill-cell').forEach(function(cell){
         var items=Array.from(cell.querySelectorAll('.pill,.group-badge'));
         if(!items.length)return;
@@ -2105,13 +2465,13 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="hosts-table" id="hosts-table">
       <div class="hosts-table-header">
         <div class="gtcol gtcol-hhost" style="gap:10px;align-items:center;flex-wrap:wrap">
-          <button type="button" class="filter-toggle-btn" id="hosts-filter-toggle" title="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+          <button type="button" class="filter-toggle-btn" id="hosts-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <a href="/admin/hosts?sort=hostname{{if .GroupFilter}}&group={{.GroupFilter}}{{end}}&dir={{if and (eq .HostSort "hostname") (eq .HostDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .HostSort "hostname"}} active{{end}}">{{call .T "host"}}{{if eq .HostSort "hostname"}} {{if eq .HostDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
           {{if .AllGroups}}<form method="GET" action="/admin/hosts" style="display:inline;margin:0"><select name="group" class="col-filter-select" aria-label="{{call .T "aria_filter_group"}}"><option value="">{{call .T "all_groups"}}</option>{{range .AllGroups}}<option value="{{.}}" {{if eq . $.GroupFilter}}selected{{end}}>{{.}}</option>{{end}}</select></form>{{end}}
           {{if .GroupFilter}}<a href="/admin/hosts" style="font-size:0.75rem;color:var(--text-3)">{{call .T "clear_filter"}}</a>{{end}}
         </div>
         <div class="gtcol gtcol-hbreakglass"><span class="col-sort-link">{{call .T "breakglass"}}</span></div>
-        <div class="gtcol gtcol-hactions" style="justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px">
+        <div class="gtcol gtcol-hactions" style="align-items:center;flex-wrap:wrap;gap:8px">
           <span class="col-sort-link">{{call .T "action"}}</span>
           {{if .HasEscrowedHosts}}<form method="POST" action="/api/hosts/rotate-all" style="display:inline;margin:0"><input type="hidden" name="username" value="{{.Username}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="saction-btn saction-rotate-all" data-confirm="{{call .T "confirm_rotate_all"}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>{{call .T "rotate_all"}}</button></form>{{end}}
         </div>
@@ -2126,18 +2486,15 @@ const adminPageHTML = `<!DOCTYPE html>
         <div class="gtcol gtcol-hhost" style="flex-wrap:wrap;gap:4px;align-items:center">
           <a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{if .Group}}<span class="host-group">{{.Group}}</span>{{end}}
         </div>
-        <div class="gtcol gtcol-hbreakglass" style="flex-direction:column;gap:2px;align-items:flex-start">
+        <div class="gtcol gtcol-hbreakglass">
           {{if .Escrowed}}
-            <span style="font-size:0.8125rem;color:{{if .EscrowExpired}}var(--danger){{else}}var(--success){{end}}">{{if .EscrowExpired}}{{call $.T "breakglass_expired"}}{{else}}{{call $.T "breakglass_escrowed"}}{{end}}</span>
-            <span class="time-ago">{{.EscrowAge}} {{call $.T "ago"}}</span>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
-              {{if .EscrowLink}}<a href="{{.EscrowLink}}" target="_blank" class="btn btn-sm">{{call $.T "view"}}</a>{{end}}
-              {{if .EscrowRevealable}}<button type="button" class="saction-btn reveal-password-btn" data-hostname="{{.Hostname}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-ts="{{$.CSRFTs}}">{{call $.T "reveal"}}</button>{{end}}
-            </div>
+            <span style="font-size:0.8125rem;color:{{if .EscrowExpired}}var(--danger){{else}}var(--success){{end}}">{{if .EscrowExpired}}{{call $.T "breakglass_expired"}}{{else}}{{call $.T "breakglass_escrowed"}}{{end}}<span style="color:var(--text-3);font-weight:400"> ({{.EscrowAge}} {{call $.T "ago"}})</span></span>
+            {{if .EscrowLink}}<a href="{{.EscrowLink}}" target="_blank" class="btn btn-sm" style="margin-top:4px">{{call $.T "view"}}</a>{{end}}
           {{end}}
         </div>
         <div class="gtcol gtcol-hactions" style="gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end">
-          {{if gt .ActiveSessionCount 0}}<a href="/?host={{.Hostname}}" class="saction-btn saction-sessions saction-primary"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>{{call $.T "sessions"}} ({{.ActiveSessionCount}})</a>{{end}}
+          {{if gt .ActiveSessionCount 0}}<a href="/?host={{.Hostname}}" class="saction-btn saction-sessions saction-primary"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{{call $.T "sessions"}} ({{.ActiveSessionCount}})</a>{{end}}
+          {{if .EscrowRevealable}}<button type="button" class="saction-btn reveal-password-btn" data-hostname="{{.Hostname}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-ts="{{$.CSRFTs}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>{{call $.T "reveal"}}</button>{{end}}
           <a href="/history?hostname={{.Hostname}}" class="saction-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "history"}}</a>
           <form method="POST" action="/api/hosts/rotate" style="display:inline">
             <input type="hidden" name="hostname" value="{{.Hostname}}">
@@ -2214,10 +2571,19 @@ const adminPageHTML = `<!DOCTYPE html>
                 toggle.textContent=hidden?'Hide':'Show';
               };
               var copyBtn=modal.querySelector('#reveal-copy');
+              var rotateNote=modal.querySelector('#reveal-modal-rotate-note');
+              if(rotateNote)rotateNote.style.display='none';
+              var rotated=false;
               copyBtn.onclick=function(){
                 navigator.clipboard&&navigator.clipboard.writeText(pw);
                 copyBtn.textContent='Copied!';
                 setTimeout(function(){copyBtn.textContent='Copy';},2000);
+                if(!rotated){
+                  rotated=true;
+                  fetch('/api/hosts/rotate',{method:'POST',body:body,headers:{'Content-Type':'application/x-www-form-urlencoded'}})
+                    .then(function(rr){if(rr.ok&&rotateNote)rotateNote.style.display='block';})
+                    .catch(function(){});
+                }
               };
               modal.style.display='flex';
             })
@@ -2225,28 +2591,55 @@ const adminPageHTML = `<!DOCTYPE html>
             .finally(function(){btn.disabled=false;});
         });
       });
-      var revealModal=document.getElementById('reveal-modal');
-      if(revealModal){
+      document.addEventListener('DOMContentLoaded',function(){
+        var revealModal=document.getElementById('reveal-modal');
+        if(!revealModal)return;
         revealModal.addEventListener('click',function(e){if(e.target===revealModal)revealModal.style.display='none';});
-        var closeBtn=revealModal.querySelector('#reveal-modal-close');
-        if(closeBtn)closeBtn.addEventListener('click',function(){revealModal.style.display='none';});
-      }
+        ['reveal-modal-x','reveal-modal-close'].forEach(function(id){
+          var btn=document.getElementById(id);
+          if(btn)btn.addEventListener('click',function(){revealModal.style.display='none';});
+        });
+        // Focus trap for reveal modal (L8)
+        revealModal.addEventListener('keydown',function(e){
+          if(e.key!=='Tab')return;
+          var focusable=Array.from(revealModal.querySelectorAll('button,input,[tabindex="0"]')).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
+          if(!focusable.length){e.preventDefault();return;}
+          var first=focusable[0],last=focusable[focusable.length-1];
+          if(e.shiftKey){if(document.activeElement===first){e.preventDefault();last.focus();}}
+          else{if(document.activeElement===last){e.preventDefault();first.focus();}}
+        });
+        document.addEventListener('keydown',function(e){
+          if(e.key==='Escape'){
+            if(revealModal.style.display!=='none')revealModal.style.display='none';
+            var rm=document.getElementById('remove-modal');
+            if(rm&&rm.classList.contains('open'))rm.classList.remove('open');
+          }
+        });
+        // L13: associate config inputs with their label text via aria-label
+        document.querySelectorAll('.config-table-row').forEach(function(row){
+          var labelEl=row.querySelector('.config-label-env');
+          var input=row.querySelector('.config-input:not([disabled])');
+          if(labelEl&&input&&!input.getAttribute('aria-label')){input.setAttribute('aria-label',labelEl.textContent.trim());}
+        });
+      });
     })();
     </script>
     <div id="reveal-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.55);align-items:center;justify-content:center">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px 28px 24px;max-width:520px;width:calc(100% - 40px);box-shadow:0 8px 32px rgba(0,0,0,0.25)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
           <span style="font-weight:600;font-size:1rem">Break-glass password</span>
-          <button id="reveal-modal-close" type="button" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:1.3rem;line-height:1;padding:2px 6px">&times;</button>
+          <button id="reveal-modal-x" type="button" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:1.3rem;line-height:1;padding:2px 6px">&times;</button>
         </div>
-        <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:14px">Host: <strong id="reveal-modal-host"></strong></div>
-        <div style="background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger);border-radius:8px;padding:10px 14px;font-size:0.8125rem;margin-bottom:16px">This reveal has been logged to the audit trail.</div>
+        <div style="font-size:0.85rem;color:var(--text-2);margin-bottom:14px">Host: <strong id="reveal-modal-host"></strong></div>
+        <div style="background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger);border-radius:8px;padding:10px 14px;font-size:0.8125rem;margin-bottom:8px">This reveal has been logged to the audit trail.</div>
+        <div id="reveal-modal-rotate-note" style="display:none;background:rgba(217,119,6,0.1);border:1px solid rgba(217,119,6,0.35);color:#d97706;border-radius:8px;padding:8px 14px;font-size:0.8125rem;margin-bottom:8px">A password rotation has been requested for this host.</div>
+        <div style="margin-bottom:16px"></div>
         <div style="display:flex;align-items:center;gap:10px;background:var(--bg-alt,var(--bg));border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:monospace;font-size:0.95rem;margin-bottom:16px">
           <span id="reveal-modal-password" style="flex:1;word-break:break-all"></span>
-          <button id="reveal-toggle" type="button" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-size:0.8rem;cursor:pointer;white-space:nowrap;color:var(--text-secondary)">Show</button>
-          <button id="reveal-copy" type="button" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-size:0.8rem;cursor:pointer;white-space:nowrap;color:var(--text-secondary)">Copy</button>
+          <button id="reveal-toggle" type="button" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-size:0.8rem;cursor:pointer;white-space:nowrap;color:var(--text-2)">Show</button>
+          <button id="reveal-copy" type="button" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-size:0.8rem;cursor:pointer;white-space:nowrap;color:var(--text-2)">Copy</button>
         </div>
-        <div style="text-align:right"><button type="button" onclick="document.getElementById('reveal-modal').style.display='none'" style="background:none;border:1px solid var(--border);border-radius:8px;padding:7px 18px;cursor:pointer;font-size:0.875rem">Close</button></div>
+        <div style="text-align:right"><button id="reveal-modal-close" type="button" style="background:none;border:1px solid var(--border);border-radius:8px;padding:7px 18px;cursor:pointer;font-size:0.875rem;color:var(--text)">Close</button></div>
       </div>
     </div>
     {{else}}
@@ -2640,6 +3033,17 @@ const adminPageHTML = `<!DOCTYPE html>
       if(removeCloseBtn.getAttribute('data-reload')==='1') location.reload();
     });
   }
+  // Focus trap for remove modal (L9)
+  if(removeModal){
+    removeModal.addEventListener('keydown',function(e){
+      if(e.key!=='Tab')return;
+      var focusable=Array.from(removeModal.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
+      if(!focusable.length){e.preventDefault();return;}
+      var first=focusable[0],last=focusable[focusable.length-1];
+      if(e.shiftKey){if(document.activeElement===first){e.preventDefault();last.focus();}}
+      else{if(document.activeElement===last){e.preventDefault();first.focus();}}
+    });
+  }
   })();
   </script>
 
@@ -2739,32 +3143,34 @@ const accessPageHTML = `<!DOCTYPE html>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none'%3E%3Ccircle cx='14' cy='5' r='3.5' fill='%23a855f7'/%3E%3Cline x1='14' y1='8.5' x2='14' y2='13' stroke='%23a855f7' stroke-width='2'/%3E%3Cline x1='14' y1='13' x2='7' y2='18' stroke='%23a855f7' stroke-width='2'/%3E%3Cline x1='14' y1='13' x2='21' y2='18' stroke='%23a855f7' stroke-width='2'/%3E%3Ccircle cx='7' cy='21' r='3.5' fill='%23a855f7'/%3E%3Ccircle cx='21' cy='21' r='3.5' fill='%23a855f7'/%3E%3Cline x1='14' y1='13' x2='14' y2='18' stroke='%23a855f7' stroke-width='2'/%3E%3Ccircle cx='14' cy='21' r='3.5' fill='%23a855f7'/%3E%3C/svg%3E">
   <style>` + sharedCSS + navCSS + `
     .access-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-    .access-table-header { display: grid; grid-template-columns: 200px 2fr 1.2fr 1.6fr; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .access-table-filter { display: grid; grid-template-columns: 200px 2fr 1.2fr 1.6fr; gap: 0; padding: 5px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .access-table-header { display: grid; grid-template-columns: 200px 2fr 1.2fr 210px; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .access-table-filter { display: grid; grid-template-columns: 200px 2fr 1.2fr 210px; gap: 0; padding: 5px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
     .access-table-header .gtcol { align-items: center; }
-    .access-table-row { display: grid; grid-template-columns: 200px 2fr 1.2fr 1.6fr; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .access-table-row { display: grid; grid-template-columns: 200px 2fr 1.2fr 210px; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
     .access-table-row:last-child { border-bottom: none; }
     .access-table-row:hover { background: var(--surface-2); }
     .access-table--admin .access-table-header,
     .access-table--admin .access-table-filter,
-    .access-table--admin .access-user-row { grid-template-columns: 200px 1.8fr 1.6fr 0.6fr; }
+    .access-table--admin .access-user-row { grid-template-columns: 200px 1.8fr 1.6fr 36px; }
     .access-user-group { border-bottom: 1px solid var(--border); }
     .access-user-group:last-child { border-bottom: none; }
+    .access-user-group.expanded > .access-user-row { background: var(--primary-sub); border-bottom: 1px solid rgba(124,58,237,0.2); }
+    .access-user-group.expanded > .access-user-row .access-expand-icon { color: var(--primary); }
     .access-user-row { display: grid; gap: 0; padding: 10px 12px; align-items: center; cursor: pointer; }
     .access-user-row:hover { background: var(--surface-2); }
     .access-expand-icon { display: flex; align-items: center; justify-content: flex-end; color: var(--text-3); transition: transform 0.15s; user-select: none; }
     .access-user-group.expanded .access-expand-icon { transform: rotate(90deg); }
     .access-host-rows { display: none; border-top: 1px solid var(--border); }
     .access-user-group.expanded .access-host-rows { display: block; }
-    .access-host-row { display: grid; grid-template-columns: 200px 2.1fr 0.9fr 1.8fr; gap: 0; padding: 8px 12px 8px 212px; border-bottom: 1px solid var(--border); align-items: center; background: var(--surface-2); }
-    .access-host-row > div { min-width: 0; overflow: hidden; }
+    .access-host-row { display: grid; grid-template-columns: 260px 1fr 220px; gap: 0; padding: 8px 12px 8px 24px; border-bottom: 1px solid var(--border); align-items: center; background: var(--surface-2); }
+    .access-host-row > div { min-width: 0; }
     .access-host-row:last-child { border-bottom: none; }
     .access-host-row:hover { background: var(--bg); }
     .access-active-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--primary-sub); color: var(--primary); font-size: 0.75rem; font-weight: 600; }
     .access-host-count { font-size: 0.8125rem; color: var(--text-2); }
     .access-status-pill { display: inline-flex; align-items: center; gap: 3px; background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); border-radius: 6px; padding: 2px 8px; font-size: 0.8125rem; font-weight: 500; white-space: nowrap; }
     .access-status-time { font-weight: 400; color: var(--text-2); font-size: 0.75rem; }
-    .access-host-header { display: grid; grid-template-columns: 200px 2.1fr 0.9fr 1.8fr; gap: 0; padding: 5px 12px 5px 212px; background: var(--bg); border-bottom: 1px solid var(--border); }
+    .access-host-header { display: grid; grid-template-columns: 260px 1fr 220px; gap: 0; padding: 5px 12px 5px 24px; background: var(--bg); border-bottom: 1px solid var(--border); }
     .access-host-header > div { font-size: 0.75rem; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
     .saction-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 6px; font-size: 0.8125rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1.4; white-space: nowrap; }
     .saction-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--text-3); }
@@ -2858,7 +3264,7 @@ const accessPageHTML = `<!DOCTYPE html>
               for(var i=maxShow;i<items.length;i++){items[i].style.display='none';}
               while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){maxShow--;items[maxShow].style.display='none';}
               var hidden=items.length-maxShow;
-              if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(e){e.stopPropagation();items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);}
+              if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(e){e.stopPropagation();items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){items[maxShow-1].style.display='none';maxShow--;hidden++;btn.textContent='+'+hidden+' more';}}
             });
           }
         });
@@ -2895,7 +3301,7 @@ const accessPageHTML = `<!DOCTYPE html>
                 for(var i=maxShow;i<items.length;i++){items[i].style.display='none';}
                 while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){maxShow--;items[maxShow].style.display='none';}
                 var hidden=items.length-maxShow;
-                if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(e){e.stopPropagation();items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);}
+                if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(e){e.stopPropagation();items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){items[maxShow-1].style.display='none';maxShow--;hidden++;btn.textContent='+'+hidden+' more';}}
               });
             }
           }
@@ -2937,6 +3343,7 @@ const accessPageHTML = `<!DOCTYPE html>
   </script>
 </head>
 <body class="app">
+  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>
   <nav class="sidebar" aria-label="Main navigation">
     <div class="sidebar-brand">
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>
@@ -2964,13 +3371,14 @@ const accessPageHTML = `<!DOCTYPE html>
       </button>
     </div>
   </nav>
-  <main class="main">
+  <main class="main" id="main-content">
+    <h1 class="sr-only">{{call .T "access"}} - {{call .T "app_name"}}</h1>
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
     {{if .IsAdmin}}
     <div class="access-table access-table--admin" id="access-table" data-prefilter-user="{{.FilterUser}}">
       <div class="access-table-header">
-        <div class="gtcol gtcol-auser" style="gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="filter-toggle-btn" id="access-admin-filter-toggle" title="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><span class="col-sort-link">{{call .T "user"}}</span><div class="toggle-wrap" id="access-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>
+        <div class="gtcol gtcol-auser" style="gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="filter-toggle-btn" id="access-admin-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><span class="col-sort-link">{{call .T "user"}}</span><div class="toggle-wrap" id="access-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>
         <div class="gtcol"><span class="col-sort-link">{{call .T "hosts"}}</span></div>
         <div class="gtcol" style="gap:10px;align-items:center;flex-wrap:wrap"><span class="col-sort-link">{{call .T "sessions"}}</span><div class="toggle-wrap" id="access-active-only-toggle" role="switch" aria-checked="false" tabindex="0"><span>{{call .T "active_only"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>
         <div class="gtcol"></div>
@@ -2993,15 +3401,13 @@ const accessPageHTML = `<!DOCTYPE html>
           <div class="access-host-header">
             <div>{{call $.T "host"}}</div>
             <div>{{call $.T "commands"}}</div>
-            <div>{{call $.T "sessions"}}</div>
-            <div style="text-align:right">{{call $.T "action"}}</div>
+            <div>{{call $.T "action"}}</div>
           </div>
           {{range .Hosts}}
           <div class="access-host-row">
-            <div><div class="pill-cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div></div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{if .Active}}<span class="access-status-pill">{{call $.T "active"}} <span class="access-status-time">({{.Remaining}})</span></span>{{end}}</div>
             <div><div class="pill-cell">{{if .AllCmds}}<span class="pill cmd">{{call $.T "all_commands"}}</span>{{else}}{{range .Commands}}<span class="pill cmd">{{.}}</span>{{end}}{{end}}</div></div>
-            <div>{{if .Active}}<span class="access-status-pill">{{call $.T "active"}} <span class="access-status-time">({{.Remaining}})</span></span>{{end}}</div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
               {{if .Active}}
               <div class="elevate-wrap">
                 <button type="button" class="saction-btn saction-primary elevate-toggle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "extend"}}<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>
@@ -3012,7 +3418,7 @@ const accessPageHTML = `<!DOCTYPE html>
                   <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                   <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
                   <input type="hidden" name="from" value="/access">
-                  {{range $.Durations}}<button type="submit" name="duration" value="{{.Value}}">{{.Label}}</button>{{end}}
+                  {{range .ExtendDurations}}<button type="submit" name="duration" value="{{.Value}}">{{.Label}}</button>{{end}}
                   <button type="submit" name="duration" value="max">{{call $.T "max"}}</button>
                 </form>
               </div>

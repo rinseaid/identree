@@ -105,6 +105,8 @@ type ServerConfig struct {
 	NotifyUsersFile      string
 	NotifyUsers          map[string]string
 	Webhooks             []WebhookConfig
+	NotifyTimeout        time.Duration // max time for notify command (default 15s)
+	WebhookTimeout       time.Duration // per-webhook HTTP request timeout (default 10s)
 
 	// ── Break-glass escrow ────────────────────────────────────────────────────
 	EscrowCommand          string
@@ -167,7 +169,7 @@ type ClientConfig struct {
 // Load priority (highest to lowest): environment variables > KEY=VALUE conf file > TOML config file > defaults.
 func LoadServerConfig() (*ServerConfig, error) {
 	// Load TOML config (lowest file-level priority).
-	tomlEnv, err := LoadTOMLConfig(DefaultTOMLConfigPath)
+	tomlEnv, err := LoadTOMLConfig(TOMLConfigPath())
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("loading TOML config: %w", err)
 	}
@@ -279,6 +281,8 @@ func LoadServerConfig() (*ServerConfig, error) {
 		NotifyCommand:        get("IDENTREE_NOTIFY_COMMAND"),
 		NotifyEnvPassthrough: getSlice("IDENTREE_NOTIFY_ENV_PASSTHROUGH"),
 		NotifyUsersFile:      get("IDENTREE_NOTIFY_USERS_FILE"),
+		NotifyTimeout:        getDuration("IDENTREE_NOTIFY_TIMEOUT", 15*time.Second),
+		WebhookTimeout:       getDuration("IDENTREE_WEBHOOK_TIMEOUT", 10*time.Second),
 
 		EscrowCommand:        get("IDENTREE_ESCROW_COMMAND"),
 		EscrowEnvPassthrough: getSlice("IDENTREE_ESCROW_COMMAND_ENV"),
@@ -369,6 +373,15 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 	if cfg.LDAPEnabled && cfg.LDAPBaseDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN is required when LDAP is enabled")
+	}
+
+	// Warn if any IDENTREE_NOTIFY_ENV_PASSTHROUGH prefix lacks a trailing '_'
+	// separator — a prefix like "MY_APP" would inadvertently match "MY_APPDATA",
+	// "MY_APPSERVER", etc.  Intended prefixes should end with '_' (e.g. "MY_APP_").
+	for _, prefix := range cfg.NotifyEnvPassthrough {
+		if prefix != "" && !strings.HasSuffix(prefix, "_") {
+			fmt.Printf("WARNING: IDENTREE_NOTIFY_ENV_PASSTHROUGH prefix %q does not end with '_' — it may match unintended env vars (e.g. %q would also match %qXTRA). Add a trailing '_' to be safe.\n", prefix, prefix, prefix)
+		}
 	}
 
 	// Validate LDAPSudoNoAuthenticate

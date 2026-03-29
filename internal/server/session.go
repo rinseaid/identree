@@ -181,7 +181,7 @@ func getAndClearFlash(w http.ResponseWriter, r *http.Request) string {
 
 // getTheme reads the pam_theme cookie and returns "light", "dark", or "" (system default).
 func getAvatar(r *http.Request) string {
-	c, err := r.Cookie("pam_avatar")
+	c, err := r.Cookie("identree_avatar")
 	if err != nil || c.Value == "" {
 		return ""
 	}

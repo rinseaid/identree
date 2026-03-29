@@ -14,6 +14,7 @@ import (
 	"time"
 
 	challpkg "github.com/rinseaid/identree/internal/challenge"
+	"github.com/rinseaid/identree/internal/notify"
 )
 
 // handleBulkApprove approves a pending challenge from the dashboard.
@@ -70,11 +71,18 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogAction(challenge.Username, "approved", hostname, challenge.UserCode, username)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
+	s.sendWebhookNotifications(notify.WebhookData{
+		Event:     "challenge_approved",
+		Username:  challenge.Username,
+		Hostname:  hostname,
+		UserCode:  challenge.UserCode,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 
 	// Redirect back to the dashboard with flash cookie
 	expiry := time.Now().Add(s.store.GraceRemaining(challenge.Username, challenge.Hostname))
 	setFlashCookie(w, fmt.Sprintf("approved:%s:%s:%d", hostname, challenge.Username, expiry.Unix()))
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
 // handleOneTap processes a one-tap approval link from a notification.
@@ -165,7 +173,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 			SameSite: http.SameSiteLaxMode,
 			Secure:   secure,
 		})
-		loginURL := strings.TrimRight(s.cfg.ExternalURL, "/") + "/sessions/login"
+		loginURL := s.baseURL + "/sessions/login"
 		http.Redirect(w, r, loginURL, http.StatusSeeOther)
 		return
 	}
@@ -278,7 +286,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 		dest = "/"
 	}
 	setFlashCookie(w, fmt.Sprintf("revoked:%s:%s", displayHostname, sessionOwner))
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+dest, http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
 // handleBulkApproveAll approves all pending challenges for the authenticated user.
@@ -319,7 +327,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 
 	s.broadcastSSE(username, "challenge_resolved")
 	setFlashCookie(w, fmt.Sprintf("approved_all:%d", count))
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
 // handleRevokeAll revokes all active sessions for the authenticated user.
@@ -376,7 +384,7 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
 	}
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+dest, http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
 // handleExtendSession extends an active grace session to the maximum allowed duration.
@@ -437,7 +445,7 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 	}
 	expiry := time.Now().Add(remaining)
 	setFlashCookie(w, fmt.Sprintf("extended:%s:%s:%d", displayHostname, username, expiry.Unix()))
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+dest, http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
 // handleExtendAll extends all active sessions for the authenticated user to the maximum duration.
@@ -478,7 +486,7 @@ func (s *Server) handleExtendAll(w http.ResponseWriter, r *http.Request) {
 	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
 	}
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+dest, http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
 // handleRejectChallenge rejects a pending challenge from the dashboard.
@@ -527,9 +535,16 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 	log.Printf("REJECTED: sudo for user %q on host %q (challenge %s) from %s", challenge.Username, hostname, challengeID[:8], remoteAddr(r))
 	s.store.LogAction(challenge.Username, "rejected", hostname, challenge.UserCode, username)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
+	s.sendWebhookNotifications(notify.WebhookData{
+		Event:     "challenge_rejected",
+		Username:  challenge.Username,
+		Hostname:  hostname,
+		UserCode:  challenge.UserCode,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 
 	setFlashCookie(w, "rejected:"+hostname)
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
 // handleRejectAll rejects all pending challenges for the authenticated user.
@@ -565,7 +580,7 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 
 	s.broadcastSSE(username, "challenge_resolved")
 	setFlashCookie(w, fmt.Sprintf("rejected_all:%d", count))
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
 // handleElevate creates a grace session for a host manually.
@@ -643,7 +658,7 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 	if from == "" || !strings.HasPrefix(from, "/") || strings.HasPrefix(from, "//") || strings.ContainsAny(from, "?#\\") {
 		from = "/admin/hosts"
 	}
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+from, http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+from, http.StatusSeeOther)
 }
 
 // handleRotateHost requests breakglass rotation for a single host.
@@ -675,7 +690,7 @@ func (s *Server) handleRotateHost(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ROTATE_BREAKGLASS: user %q requested rotation for host %q from %s", username, hostname, remoteAddr(r))
 	s.broadcastSSE(username, "host_changed")
 	setFlashCookie(w, "rotated:"+hostname)
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/hosts", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/admin/hosts", http.StatusSeeOther)
 }
 
 // handleRotateAllHosts requests breakglass rotation for all hosts.
@@ -716,5 +731,5 @@ func (s *Server) handleRotateAllHosts(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ROTATE_ALL_BREAKGLASS: user %q requested rotation for %d hosts from %s", username, len(hosts), remoteAddr(r))
 	s.broadcastSSE(username, "host_changed")
 	setFlashCookie(w, fmt.Sprintf("rotated_all:%d", len(hosts)))
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/hosts", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/admin/hosts", http.StatusSeeOther)
 }

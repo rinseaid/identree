@@ -129,6 +129,7 @@ func LookupUserURLs(users map[string]string, username string) string {
 
 // WebhookData holds all the fields available to webhook formatters.
 type WebhookData struct {
+	Event       string // e.g. "challenge_created", "challenge_approved", "challenge_rejected", "auto_approved"
 	Username    string
 	Hostname    string
 	UserCode    string
@@ -148,8 +149,12 @@ func (d WebhookData) BestApprovalURL() string {
 
 // FormatWebhookRaw returns a generic JSON payload with all challenge fields.
 func FormatWebhookRaw(d WebhookData) ([]byte, error) {
+	event := d.Event
+	if event == "" {
+		event = "challenge_created"
+	}
 	return json.Marshal(map[string]interface{}{
-		"event":        "challenge_created",
+		"event":        event,
 		"username":     d.Username,
 		"hostname":     d.Hostname,
 		"user_code":    d.UserCode,

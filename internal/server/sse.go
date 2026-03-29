@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -11,7 +12,7 @@ import (
 const sseAdminKey = "\x00admin"
 
 func (s *Server) registerSSE(username string) chan string {
-	ch := make(chan string, 16)
+	ch := make(chan string, 64)
 	s.sseMu.Lock()
 	s.sseClients[username] = append(s.sseClients[username], ch)
 	s.sseMu.Unlock()
@@ -41,12 +42,14 @@ func (s *Server) broadcastSSE(username, event string) {
 		select {
 		case ch <- event:
 		default:
+			slog.Debug("SSE: event dropped, channel full", "username", username, "event", event)
 		}
 	}
 	for _, ch := range s.sseClients[sseAdminKey] {
 		select {
 		case ch <- event:
 		default:
+			slog.Debug("SSE: event dropped, admin channel full", "event", event)
 		}
 	}
 }

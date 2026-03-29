@@ -37,6 +37,7 @@ const oidcDiscoveryTimeout = 30 * time.Second
 // and exposes a webhook endpoint for real-time directory invalidation.
 type Server struct {
 	cfg          *config.ServerConfig
+	baseURL      string // cfg.ExternalURL with trailing slashes stripped; precomputed once
 	store        *challenge.ChallengeStore
 	hostRegistry *HostRegistry
 	oidcConfig   oauth2.Config
@@ -71,6 +72,10 @@ type Server struct {
 	// Recently-removed users: excluded from PocketID merge until cleared.
 	removedUsers   map[string]time.Time
 	removedUsersMu sync.Mutex
+
+	// webhookClient is the hardened HTTP client for outbound webhook delivery.
+	// Initialised in NewServer with the configured WebhookTimeout.
+	webhookClient *http.Client
 }
 
 var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
@@ -109,6 +114,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 
 	s := &Server{
 		cfg:           cfg,
+		baseURL:       strings.TrimRight(cfg.ExternalURL, "/"),
 		store:         challenge.NewChallengeStore(cfg.ChallengeTTL, cfg.GracePeriod, cfg.SessionStateFile),
 		hostRegistry:  NewHostRegistry(cfg.HostRegistryFile),
 		oidcConfig:    oidcConfig,
@@ -122,6 +128,13 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		ldapRefreshCh:  make(chan struct{}, 1),
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
 		sudoRules:      store,
+		webhookClient: &http.Client{
+			Timeout:   cfg.WebhookTimeout,
+			Transport: &http.Transport{Proxy: nil},
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 
 	if cfg.EscrowBackend == config.EscrowBackendLocal {
@@ -133,6 +146,10 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 			return nil, fmt.Errorf("deriving escrow encryption key: %w", err)
 		}
 		s.escrowKey = key
+	}
+
+	if cfg.WebhookSecret == "" {
+		slog.Warn("IDENTREE_WEBHOOK_SECRET is not set — incoming PocketID webhooks are unauthenticated; set this in production")
 	}
 
 	s.registerRoutes()
@@ -185,6 +202,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/admin/groups", s.handleAdminGroups)
 	s.mux.HandleFunc("/admin/hosts", s.handleAdminHosts)
 	s.mux.HandleFunc("/api/users/remove", s.handleRemoveUser)
+	s.mux.HandleFunc("/api/admin/groups/claims", s.handleUpdateGroupClaims)
+	s.mux.HandleFunc("/api/admin/users/claims", s.handleUpdateUserClaims)
+	s.mux.HandleFunc("/api/admin/users/claims-json", s.handleGetUserClaims)
+	s.mux.HandleFunc("/api/admin/restart", s.handleAdminRestart)
 
 	// Sudo rules (bridge mode only)
 	s.mux.HandleFunc("/admin/sudo-rules", s.handleAdminSudoRules)

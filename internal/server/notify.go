@@ -17,7 +17,8 @@ import (
 	"github.com/rinseaid/identree/internal/notify"
 )
 
-// notifyTimeout limits how long we wait for the notify command to complete.
+// notifyTimeout is the default timeout for the notify command.
+// Overridden at runtime by s.cfg.NotifyTimeout (IDENTREE_NOTIFY_TIMEOUT).
 const notifyTimeout = 15 * time.Second
 
 // notifyMaxOutput caps the amount of stdout/stderr we read from the notify
@@ -66,7 +67,11 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL string, o
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
+		timeout := s.cfg.NotifyTimeout
+		if timeout <= 0 {
+			timeout = notifyTimeout
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
 		// Note: exec.CommandContext kills the direct child on timeout but not
@@ -172,7 +177,11 @@ func (s *Server) fireWebhook(wh config.WebhookConfig, d notify.WebhookData) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	webhookTimeout := s.cfg.WebhookTimeout
+	if webhookTimeout <= 0 {
+		webhookTimeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), webhookTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, wh.URL, bytes.NewReader(body))
@@ -185,7 +194,7 @@ func (s *Server) fireWebhook(wh config.WebhookConfig, d notify.WebhookData) {
 		req.Header.Set(k, v)
 	}
 
-	resp, err := notify.WebhookClient.Do(req)
+	resp, err := s.webhookClient.Do(req)
 	if err != nil {
 		log.Printf("ERROR: webhook (format=%q) delivery failed: %v", wh.Format, err)
 		return

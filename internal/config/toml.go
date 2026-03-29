@@ -8,7 +8,17 @@ import (
 )
 
 // DefaultTOMLConfigPath is the TOML configuration file written by the admin UI.
+// Override with IDENTREE_TOML_CONFIG_FILE env var (useful in Docker where /etc is not writable).
 const DefaultTOMLConfigPath = "/etc/identree/config.toml"
+
+// TOMLConfigPath returns the active TOML config file path, respecting the
+// IDENTREE_TOML_CONFIG_FILE environment variable override.
+func TOMLConfigPath() string {
+	if v := os.Getenv("IDENTREE_TOML_CONFIG_FILE"); v != "" {
+		return v
+	}
+	return DefaultTOMLConfigPath
+}
 
 // TOMLField describes a single configurable value in the TOML file.
 type TOMLField struct {
@@ -202,19 +212,52 @@ func SaveTOMLConfig(path string, values map[string]string) error {
 				}
 				sb.WriteString("]\n")
 			} else {
-				sb.WriteString(fld.Key + " = " + formatTOMLScalar(val) + "\n")
+				// Only write non-empty scalar values. Empty means "use default";
+				// absent keys load back as "" which is identical to writing `key = ""`.
+				// This prevents stale values (e.g. a previously-set escrow backend)
+				// from persisting in the TOML after the field is cleared in the UI.
+				if val != "" {
+					sb.WriteString(fld.Key + " = " + formatTOMLScalar(val) + "\n")
+				}
 			}
 		}
 		sb.WriteString("\n")
 	}
 
 	// Ensure parent directory exists.
+	dir := "."
 	if slash := strings.LastIndexByte(path, '/'); slash > 0 {
-		if err := os.MkdirAll(path[:slash], 0755); err != nil {
+		dir = path[:slash]
+		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("creating config directory: %w", err)
 		}
 	}
-	return os.WriteFile(path, []byte(sb.String()), 0600)
+	// Write atomically: write to a temp file in the same directory, then
+	// rename into place. This prevents a partial write from leaving a corrupt
+	// config file if the process is killed mid-write.
+	tmp, err := os.CreateTemp(dir, ".identree-config-*.toml")
+	if err != nil {
+		return fmt.Errorf("creating temp config file: %w", err)
+	}
+	tmpName := tmp.Name()
+	if err := func() error {
+		defer tmp.Close()
+		if err := tmp.Chmod(0600); err != nil {
+			return fmt.Errorf("setting temp file permissions: %w", err)
+		}
+		if _, err := tmp.WriteString(sb.String()); err != nil {
+			return fmt.Errorf("writing temp config file: %w", err)
+		}
+		return tmp.Sync()
+	}(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("renaming temp config file: %w", err)
+	}
+	return nil
 }
 
 // formatTOMLScalar formats a scalar value for TOML output.

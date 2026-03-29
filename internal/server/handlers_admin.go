@@ -2,10 +2,14 @@ package server
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -15,6 +19,97 @@ import (
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/pocketid"
 )
+
+var sshKeyClaimPattern = regexp.MustCompile(`^sshPublicKey\d*$`)
+var validAdminIDPattern = regexp.MustCompile(`^[a-fA-F0-9-]{1,128}$`)
+
+// liveUpdateKeys are env keys applied immediately by applyLiveConfigUpdates — no restart needed.
+var liveUpdateKeys = map[string]bool{
+	"IDENTREE_CHALLENGE_TTL":                   true,
+	"IDENTREE_GRACE_PERIOD":                    true,
+	"IDENTREE_ONE_TAP_MAX_AGE":                 true,
+	"IDENTREE_ADMIN_GROUPS":                    true,
+	"IDENTREE_ADMIN_APPROVAL_HOSTS":            true,
+	"IDENTREE_NOTIFY_COMMAND":                  true,
+	"IDENTREE_NOTIFY_USERS_FILE":               true,
+	"IDENTREE_ESCROW_BACKEND":                  true,
+	"IDENTREE_ESCROW_URL":                      true,
+	"IDENTREE_ESCROW_AUTH_ID":                  true,
+	"IDENTREE_ESCROW_PATH":                     true,
+	"IDENTREE_ESCROW_WEB_URL":                  true,
+	"IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE": true,
+	"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS": true,
+	"IDENTREE_CLIENT_TOKEN_CACHE_ENABLED":      true,
+	"IDENTREE_HISTORY_PAGE_SIZE":               true,
+	"IDENTREE_SUDO_NO_AUTHENTICATE":            true,
+}
+
+var configSectionLabels = map[string]string{
+	"oidc":           "OIDC Authentication",
+	"pocketid":       "PocketID API",
+	"server":         "Server",
+	"auth":           "Authentication",
+	"ldap":           "LDAP",
+	"admin":          "Admin Access",
+	"notifications":  "Notifications",
+	"escrow":         "Break-Glass Escrow",
+	"client_defaults": "Client Defaults",
+	"misc":           "Miscellaneous",
+}
+
+// findRestartSections returns display names of sections that have changed values
+// requiring a server restart (i.e. not in liveUpdateKeys).
+func findRestartSections(submitted, current map[string]string) []string {
+	changed := map[string]bool{}
+	for k, v := range submitted {
+		if !config.IsEnvSourced(k) && !liveUpdateKeys[k] && v != current[k] {
+			changed[k] = true
+		}
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var sections []string
+	for _, sec := range config.TOMLSections {
+		for _, fld := range sec.Fields {
+			if changed[fld.EnvKey] && !seen[sec.Name] {
+				seen[sec.Name] = true
+				label := configSectionLabels[sec.Name]
+				if label == "" {
+					label = sec.Name
+				}
+				sections = append(sections, label)
+			}
+		}
+	}
+	return sections
+}
+
+// editableUserClaims are simple string claims identree can write directly on a user.
+// SSH keys are handled separately (multi-value, numbered).
+var editableUserClaims = []string{"loginShell", "homeDirectory"}
+
+func isEditableUserClaim(key string) bool {
+	for _, k := range editableUserClaims {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// editableGroupClaims are the only claim keys identree can write to groups.
+var editableGroupClaims = []string{"sudoCommands", "sudoHosts", "sudoRunAsUser", "sudoRunAsGroup", "sudoOptions", "accessHosts"}
+
+func isEditableGroupClaim(key string) bool {
+	for _, k := range editableGroupClaims {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 
 // deriveEscrowLink returns a web UI link for the stored escrow item based on the
 // configured native backend. Returns "" when no link can be derived.
@@ -104,12 +199,12 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 	username := s.getSessionUser(r)
 	if username == "" {
 		setFlashCookie(w, "expired:")
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 	s.setSessionCookie(w, username, s.getSessionRole(r))
 	if s.getSessionRole(r) != "admin" {
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 
@@ -171,11 +266,11 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 	username := s.getSessionUser(r)
 	if username == "" {
 		setFlashCookie(w, "expired:")
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 	if s.getSessionRole(r) != "admin" {
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 	s.setSessionCookie(w, username, s.getSessionRole(r))
@@ -234,37 +329,50 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Validate.
-		if err := validateConfigValues(values); err != nil {
+		if err := validateConfigValues(values, s.cfg); err != nil {
 			setFlashCookie(w, "config_error:"+err.Error())
-			http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/config", http.StatusSeeOther)
+			http.Redirect(w, r, s.baseURL+"/admin/config", http.StatusSeeOther)
 			return
 		}
 
 		// Write TOML.
-		if err := config.SaveTOMLConfig(config.DefaultTOMLConfigPath, values); err != nil {
+		if err := config.SaveTOMLConfig(config.TOMLConfigPath(), values); err != nil {
 			setFlashCookie(w, "config_error:"+err.Error())
-			http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/config", http.StatusSeeOther)
+			http.Redirect(w, r, s.baseURL+"/admin/config", http.StatusSeeOther)
 			return
 		}
+
+		// Determine restart-required sections before applying live updates.
+		currentValues := configToValues(s.cfg)
+		restartSections := findRestartSections(values, currentValues)
 
 		// Apply live-safe changes.
 		s.applyLiveConfigUpdates(values)
 
-		setFlashCookie(w, "config_saved:")
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/config", http.StatusSeeOther)
+		if len(restartSections) > 0 {
+			setFlashCookie(w, "config_saved_restart:"+strings.Join(restartSections, "|"))
+		} else {
+			setFlashCookie(w, "config_saved:")
+		}
+		http.Redirect(w, r, s.baseURL+"/admin/config", http.StatusSeeOther)
 		return
 	}
 
 	// GET: parse flash messages.
 	var flashes []string
 	var flashErrors []string
+	var restartSections []string
 	if fp := getAndClearFlash(w, r); fp != "" {
 		for _, f := range strings.Split(fp, ",") {
 			parts := strings.SplitN(f, ":", 2)
 			if len(parts) == 2 {
 				switch parts[0] {
 				case "config_saved":
-					flashes = append(flashes, t("config_saved"))
+					flashes = append(flashes, "Configuration saved.")
+				case "config_saved_restart":
+					if parts[1] != "" {
+						restartSections = strings.Split(parts[1], "|")
+					}
 				case "config_error":
 					flashErrors = append(flashErrors, parts[1])
 				}
@@ -295,8 +403,9 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		"Initial":       strings.ToUpper(username[:1]),
 		"Avatar":        getAvatar(r),
 		"Timezone":      adminTZ,
-		"Flashes":       flashes,
-		"FlashErrors":   flashErrors,
+		"Flashes":        flashes,
+		"FlashErrors":    flashErrors,
+		"RestartSections": restartSections,
 		"ActivePage":    "admin",
 		"AdminTab":      "config",
 		"BridgeMode":    s.isBridgeMode(),
@@ -413,7 +522,7 @@ func configSecretStatus(cfg *config.ServerConfig) map[string]bool {
 }
 
 // validateConfigValues validates form-submitted config values.
-func validateConfigValues(values map[string]string) error {
+func validateConfigValues(values map[string]string, cfg *config.ServerConfig) error {
 	for _, key := range []string{
 		"IDENTREE_CHALLENGE_TTL", "IDENTREE_GRACE_PERIOD",
 		"IDENTREE_ONE_TAP_MAX_AGE", "IDENTREE_LDAP_REFRESH_INTERVAL",
@@ -443,9 +552,15 @@ func validateConfigValues(values map[string]string) error {
 	}
 	if v := values["IDENTREE_ESCROW_BACKEND"]; v != "" {
 		switch v {
-		case "1password-connect", "vault", "bitwarden", "infisical":
+		case "local", "1password-connect", "vault", "bitwarden", "infisical":
 		default:
 			return fmt.Errorf("invalid escrow backend: %q", v)
+		}
+		// The local backend requires an encryption key that can only be supplied via
+		// environment variable. Reject here rather than allowing a config that will
+		// crash on the next startup.
+		if v == string(config.EscrowBackendLocal) && cfg.EscrowEncryptionKey == "" {
+			return fmt.Errorf("IDENTREE_ESCROW_BACKEND = \"local\" requires IDENTREE_ESCROW_ENCRYPTION_KEY to be set as an environment variable")
 		}
 	}
 	if v := values["IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"]; v != "" {
@@ -567,13 +682,13 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	username := s.getSessionUser(r)
 	if username == "" {
 		setFlashCookie(w, "expired:")
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 	s.setSessionCookie(w, username, s.getSessionRole(r))
 
 	if s.getSessionRole(r) != "admin" {
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 
@@ -639,12 +754,37 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	type userView struct {
 		Username       string
+		UserID         string // PocketID user ID, used for SSH key editing
 		ActiveSessions int
 		LastActive     string
 		LastActiveAgo  string
 		LastActiveTime time.Time
 		Groups         []pocketid.GroupInfo
 		Sessions       []userSessionView
+		SSHKeys        []string         // editable sshPublicKey* values
+		LoginShell     string           // editable loginShell claim
+		HomeDirectory  string           // editable homeDirectory claim
+		OtherClaims    []pocketid.Claim // read-only: non-SSH, non-POSIX user claims
+	}
+
+	// Build username→PocketID-user map for ID lookup and claims pre-population.
+	type pidUserInfo struct {
+		ID     string
+		Claims []pocketid.Claim
+	}
+	var pidUsers map[string]pidUserInfo
+	if s.pocketIDClient != nil {
+		// Use AllAdminUsers (not the cached variant) so the admin UI always
+		// shows the live state from PocketID, not a potentially stale snapshot.
+		adminUsers, err := s.pocketIDClient.AllAdminUsers()
+		if err != nil {
+			log.Printf("WARNING: fetching admin users for claims: %v", err)
+		} else {
+			pidUsers = make(map[string]pidUserInfo, len(adminUsers))
+			for _, au := range adminUsers {
+				pidUsers[au.Username] = pidUserInfo{ID: au.ID, Claims: au.CustomClaims}
+			}
+		}
 	}
 
 	adminTZ := "UTC"
@@ -694,6 +834,21 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			LastActiveTime: lastActiveTime,
 			Sessions:       sessionViews,
 		}
+		if pi, ok := pidUsers[u]; ok {
+			uv.UserID = pi.ID
+			for _, cl := range pi.Claims {
+				switch {
+				case sshKeyClaimPattern.MatchString(cl.Key):
+					uv.SSHKeys = append(uv.SSHKeys, cl.Value)
+				case cl.Key == "loginShell":
+					uv.LoginShell = cl.Value
+				case cl.Key == "homeDirectory":
+					uv.HomeDirectory = cl.Value
+				default:
+					uv.OtherClaims = append(uv.OtherClaims, cl)
+				}
+			}
+		}
 		// Filter to only sudo-relevant groups (those with sudoCommands claim)
 		var sudoGroups []pocketid.GroupInfo
 		for _, g := range userPerms[u] {
@@ -737,25 +892,26 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := adminTmpl.Execute(w, map[string]interface{}{
-		"Username":   username,
-		"Initial":    strings.ToUpper(username[:1]),
-		"Avatar":     getAvatar(r),
-		"Timezone":   adminTZ,
-		"Flashes":    flashes,
-		"ActivePage": "admin",
-		"AdminTab":   "users",
-		"BridgeMode": s.isBridgeMode(),
-		"Theme":      getTheme(r),
-		"CSPNonce":   cspNonce(r),
-		"T":          T(lang),
-		"Lang":       lang,
-		"Languages":  supportedLanguages,
-		"IsAdmin":    true,
-		"Users":      userViews,
-		"UserSort":   userSortBy,
-		"UserDir":    userSortDir,
-		"CSRFToken":  csrfToken,
-		"CSRFTs":     csrfTs,
+		"Username":      username,
+		"Initial":       strings.ToUpper(username[:1]),
+		"Avatar":        getAvatar(r),
+		"Timezone":      adminTZ,
+		"Flashes":       flashes,
+		"ActivePage":    "admin",
+		"AdminTab":      "users",
+		"BridgeMode":    s.isBridgeMode(),
+		"Theme":         getTheme(r),
+		"CSPNonce":      cspNonce(r),
+		"T":             T(lang),
+		"Lang":          lang,
+		"Languages":     supportedLanguages,
+		"IsAdmin":       true,
+		"Users":         userViews,
+		"UserSort":      userSortBy,
+		"UserDir":       userSortDir,
+		"CSRFToken":     csrfToken,
+		"CSRFTs":        csrfTs,
+		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
 	}
@@ -777,7 +933,7 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 	username := s.getSessionUser(r)
 	if username == "" {
 		setFlashCookie(w, "expired:")
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 	s.setSessionCookie(w, username, s.getSessionRole(r))
@@ -786,20 +942,25 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.isBridgeMode() {
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/sudo-rules", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
 		return
 	}
 
 	type groupView struct {
-		Name         string
-		SudoCommands string
-		SudoHosts    string
-		SudoRunAs    string
-		Members      []string
-		AllCmds      bool
-		AllHosts     bool
-		CmdList      []string
-		HostList     []string
+		GroupID        string
+		Name           string
+		SudoCommands   string
+		SudoHosts      string
+		SudoRunAs      string
+		SudoRunAsGroup string
+		SudoOptions    string
+		AccessHosts    string
+		OtherClaims    []pocketid.Claim // read-only: claims not managed by identree
+		Members        []string
+		AllCmds        bool
+		AllHosts       bool
+		CmdList        []string
+		HostList       []string
 	}
 
 	allGroups, err := s.pocketIDClient.GetGroups()
@@ -815,15 +976,25 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		cmds := claims["sudoCommands"]
 		hosts := claims["sudoHosts"]
-		// Only include groups with sudo claims
-		if cmds == "" && hosts == "" {
+		accessHosts := claims["accessHosts"]
+		// Only include groups with identree-managed claims
+		if cmds == "" && hosts == "" && accessHosts == "" {
 			continue
 		}
 		gv := groupView{
-			Name:         g.Name,
-			SudoCommands: cmds,
-			SudoHosts:    hosts,
-			SudoRunAs:    claims["sudoRunAsUser"],
+			GroupID:        g.ID,
+			Name:           g.Name,
+			SudoCommands:   cmds,
+			SudoHosts:      hosts,
+			SudoRunAs:      claims["sudoRunAsUser"],
+			SudoRunAsGroup: claims["sudoRunAsGroup"],
+			SudoOptions:    claims["sudoOptions"],
+			AccessHosts:    accessHosts,
+		}
+		for _, cl := range g.CustomClaims {
+			if !isEditableGroupClaim(cl.Key) {
+				gv.OtherClaims = append(gv.OtherClaims, cl)
+			}
 		}
 		gv.AllCmds = cmds == "ALL"
 		gv.AllHosts = hosts == "" || hosts == "ALL"
@@ -905,25 +1076,26 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := adminTmpl.Execute(w, map[string]interface{}{
-		"Username":   username,
-		"Initial":    strings.ToUpper(username[:1]),
-		"Avatar":     getAvatar(r),
-		"Timezone":   adminTZ,
-		"AdminTab":   "groups",
-		"BridgeMode": s.isBridgeMode(),
-		"Groups":     groups,
-		"GroupSort":  sortBy,
-		"GroupDir":   sortDir,
-		"Flashes":    []string{},
-		"CSRFToken":  csrfToken,
-		"CSRFTs":     csrfTs,
-		"ActivePage": "admin",
-		"Theme":      getTheme(r),
-		"CSPNonce":   cspNonce(r),
-		"T":          t,
-		"Lang":       lang,
-		"Languages":  supportedLanguages,
-		"IsAdmin":    true,
+		"Username":      username,
+		"Initial":       strings.ToUpper(username[:1]),
+		"Avatar":        getAvatar(r),
+		"Timezone":      adminTZ,
+		"AdminTab":      "groups",
+		"BridgeMode":    s.isBridgeMode(),
+		"Groups":        groups,
+		"GroupSort":     sortBy,
+		"GroupDir":      sortDir,
+		"Flashes":       []string{},
+		"CSRFToken":     csrfToken,
+		"CSRFTs":        csrfTs,
+		"ActivePage":    "admin",
+		"Theme":         getTheme(r),
+		"CSPNonce":      cspNonce(r),
+		"T":             t,
+		"Lang":          lang,
+		"Languages":     supportedLanguages,
+		"IsAdmin":       true,
+		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
 	}
@@ -947,13 +1119,13 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	username := s.getSessionUser(r)
 	if username == "" {
 		setFlashCookie(w, "expired:")
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 	s.setSessionCookie(w, username, s.getSessionRole(r))
 
 	if s.getSessionRole(r) != "admin" {
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 
@@ -1308,7 +1480,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"GroupFilter":      groupFilter,
 		"HostSort":         hostSortBy,
 		"HostDir":          hostSortDir,
-		"InstallURL":       strings.TrimRight(s.cfg.ExternalURL, "/") + "/install.sh",
+		"InstallURL":       s.baseURL + "/install.sh",
 		"DeployEnabled":    true,
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
@@ -1352,5 +1524,225 @@ func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 	log.Printf("USER_REMOVED: admin %q removed user %q from %s", adminUser, targetUser, remoteAddr(r))
 
 	setFlashCookie(w, "removed_user:"+targetUser)
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/users", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/admin/users", http.StatusSeeOther)
+}
+
+// handleUpdateGroupClaims handles POST /api/admin/groups/claims.
+// It updates the editable identree-managed claims for a Pocket ID group, preserving
+// any other claims on that group that identree does not manage.
+func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	adminUser := s.verifyFormAuth(w, r)
+	if adminUser == "" {
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
+		return
+	}
+	if s.pocketIDClient == nil {
+		http.Error(w, "pocketid not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	groupID := r.FormValue("group_id")
+	if !validAdminIDPattern.MatchString(groupID) {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
+		return
+	}
+
+	// Read current group to preserve non-editable claims.
+	current, err := s.pocketIDClient.GetAdminGroupByID(groupID)
+	if err != nil {
+		log.Printf("ERROR: get group %s for claims update: %v", groupID, err)
+		http.Error(w, "failed to fetch group", http.StatusInternalServerError)
+		return
+	}
+
+	// Start with claims identree does not manage (preserve them).
+	var claims []pocketid.Claim
+	for _, cl := range current.CustomClaims {
+		if !isEditableGroupClaim(cl.Key) {
+			claims = append(claims, cl)
+		}
+	}
+
+	// Add non-empty form values for managed keys.
+	for _, k := range editableGroupClaims {
+		v := strings.TrimSpace(r.FormValue(k))
+		if v != "" {
+			claims = append(claims, pocketid.Claim{Key: k, Value: v})
+		}
+	}
+
+	if err := s.pocketIDClient.PutGroupClaims(groupID, claims); err != nil {
+		log.Printf("ERROR: put group claims %s: %v", groupID, err)
+		http.Error(w, "failed to update claims", http.StatusInternalServerError)
+		return
+	}
+
+	s.pocketIDClient.InvalidateCache()
+	log.Printf("CLAIMS_UPDATED: admin %q updated group claims for group ID %s from %s", adminUser, groupID, remoteAddr(r))
+	if r.Header.Get("Accept") == "application/json" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true}`))
+		return
+	}
+	http.Redirect(w, r, s.baseURL+"/admin/groups", http.StatusSeeOther)
+}
+
+// handleUpdateUserClaims handles POST /api/admin/users/claims.
+// It updates the sshPublicKey* claims for a Pocket ID user, preserving all other claims.
+func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	adminUser := s.verifyFormAuth(w, r)
+	if adminUser == "" {
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
+		return
+	}
+	if s.pocketIDClient == nil {
+		http.Error(w, "pocketid not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	userID := r.FormValue("user_id")
+	if !validAdminIDPattern.MatchString(userID) {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
+		return
+	}
+
+	// Read current user to preserve non-SSH claims.
+	current, err := s.pocketIDClient.GetAdminUserByID(userID)
+	if err != nil {
+		log.Printf("ERROR: get user %s for claims update: %v", userID, err)
+		http.Error(w, "failed to fetch user", http.StatusInternalServerError)
+		return
+	}
+
+	// Start with non-SSH claims (preserve them).
+	// Start with claims identree does not manage (preserve them).
+	var claims []pocketid.Claim
+	for _, cl := range current.CustomClaims {
+		if !sshKeyClaimPattern.MatchString(cl.Key) && !isEditableUserClaim(cl.Key) {
+			claims = append(claims, cl)
+		}
+	}
+
+	// Add simple POSIX claims from form (empty value = omit/delete the claim).
+	for _, k := range editableUserClaims {
+		if v := strings.TrimSpace(r.FormValue(k)); v != "" {
+			claims = append(claims, pocketid.Claim{Key: k, Value: v})
+		}
+	}
+
+	// Add SSH keys from form (ssh_keys[] repeated field); number them sequentially.
+	if err := r.ParseForm(); err == nil {
+		keyIdx := 0
+		for _, k := range r.Form["ssh_keys"] {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			keyName := "sshPublicKey"
+			if keyIdx > 0 {
+				keyName = fmt.Sprintf("sshPublicKey%d", keyIdx)
+			}
+			claims = append(claims, pocketid.Claim{Key: keyName, Value: k})
+			keyIdx++
+		}
+	}
+
+	if err := s.pocketIDClient.PutUserClaims(userID, claims); err != nil {
+		log.Printf("ERROR: put user claims %s: %v", userID, err)
+		http.Error(w, "failed to update claims", http.StatusInternalServerError)
+		return
+	}
+
+	s.pocketIDClient.InvalidateCache()
+	log.Printf("CLAIMS_UPDATED: admin %q updated claims for user ID %s from %s", adminUser, userID, remoteAddr(r))
+	if r.Header.Get("Accept") == "application/json" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true}`))
+		return
+	}
+	http.Redirect(w, r, s.baseURL+"/admin/users", http.StatusSeeOther)
+}
+
+// handleGetUserClaims handles GET /api/admin/users/claims?user_id=...
+// Returns JSON with the user's current SSH keys and read-only claims for the UI to render.
+func (s *Server) handleGetUserClaims(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if s.pocketIDClient == nil {
+		http.Error(w, "pocketid not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	userID := r.URL.Query().Get("user_id")
+	if !validAdminIDPattern.MatchString(userID) {
+		http.Error(w, "invalid user_id", http.StatusBadRequest)
+		return
+	}
+
+	user, err := s.pocketIDClient.GetAdminUserByID(userID)
+	if err != nil {
+		log.Printf("ERROR: get user claims %s: %v", userID, err)
+		http.Error(w, "failed to fetch user", http.StatusInternalServerError)
+		return
+	}
+
+	type claimsResponse struct {
+		SSHKeys     []string         `json:"ssh_keys"`
+		OtherClaims []pocketid.Claim `json:"other_claims"`
+	}
+	resp := claimsResponse{}
+	for _, cl := range user.CustomClaims {
+		if sshKeyClaimPattern.MatchString(cl.Key) {
+			resp.SSHKeys = append(resp.SSHKeys, cl.Value)
+		} else {
+			resp.OtherClaims = append(resp.OtherClaims, cl)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleAdminRestart exits the process so the container/process supervisor can restart it,
+// reloading configuration from disk.
+// POST /api/admin/restart
+func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username := s.verifyFormAuth(w, r)
+	if username == "" {
+		return
+	}
+	if s.getSessionRole(r) != "admin" {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	slog.Info("server restart requested via admin UI", "user", username)
+	w.WriteHeader(http.StatusNoContent)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		os.Exit(0)
+	}()
 }

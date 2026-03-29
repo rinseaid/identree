@@ -46,36 +46,36 @@ _dl() {
             python3 -c "
 import urllib.request, sys
 try:
-    urllib.request.urlretrieve('$url', '$dest')
+    urllib.request.urlretrieve(sys.argv[1], sys.argv[2])
 except Exception as e:
     sys.stderr.write('Error: ' + str(e) + '\n'); sys.exit(1)
-"
+" -- "$url" "$dest"
         else
             python3 -c "
 import urllib.request, sys
 try:
-    sys.stdout.buffer.write(urllib.request.urlopen('$url').read())
+    sys.stdout.buffer.write(urllib.request.urlopen(sys.argv[1]).read())
 except Exception as e:
     sys.stderr.write('Error: ' + str(e) + '\n'); sys.exit(1)
-"
+" -- "$url"
         fi
     elif command -v python >/dev/null 2>&1; then
         if [ -n "$dest" ]; then
             python -c "
 import urllib2, sys
 try:
-    open('$dest','wb').write(urllib2.urlopen('$url').read())
+    open(sys.argv[2],'wb').write(urllib2.urlopen(sys.argv[1]).read())
 except Exception as e:
     sys.stderr.write('Error: ' + str(e) + '\n'); sys.exit(1)
-"
+" -- "$url" "$dest"
         else
             python -c "
 import urllib2, sys
 try:
-    sys.stdout.write(urllib2.urlopen('$url').read())
+    sys.stdout.write(urllib2.urlopen(sys.argv[1]).read())
 except Exception as e:
     sys.stderr.write('Error: ' + str(e) + '\n'); sys.exit(1)
-"
+" -- "$url"
         fi
     else
         echo "Error: no download tool found (tried curl, wget, python3, python) — install one and retry" >&2
@@ -353,7 +353,7 @@ func (s *Server) installServerURL() string {
 	if s.cfg.InstallURL != "" {
 		return strings.TrimRight(s.cfg.InstallURL, "/")
 	}
-	return strings.TrimRight(s.cfg.ExternalURL, "/")
+	return s.baseURL
 }
 
 // renderInstallScript returns the rendered install script as bytes.

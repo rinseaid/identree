@@ -302,4 +302,6 @@
   "remove_warning": "Dadurch wird identree vom Host entfernt. Mit SSH-Zugang wird PAM dekonfiguriert und der Client optional entfernt. Andernfalls werden nur die serverseitigen Einträge gelöscht.",
   "no_members": "Keine Mitglieder",
   "uninstall_script": "Deinstallationsskript"
+,
+  "skip_to_content": "Zum Inhalt springen"
 }

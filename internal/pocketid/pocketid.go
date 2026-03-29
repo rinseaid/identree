@@ -1,6 +1,7 @@
 package pocketid
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,10 @@ type PocketIDClient struct {
 	cacheExpiry time.Time
 	cacheTTL    time.Duration
 	fetchMu     sync.Mutex // separate from cache mu; serializes fetches
+
+	adminUsersMu    sync.Mutex
+	cachedAdminUsers    []PocketIDAdminUser
+	cachedAdminUsersExp time.Time
 }
 
 type pocketIDData struct {
@@ -48,6 +53,9 @@ type pocketIDClaim struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
+
+// Claim is an exported key-value custom claim pair.
+type Claim = pocketIDClaim
 
 type pocketIDUser struct {
 	ID       string `json:"id"`
@@ -324,22 +332,22 @@ func (c *PocketIDClient) apiGet(url string) ([]byte, error) {
 
 // PocketIDAdminUser is a user from the admin API (richer than the regular API).
 type PocketIDAdminUser struct {
-	ID           string          `json:"id"`
-	Username     string          `json:"username"`
-	Email        string          `json:"email"`
-	FirstName    string          `json:"firstName"`
-	LastName     string          `json:"lastName"`
-	IsAdmin      bool            `json:"isAdmin"`
-	CustomClaims []pocketIDClaim `json:"customClaims"`
-	Disabled     bool            `json:"disabled"`
+	ID           string  `json:"id"`
+	Username     string  `json:"username"`
+	Email        string  `json:"email"`
+	FirstName    string  `json:"firstName"`
+	LastName     string  `json:"lastName"`
+	IsAdmin      bool    `json:"isAdmin"`
+	CustomClaims []Claim `json:"customClaims"`
+	Disabled     bool    `json:"disabled"`
 }
 
 // PocketIDAdminGroup is a group from the admin API.
 type PocketIDAdminGroup struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	FriendlyName string          `json:"friendlyName"`
-	CustomClaims []pocketIDClaim `json:"customClaims"`
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	FriendlyName string  `json:"friendlyName"`
+	CustomClaims []Claim `json:"customClaims"`
 	Members      []struct {
 		ID string `json:"id"`
 	} `json:"members"`
@@ -505,4 +513,161 @@ func (c *PocketIDClient) FetchDirectory() (*UserDirectory, error) {
 		return nil, fmt.Errorf("pocketid: fetch groups: %w", err)
 	}
 	return NewUserDirectory(users, groups), nil
+}
+
+// ── Claims write API ─────────────────────────────────────────────────────────
+
+// CachedAdminUsers returns all admin users, served from a 5-minute cache.
+func (c *PocketIDClient) CachedAdminUsers() ([]PocketIDAdminUser, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.adminUsersMu.Lock()
+	defer c.adminUsersMu.Unlock()
+	if c.cachedAdminUsers != nil && time.Now().Before(c.cachedAdminUsersExp) {
+		return c.cachedAdminUsers, nil
+	}
+	users, err := c.AllAdminUsers()
+	if err != nil {
+		return nil, err
+	}
+	c.cachedAdminUsers = users
+	c.cachedAdminUsersExp = time.Now().Add(c.cacheTTL)
+	return users, nil
+}
+
+// GetUserIDs returns a username→PocketID-ID map built from cached group member data.
+// Only users who are members of at least one group are included.
+func (c *PocketIDClient) GetUserIDs() (map[string]string, error) {
+	if c == nil {
+		return nil, nil
+	}
+	groups, err := c.GetGroups()
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]string)
+	for _, g := range groups {
+		for _, u := range g.Users {
+			if u.Username != "" && u.ID != "" {
+				m[u.Username] = u.ID
+			}
+		}
+	}
+	return m, nil
+}
+
+// GetAdminUserByID fetches a single user by ID from the Pocket ID admin API.
+func (c *PocketIDClient) GetAdminUserByID(userID string) (*PocketIDAdminUser, error) {
+	if c == nil {
+		return nil, fmt.Errorf("pocketid client not configured")
+	}
+	if !validAdminIDPattern.MatchString(userID) {
+		return nil, fmt.Errorf("invalid user ID format")
+	}
+	url := fmt.Sprintf("%s/api/users/%s", c.baseURL, userID)
+	body, err := c.apiGet(url)
+	if err != nil {
+		return nil, err
+	}
+	var u PocketIDAdminUser
+	if err := json.Unmarshal(body, &u); err != nil {
+		return nil, fmt.Errorf("parse user: %w", err)
+	}
+	return &u, nil
+}
+
+// GetAdminGroupByID fetches a single group by ID from the Pocket ID admin API.
+func (c *PocketIDClient) GetAdminGroupByID(groupID string) (*PocketIDAdminGroup, error) {
+	if c == nil {
+		return nil, fmt.Errorf("pocketid client not configured")
+	}
+	if !validAdminIDPattern.MatchString(groupID) {
+		return nil, fmt.Errorf("invalid group ID format")
+	}
+	url := fmt.Sprintf("%s/api/user-groups/%s", c.baseURL, groupID)
+	body, err := c.apiGet(url)
+	if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		ID           string  `json:"id"`
+		Name         string  `json:"name"`
+		FriendlyName string  `json:"friendlyName"`
+		CustomClaims []Claim `json:"customClaims"`
+		Users        []struct {
+			ID string `json:"id"`
+		} `json:"users"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("parse group: %w", err)
+	}
+	return &PocketIDAdminGroup{
+		ID:           raw.ID,
+		Name:         raw.Name,
+		FriendlyName: raw.FriendlyName,
+		CustomClaims: raw.CustomClaims,
+		Members:      raw.Users,
+	}, nil
+}
+
+// apiPut sends a PUT request with a JSON body to the Pocket ID API.
+func (c *PocketIDClient) apiPut(urlStr string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPut, urlStr, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-API-KEY", c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// PutUserClaims replaces all custom claims for a user via PUT /api/custom-claims/user/{id}.
+func (c *PocketIDClient) PutUserClaims(userID string, claims []Claim) error {
+	if c == nil {
+		return fmt.Errorf("pocketid client not configured")
+	}
+	if !validAdminIDPattern.MatchString(userID) {
+		return fmt.Errorf("invalid user ID format")
+	}
+	url := fmt.Sprintf("%s/api/custom-claims/user/%s", c.baseURL, userID)
+	return c.apiPut(url, claims)
+}
+
+// PutGroupClaims replaces all custom claims for a group via PUT /api/custom-claims/user-group/{id}.
+func (c *PocketIDClient) PutGroupClaims(groupID string, claims []Claim) error {
+	if c == nil {
+		return fmt.Errorf("pocketid client not configured")
+	}
+	if !validAdminIDPattern.MatchString(groupID) {
+		return fmt.Errorf("invalid group ID format")
+	}
+	url := fmt.Sprintf("%s/api/custom-claims/user-group/%s", c.baseURL, groupID)
+	return c.apiPut(url, claims)
+}
+
+// InvalidateCache clears all cached data so the next request fetches fresh data.
+func (c *PocketIDClient) InvalidateCache() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.cachedData = nil
+	c.mu.Unlock()
+	c.adminUsersMu.Lock()
+	c.cachedAdminUsers = nil
+	c.adminUsersMu.Unlock()
 }

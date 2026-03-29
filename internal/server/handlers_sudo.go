@@ -23,7 +23,7 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.isBridgeMode() {
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/users", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/admin/users", http.StatusSeeOther)
 		return
 	}
 
@@ -36,12 +36,12 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 	username := s.getSessionUser(r)
 	if username == "" {
 		setFlashCookie(w, "expired:")
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 	s.setSessionCookie(w, username, s.getSessionRole(r))
 	if s.getSessionRole(r) != "admin" {
-		http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/", http.StatusSeeOther)
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
 
@@ -144,7 +144,7 @@ func (s *Server) handleSudoRuleAdd(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("SUDO_RULE_ADDED: admin %q added rule for group %q from %s", adminUser, rule.Group, remoteAddr(r))
 	setFlashCookie(w, "sudo_added:"+rule.Group)
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/sudo-rules", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
 }
 
 // handleSudoRuleUpdate updates an existing sudo rule.
@@ -192,7 +192,7 @@ func (s *Server) handleSudoRuleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("SUDO_RULE_UPDATED: admin %q updated rule for group %q from %s", adminUser, rule.Group, remoteAddr(r))
 	setFlashCookie(w, "sudo_updated:"+rule.Group)
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/sudo-rules", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
 }
 
 // handleSudoRuleDelete deletes a sudo rule.
@@ -232,5 +232,5 @@ func (s *Server) handleSudoRuleDelete(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("SUDO_RULE_DELETED: admin %q deleted rule for group %q from %s", adminUser, group, remoteAddr(r))
 	setFlashCookie(w, "sudo_deleted:"+group)
-	http.Redirect(w, r, strings.TrimRight(s.cfg.ExternalURL, "/")+"/admin/sudo-rules", http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
 }

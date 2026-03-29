@@ -302,4 +302,6 @@
   "remove_warning": "호스트에서 identree를 제거합니다. SSH 접근이 제공된 경우 PAM이 해제되고 클라이언트가 선택적으로 제거됩니다. 그렇지 않으면 서버 측 기록만 삭제됩니다.",
   "no_members": "멤버 없음",
   "uninstall_script": "제거 스크립트"
+,
+  "skip_to_content": "본문으로 건너뛰기"
 }

@@ -370,4 +370,6 @@
   "cfg_webhook_secret": "Webhook Secret",
   "cfg_dev_login": "Dev Login",
   "n_keys": "%d keys"
+,
+  "skip_to_content": "Skip to content"
 }

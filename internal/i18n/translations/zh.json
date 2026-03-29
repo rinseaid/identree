@@ -302,4 +302,6 @@
   "remove_warning": "这将从主机中移除 identree。如果提供 SSH 访问，将取消 PAM 配置并可选地移除客户端。否则仅清除服务端记录。",
   "no_members": "暂无成员",
   "uninstall_script": "卸载脚本"
+,
+  "skip_to_content": "跳转到内容"
 }
