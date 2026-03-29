@@ -674,7 +674,138 @@ const sharedCSS = `
       .sessions-table, .hosts-table, .gtable { overflow-x: auto; }
       .modal-box { padding: 18px 14px; max-width: calc(100vw - 24px); }
     }
+    /* Pending approval bar — fixed top strip */
+    .pending-bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+      min-height: 44px; display: flex; align-items: center; gap: 12px;
+      padding: 0 20px; background: var(--warning-bg);
+      border-bottom: 1.5px solid var(--warning-border);
+      font-size: 0.875rem;
+    }
+    .pbar-icon { color: var(--warning); font-size: 1.0625rem; flex-shrink: 0; line-height: 1; }
+    .pbar-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .pbar-host { font-weight: 700; }
+    .pbar-sep { color: var(--text-3); margin: 0 5px; }
+    .pbar-code { font-family: monospace; font-size: 0.8125rem; color: var(--text-2); }
+    .pbar-exp { font-size: 0.8125rem; color: var(--text-2); }
+    .pbar-actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+    .pbar-actions form { display: contents; }
+    /* Push sidebar + main down when bar is visible */
+    .has-pending .sidebar { padding-top: 44px; }
+    .has-pending .main { padding-top: 74px; } /* 30px base + 44px bar */
+    @media (max-width: 768px) {
+      body.has-pending { padding-top: 44px; }
+    }
+    /* Pending approvals modal */
+    .pending-modal-box { max-width: 700px; }
+    .pending-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+    .pending-table-header { display: grid; grid-template-columns: 1.6fr 1fr 0.7fr auto; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .pending-table-row { display: grid; grid-template-columns: 1.6fr 1fr 0.7fr auto; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .pending-table--admin .pending-table-header,
+    .pending-table--admin .pending-table-row { grid-template-columns: 0.7fr 1.4fr 1fr 0.7fr auto; }
+    .pending-table-row:last-child { border-bottom: none; }
+    .pending-table-row:hover { background: var(--surface-2); }
+    .pending-table-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    .pending-table-actions form { display: contents; }
 `
+
+// pendingBarHTML is the pending-approval notification bar embedded in every
+// app-layout template. It renders a slim fixed banner when the user has
+// pending sudo challenges: inline approve/reject for a single challenge,
+// or a "Review" button opening a modal table for multiple.
+const pendingBarHTML = `{{if .Pending}}
+<div class="pending-bar">
+  <span class="pbar-icon">&#x26A0;</span>
+  {{if eq (len .Pending) 1}}{{with index .Pending 0}}
+  <span class="pbar-main">
+    {{if $.IsAdmin}}<strong class="pbar-host">{{.Username}}</strong><span class="pbar-sep">@</span>{{end}}<strong class="pbar-host">{{.Hostname}}</strong><span class="pbar-sep">·</span><span class="pbar-code">{{.Code}}</span><span class="pbar-sep">·</span><span class="pbar-exp">{{call $.T "expires_in"}} {{.ExpiresIn}}</span>
+  </span>
+  <div class="pbar-actions">
+    {{if or (not .AdminRequired) $.IsAdmin}}
+    <form method="POST" action="/api/challenges/approve">
+      <input type="hidden" name="challenge_id" value="{{.ID}}">
+      <input type="hidden" name="username" value="{{$.Username}}">
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+      <button type="submit" class="btn btn-success btn-sm">{{call $.T "approve"}}</button>
+    </form>
+    {{end}}
+    <form method="POST" action="/api/challenges/reject">
+      <input type="hidden" name="challenge_id" value="{{.ID}}">
+      <input type="hidden" name="username" value="{{$.Username}}">
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+      <button type="submit" class="btn btn-ghost btn-danger btn-sm">{{call $.T "reject"}}</button>
+    </form>
+  </div>
+  {{end}}{{else}}
+  <span class="pbar-main"><strong>{{len .Pending}}</strong> {{call .T "pending_requests"}}</span>
+  <div class="pbar-actions">
+    <button type="button" class="btn btn-sm btn-primary" onclick="document.getElementById('pending-modal').classList.add('open')">{{call .T "view"}} &rsaquo;</button>
+  </div>
+  {{end}}
+</div>
+{{if gt (len .Pending) 1}}
+<div class="modal-overlay" id="pending-modal" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal-box pending-modal-box">
+    <h3>{{call .T "pending_requests"}}</h3>
+    <div class="pending-table{{if .IsAdmin}} pending-table--admin{{end}}">
+      <div class="pending-table-header">
+        {{if .IsAdmin}}<div class="gtcol"><span class="col-sort-link">{{call .T "user"}}</span></div>{{end}}
+        <div class="gtcol"><span class="col-sort-link">{{call .T "host"}}</span></div>
+        <div class="gtcol"><span class="col-sort-link">{{call .T "code"}}</span></div>
+        <div class="gtcol"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
+        <div class="gtcol"><span class="col-sort-link">{{call .T "action"}}</span></div>
+      </div>
+      {{range .Pending}}
+      <div class="pending-table-row">
+        {{if $.IsAdmin}}<div class="gtcol"><span class="pill user">{{.Username}}</span></div>{{end}}
+        <div class="gtcol"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}</div>
+        <div class="gtcol"><span class="row-code" style="display:inline">{{.Code}}</span></div>
+        <div class="gtcol"><span style="font-size:0.8125rem;color:var(--text-2)">{{.ExpiresIn}}</span></div>
+        <div class="gtcol pending-table-actions">
+          {{if or (not .AdminRequired) $.IsAdmin}}
+          <form method="POST" action="/api/challenges/approve">
+            <input type="hidden" name="challenge_id" value="{{.ID}}">
+            <input type="hidden" name="username" value="{{$.Username}}">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+            <button type="submit" class="btn btn-success btn-sm">{{call $.T "approve"}}</button>
+          </form>
+          {{end}}
+          <form method="POST" action="/api/challenges/reject">
+            <input type="hidden" name="challenge_id" value="{{.ID}}">
+            <input type="hidden" name="username" value="{{$.Username}}">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+            <button type="submit" class="btn btn-ghost btn-danger btn-sm">{{call $.T "reject"}}</button>
+          </form>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    <div class="modal-actions">
+      <form method="POST" action="/api/challenges/approve-all" style="display:inline">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+        <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('{{call .T "confirm_approve_all"}}')">{{call .T "approve_all"}}</button>
+      </form>
+      <form method="POST" action="/api/challenges/reject-all" style="display:inline">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+        <button type="submit" class="btn btn-ghost btn-danger btn-sm" onclick="return confirm('{{call .T "confirm_reject_all"}}')">{{call .T "reject_all"}}</button>
+      </form>
+      <button type="button" class="btn" onclick="document.getElementById('pending-modal').classList.remove('open')">{{call .T "close"}}</button>
+    </div>
+  </div>
+</div>
+<script nonce="{{.CSPNonce}}">
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('pending-modal');if(m)m.classList.remove('open');}});
+</script>
+{{end}}
+{{end}}`
 
 // formatTime formats a time as "2006-01-02 15:04 UTC".
 func formatTime(t time.Time) string {
@@ -871,8 +1002,8 @@ const dashboardHTML = `<!DOCTYPE html>
   es.onerror = function() { setTimeout(function() { if (es.readyState === 2) location.reload(); }, 60000); };
   </script>
 </head>
-<body class="app">
-  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>
+<body class="app{{if .Pending}} has-pending{{end}}">
+  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
   <nav class="sidebar" aria-label="Main navigation">
     <div class="sidebar-brand">
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>
@@ -907,62 +1038,6 @@ const dashboardHTML = `<!DOCTYPE html>
     <h1 class="sr-only">{{call .T "sessions"}} - {{call .T "app_name"}}</h1>
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
-    {{if .Pending}}
-    <div class="slabel warn">{{call .T "pending_requests"}}</div>
-    <div class="list" role="list" aria-label="{{call .T "pending_requests"}}">
-      {{range .Pending}}
-      <div class="row" role="listitem">
-        <div class="row-info">
-          <span class="row-host">{{.Hostname}}</span>
-          {{if $.IsAdmin}}<span class="row-sub" style="color:var(--primary)">{{.Username}}</span>{{end}}
-          {{if .AdminRequired}}<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}
-          <span class="row-code">{{.Code}}</span>
-          <span class="row-sub">{{call $.T "expires_in"}} {{.ExpiresIn}}</span>
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          {{if not .AdminRequired}}
-          <form method="POST" action="/api/challenges/approve">
-            <input type="hidden" name="challenge_id" value="{{.ID}}">
-            <input type="hidden" name="username" value="{{$.Username}}">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-            <button type="submit" class="btn btn-success btn-sm" aria-label="{{call $.T "approve"}} {{.Hostname}}">{{call $.T "approve"}}</button>
-          </form>
-          {{else if $.IsAdmin}}
-          <form method="POST" action="/api/challenges/approve">
-            <input type="hidden" name="challenge_id" value="{{.ID}}">
-            <input type="hidden" name="username" value="{{$.Username}}">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-            <button type="submit" class="btn btn-success btn-sm" aria-label="{{call $.T "approve"}} {{.Hostname}}">{{call $.T "approve"}}</button>
-          </form>
-          {{end}}
-          <form method="POST" action="/api/challenges/reject">
-            <input type="hidden" name="challenge_id" value="{{.ID}}">
-            <input type="hidden" name="username" value="{{$.Username}}">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-            <button type="submit" class="btn btn-danger btn-sm" aria-label="{{call $.T "reject"}} {{.Hostname}}">{{call $.T "reject"}}</button>
-          </form>
-        </div>
-      </div>
-      {{end}}
-    </div>
-    <div class="bulk-row">
-      <form method="POST" action="/api/challenges/approve-all" style="display:inline">
-        <input type="hidden" name="username" value="{{.Username}}">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
-        <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('{{call .T "confirm_approve_all"}}')">{{call .T "approve_all"}}</button>
-      </form>
-      <form method="POST" action="/api/challenges/reject-all" style="display:inline">
-        <input type="hidden" name="username" value="{{.Username}}">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
-        <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('{{call .T "confirm_reject_all"}}')">{{call .T "reject_all"}}</button>
-      </form>
-    </div>
-    {{end}}
 
     {{if .IsAdmin}}
     <div class="sessions-table" id="sessions-table" data-prefilter-user="{{.FilterUser}}" data-prefilter-host="{{.FilterHost}}">
@@ -1357,8 +1432,8 @@ const historyPageHTML = `<!DOCTYPE html>
   });
   </script>
 </head>
-<body class="app">
-  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>
+<body class="app{{if .Pending}} has-pending{{end}}">
+  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
   <nav class="sidebar" aria-label="Main navigation">
     <div class="sidebar-brand">
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>
@@ -1839,8 +1914,8 @@ const adminPageHTML = `<!DOCTYPE html>
   });
   </script>
 </head>
-<body class="app">
-  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>
+<body class="app{{if .Pending}} has-pending{{end}}">
+  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
   <nav class="sidebar" aria-label="Main navigation">
     <div class="sidebar-brand">
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>
@@ -3385,8 +3460,8 @@ const accessPageHTML = `<!DOCTYPE html>
   });
   </script>
 </head>
-<body class="app">
-  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>
+<body class="app{{if .Pending}} has-pending{{end}}">
+  <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
   <nav class="sidebar" aria-label="Main navigation">
     <div class="sidebar-brand">
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="5" r="3.5" fill="currentColor"/><line x1="14" y1="8.5" x2="14" y2="13" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="7" y2="18" stroke="currentColor" stroke-width="2"/><line x1="14" y1="13" x2="21" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="21" r="3.5" fill="currentColor"/><circle cx="21" cy="21" r="3.5" fill="currentColor"/><line x1="14" y1="13" x2="14" y2="18" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="21" r="3.5" fill="currentColor"/></svg>

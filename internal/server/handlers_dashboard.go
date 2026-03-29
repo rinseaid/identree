@@ -116,6 +116,42 @@ func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
 
 // handleDashboard renders the main dashboard page.
 // GET /
+// pendingView is the template representation of a pending sudo challenge.
+type pendingView struct {
+	ID            string
+	Username      string
+	Hostname      string
+	Code          string
+	ExpiresIn     string
+	AdminRequired bool
+}
+
+// buildPendingViews fetches pending challenges for username and converts them
+// to template-ready views, sorted by expiry (most urgent first).
+func (s *Server) buildPendingViews(username, lang string) []pendingView {
+	t := T(lang)
+	pending := s.store.PendingChallenges(username)
+	sort.Slice(pending, func(i, j int) bool {
+		return pending[i].ExpiresAt.Before(pending[j].ExpiresAt)
+	})
+	var views []pendingView
+	for _, c := range pending {
+		hostname := c.Hostname
+		if hostname == "" {
+			hostname = t("unknown_host")
+		}
+		views = append(views, pendingView{
+			ID:            c.ID,
+			Username:      c.Username,
+			Hostname:      hostname,
+			Code:          c.UserCode,
+			ExpiresIn:     formatDuration(time.Until(c.ExpiresAt)),
+			AdminRequired: s.requiresAdminApproval(c.Hostname),
+		})
+	}
+	return views
+}
+
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// The "/" pattern is a catch-all in Go's ServeMux. Only handle exact "/" path.
 	if r.URL.Path != "/" {
@@ -217,9 +253,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// Determine if this user has admin role
 	isAdmin := s.getSessionRole(r) == "admin"
 
-	// Access tab always shows current user's own data (admin-wide view is in /admin).
-	pending := s.store.PendingChallenges(username)
-
 	var allHistoryWithUsers []challpkg.ActionLogEntryWithUser
 	for _, e := range s.store.ActionHistory(username) {
 		allHistoryWithUsers = append(allHistoryWithUsers, challpkg.ActionLogEntryWithUser{
@@ -241,34 +274,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	csrfTs := fmt.Sprintf("%d", now.Unix())
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
-	type pendingView struct {
-		ID            string
-		Username      string
-		Hostname      string
-		Code          string
-		ExpiresIn     string
-		AdminRequired bool
-	}
-	// Sort pending challenges by expiry (most urgent first)
-	sort.Slice(pending, func(i, j int) bool {
-		return pending[i].ExpiresAt.Before(pending[j].ExpiresAt)
-	})
-
-	var pendingViews []pendingView
-	for _, c := range pending {
-		hostname := c.Hostname
-		if hostname == "" {
-			hostname = t("unknown_host")
-		}
-		pendingViews = append(pendingViews, pendingView{
-			ID:            c.ID,
-			Username:      c.Username,
-			Hostname:      hostname,
-			Code:          c.UserCode,
-			ExpiresIn:     formatDuration(time.Until(c.ExpiresAt)),
-			AdminRequired: s.requiresAdminApproval(c.Hostname),
-		})
-	}
+	pendingViews := s.buildPendingViews(username, lang)
 
 	// Fetch Pocket ID permissions for this user to build host-access view
 	var userPerms map[string][]pocketid.GroupInfo
@@ -830,6 +836,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		"BridgeMode": s.isBridgeMode(),
 		"Durations":  elevateDurations,
 		"FilterUser": accessFilterUser,
+		"Pending":    s.buildPendingViews(username, lang),
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
 	}
@@ -1369,6 +1376,9 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 
 	perPageOptions := []int{5, 10, 25, 50, 100, 500, 1000}
 
+	historyCSRFTs := fmt.Sprintf("%d", time.Now().Unix())
+	historyCSRFToken := computeCSRFToken(s.cfg.SharedSecret, username, historyCSRFTs)
+
 	w.Header().Set("Content-Type", "text/html")
 	if err := historyTmpl.Execute(w, map[string]interface{}{
 		"Username":        username,
@@ -1405,6 +1415,9 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":         isAdmin,
 		"AdminTab":        "",
 		"BridgeMode":      s.isBridgeMode(),
+		"CSRFToken":       historyCSRFToken,
+		"CSRFTs":          historyCSRFTs,
+		"Pending":         s.buildPendingViews(username, lang),
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
 	}

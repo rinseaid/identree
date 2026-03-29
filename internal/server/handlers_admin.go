@@ -223,6 +223,9 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	infoCSRFTs := fmt.Sprintf("%d", time.Now().Unix())
+	infoCSRFToken := computeCSRFToken(s.cfg.SharedSecret, username, infoCSRFTs)
+
 	w.Header().Set("Content-Type", "text/html")
 	if err := adminTmpl.Execute(w, map[string]interface{}{
 		"Username":            username,
@@ -240,6 +243,9 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"Lang":                lang,
 		"Languages":           supportedLanguages,
 		"IsAdmin":             true,
+		"CSRFToken":           infoCSRFToken,
+		"CSRFTs":              infoCSRFTs,
+		"Pending":             s.buildPendingViews(username, lang),
 		"Version":             version,
 		"CommitShort":         commitShort(commit),
 		"Commit":              commit,
@@ -422,6 +428,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":       true,
 		"CSRFToken":     csrfToken,
 		"CSRFTs":        csrfTs,
+		"Pending":       s.buildPendingViews(username, lang),
 		"ConfigValues":  configToValues(s.cfg),
 		"ConfigLocked":  configLockedKeys(),
 		"ConfigSecrets": configSecretStatus(s.cfg),
@@ -972,6 +979,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		"UserDir":       userSortDir,
 		"CSRFToken":     csrfToken,
 		"CSRFTs":        csrfTs,
+		"Pending":       s.buildPendingViews(username, lang),
 		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
@@ -1156,6 +1164,7 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		"Lang":          lang,
 		"Languages":     supportedLanguages,
 		"IsAdmin":       true,
+		"Pending":       s.buildPendingViews(username, lang),
 		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
@@ -1536,6 +1545,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"Lang":             lang,
 		"Languages":        supportedLanguages,
 		"IsAdmin":          true,
+		"Pending":          s.buildPendingViews(username, lang),
 		"HasEscrowedHosts": hasEscrowed,
 		"AllGroups":        allGroups,
 		"GroupFilter":      groupFilter,
