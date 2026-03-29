@@ -81,6 +81,8 @@ jobs:
 
       - name: Commit screenshots to repo
         run: |
+          # Remove stale screenshots before copying fresh ones
+          git rm -f docs/screenshots/*.png 2>/dev/null || true
           mkdir -p docs/screenshots
           cp screenshots/*-split.png docs/screenshots/ 2>/dev/null || true
           cp screenshots/hero.png docs/screenshots/ 2>/dev/null || true

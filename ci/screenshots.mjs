@@ -85,7 +85,7 @@ console.log("identree ready.\n");
 
 // ── Create a fresh pending challenge for the approval page screenshot ──────────
 
-let approvalChallengeID = null;
+let approvalURL = null;
 try {
   const resp = await fetch(`${BASE_URL}/api/challenge`, {
     method: "POST",
@@ -97,8 +97,9 @@ try {
   });
   if (resp.ok) {
     const data = await resp.json();
-    approvalChallengeID = data.challenge_id;
-    console.log(`Created approval challenge: ${approvalChallengeID}\n`);
+    // verification_url is the correct /approve/{user_code} URL
+    approvalURL = data.verification_url || null;
+    console.log(`Created approval challenge: ${approvalURL}\n`);
   }
 } catch { /* non-fatal */ }
 
@@ -224,14 +225,8 @@ await screenshot(context, "admin-config", async (page) => {
 
 console.log("Approval page...");
 await screenshot(context, "approval", async (page) => {
-  if (approvalChallengeID) {
-    await page.goto(`${BASE_URL}/approve/${approvalChallengeID}`, {
-      waitUntil: "load",
-    });
-  } else {
-    // Fallback: navigate to root showing pending challenges
-    await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
-  }
+  const target = approvalURL || `${BASE_URL}/`;
+  await page.goto(target, { waitUntil: "load" });
 });
 
 // ── Cleanup ────────────────────────────────────────────────────────────────────
