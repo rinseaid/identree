@@ -99,7 +99,8 @@ const cursorLine = (user, host)      => [...ps1(user, host), { c: "cursor", t: "
 
 // ── Start PAM helper in testclient container ──────────────────────────────────
 
-const USER = "alice";
+// Use a user with no seeded grace session so the challenge flow is triggered
+const USER = "eve";
 const HOST = "prod-web-01";
 const CMD  = "sudo systemctl restart nginx";
 
