@@ -1172,10 +1172,9 @@ const dashboardHTML = `<!DOCTYPE html>
         <div></div>
         <div></div>
       </div>
-      {{range .HostAccess}}
-      <div class="sessions-table-row" data-active="{{.Active}}">
-        <div class="gtcol gtcol-shost"><span style="font-size:0.875rem;font-weight:500;color:var(--text)">{{.Hostname}}</span></div>
-        {{if .Active}}
+      {{range .HostAccess}}{{if .Active}}
+      <div class="sessions-table-row">
+        <div class="gtcol gtcol-shost"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
         <div class="gtcol gtcol-sremaining"><span class="row-sub" style="font-size:0.8125rem">{{.Remaining}}</span></div>
         <div class="gtcol gtcol-sactions" style="gap:6px;flex-wrap:nowrap;align-items:center;">
           <div class="elevate-wrap">
@@ -1197,27 +1196,10 @@ const dashboardHTML = `<!DOCTYPE html>
             <button type="submit" class="saction-btn saction-danger saction-confirm" data-confirm="{{printf (call $.T "confirm_revoke_session") .Hostname}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>{{call $.T "revoke"}}</button>
           </form>
         </div>
-        {{else}}
-        <div class="gtcol gtcol-sremaining"><span class="row-sub" style="font-size:0.8125rem">{{call $.T "no_sudo_session"}}</span></div>
-        <div class="gtcol gtcol-sactions" style="align-items:center">
-          <div class="elevate-wrap">
-            <button type="button" class="saction-btn saction-primary elevate-toggle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>{{call $.T "elevate"}}<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>
-            <form method="POST" action="/api/hosts/elevate" class="elevate-menu">
-              <input type="hidden" name="hostname" value="{{.Hostname}}">
-              <input type="hidden" name="username" value="{{$.Username}}">
-              <input type="hidden" name="target_user" value="{{$.Username}}">
-              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-              <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-              <input type="hidden" name="from" value="/">
-              {{range $.Durations}}<button type="submit" name="duration" value="{{.Value}}">{{.Label}}</button>{{end}}
-            </form>
-          </div>
-        </div>
-        {{end}}
       </div>
-      {{end}}
-      {{if not .HostAccess}}
-      <div style="text-align:center;color:var(--text-2);font-size:0.875rem;padding:20px 0">{{call .T "no_host_access"}}</div>
+      {{end}}{{end}}
+      {{if not .HasActiveSessions}}
+      <div style="text-align:center;color:var(--text-2);font-size:0.875rem;padding:20px 0">{{call .T "no_sudo_session"}}</div>
       {{end}}
     </div>
     <div class="pagination-bar" id="sessions-user-pagination"></div>
