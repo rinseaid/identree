@@ -85,12 +85,9 @@ jobs:
           git rm -f docs/screenshots/*.png 2>/dev/null || true
           mkdir -p docs/screenshots
           cp screenshots/*-split.png docs/screenshots/ 2>/dev/null || true
-          cp screenshots/hero.png docs/screenshots/ 2>/dev/null || true
-          # Activate the inline image in README once the file exists
-          sed -i 's|<!-- hero screenshot committed by CI on each push: docs/screenshots/hero.png -->|![UI overview — light/dark split composites](docs/screenshots/hero.png)|' README.md
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/screenshots/ README.md
+          git add docs/screenshots/
           git diff --cached --quiet || git commit -m "Update UI screenshots [skip ci]"
           git pull --rebase
           git push
