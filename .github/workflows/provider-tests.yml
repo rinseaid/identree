@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Provider to test (lldap-dex | keycloak | kanidm | all)"
+        description: "Provider to test (lldap-dex | keycloak | kanidm | vault-escrow | all)"
         required: false
         default: "all"
 
@@ -216,3 +216,66 @@ jobs:
       - name: Tear down
         if: always()
         run: make test-kanidm-down
+
+  # ── Vault escrow ─────────────────────────────────────────────────────────────
+  vault-escrow:
+    name: Vault escrow (KV v2)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'vault-escrow'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start Vault escrow environment
+        run: make test-vault-escrow
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for all services to be healthy
+        run: |
+          echo "Waiting for Vault..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8200/v1/sys/health; do sleep 3; done'
+          echo "Waiting for identree..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8094/healthz; do sleep 3; done'
+          echo "All services healthy."
+
+      - name: Run setup (lldap users/groups + Vault verification)
+        run: make test-vault-escrow-setup
+
+      - name: Wait for sssd to populate
+        run: sleep 15
+
+      - name: Validate environment
+        run: make test-vault-escrow-validate
+
+      - name: Check break-glass secret written to Vault
+        run: |
+          echo "=== Vault secret at secret/data/identree/vault-escrow-test-host ==="
+          curl -sf http://localhost:8200/v1/secret/data/identree/vault-escrow-test-host \
+            -H "X-Vault-Token: identree-vault-test-token" | python3 -m json.tool || \
+          echo "Secret not yet present — rotate-breakglass may not have run."
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== lldap logs ==="
+          docker logs identree-vault-escrow-lldap 2>&1 | tail -30
+          echo "=== dex logs ==="
+          docker logs identree-vault-escrow-dex 2>&1 | tail -30
+          echo "=== vault logs ==="
+          docker logs identree-vault-escrow-vault 2>&1 | tail -50
+          echo "=== identree logs ==="
+          docker logs identree-vault-escrow-server 2>&1 | tail -50
+          echo "=== testclient sssd.conf ==="
+          docker exec identree-vault-escrow-client cat /etc/sssd/sssd.conf 2>/dev/null || true
+
+      - name: Tear down
+        if: always()
+        run: make test-vault-escrow-down

@@ -1,6 +1,6 @@
 # Provider Test Environments
 
-Isolated Docker Compose environments that validate identree in **bridge mode** against popular free/self-hostable OIDC and LDAP providers.
+Isolated Docker Compose environments that validate identree in **bridge mode** against popular free/self-hostable OIDC, LDAP, and secrets management providers.
 
 Bridge mode = no `IDENTREE_POCKETID_API_KEY`; identree handles PAM challenges only; an external provider serves LDAP and OIDC.
 
@@ -14,15 +14,26 @@ Bridge mode = no `IDENTREE_POCKETID_API_KEY`; identree handles PAM challenges on
 
 The existing PocketID environment (`test/docker-compose.yml`) tests **full mode** — separate from this directory.
 
+## Escrow Test Environments
+
+These environments swap the default **local** escrow backend for an external secrets manager, using lldap+Dex for OIDC (same users/groups/ports pattern as above).
+
+| Directory | Escrow backend | Escrow port | identree port |
+|-----------|---------------|------------|---------------|
+| `escrow/vault/` | [HashiCorp Vault](https://www.vaultproject.io) KV v2 (dev mode) | 8200 | 8094 |
+
+> **Vaultwarden note:** Vaultwarden implements the Bitwarden **Password Manager** API (client-side encrypted ciphers). identree's `bitwarden` escrow backend requires the **Secrets Manager** API (`/api/secrets`), which Vaultwarden does not implement. To test Bitwarden SM escrow, use an official Bitwarden self-hosted instance or the Bitwarden cloud. For a fully self-hostable SM-style backend, use [Infisical](https://infisical.com) (already supported via the `infisical` backend).
+
 ## Port Allocation
 
-| Service | PocketID (full) | lldap+Dex | Keycloak | Kanidm |
-|---------|----------------|-----------|----------|--------|
-| identree HTTP | 8090 | 8091 | 8092 | 8093 |
-| identree LDAP | 3389 | — | — | — |
-| Provider OIDC | 1411 | 5556 (Dex) | 8180 (Keycloak) | 8443 |
-| Provider LDAP | 3389 | 3891 (lldap) | 3892 (lldap) | 3636 |
-| lldap admin UI | — | 17171 | 17172 | — |
+| Service | PocketID (full) | lldap+Dex | Keycloak | Kanidm | Vault escrow |
+|---------|----------------|-----------|----------|--------|--------------|
+| identree HTTP | 8090 | 8091 | 8092 | 8093 | 8094 |
+| identree LDAP | 3389 | — | — | — | — |
+| Provider OIDC | 1411 | 5556 (Dex) | 8180 (Keycloak) | 8443 | 5557 (Dex) |
+| Provider LDAP | 3389 | 3891 (lldap) | 3892 (lldap) | 3636 | 3893 (lldap) |
+| lldap admin UI | — | 17171 | 17172 | — | 17173 |
+| Escrow service | — | — | — | — | 8200 (Vault) |
 
 All host bindings are `127.0.0.1` only.
 
@@ -60,6 +71,26 @@ KANIDM_CLIENT_SECRET=<secret> \
   docker compose -f test/providers/kanidm/docker-compose.yml up -d identree
 make test-kanidm-validate
 make test-kanidm-down
+```
+
+### Vault Escrow
+
+```bash
+make test-vault-escrow         # bring up: lldap, Dex, Vault (dev), identree, testclient
+make test-vault-escrow-setup   # create lldap users/groups + verify Vault KV v2 mount
+make test-vault-escrow-validate
+# Check Vault UI for break-glass secret: http://localhost:8200 (token: identree-vault-test-token)
+# Secret path: secret/identree/vault-escrow-test-host
+make test-vault-escrow-down
+```
+
+Vault runs in **dev mode**: auto-unsealed, in-memory storage, KV v2 mounted at `secret/`. The root token is fixed at `identree-vault-test-token`. This is not suitable for production — test environments only.
+
+To inspect the escrowed break-glass secret directly:
+
+```bash
+curl -sf http://localhost:8200/v1/secret/data/identree/vault-escrow-test-host \
+  -H "X-Vault-Token: identree-vault-test-token" | python3 -m json.tool
 ```
 
 ## Manual Testing (PAM challenge flow)
@@ -152,7 +183,7 @@ Logs are captured on failure for debugging. The Kanidm job may need adjustment i
 
 ```yaml
 # workflow_dispatch input:
-provider: lldap-dex   # or keycloak, kanidm, all
+provider: lldap-dex   # or keycloak, kanidm, vault-escrow, all
 ```
 
 Or trigger via the GitHub Actions UI → "Run workflow" → select provider.

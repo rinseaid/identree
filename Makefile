@@ -88,7 +88,25 @@ test-kanidm-validate:
 		"http://localhost:8443/oauth2/openid/identree-test" \
 		ldap://localhost:3636
 
+# ── Vault escrow (bridge mode + Vault KV v2) ──────────────────────────────────
+.PHONY: test-vault-escrow test-vault-escrow-down test-vault-escrow-logs test-vault-escrow-setup test-vault-escrow-validate
+
+test-vault-escrow:
+	docker compose -f test/providers/escrow/vault/docker-compose.yml up --build -d
+
+test-vault-escrow-down:
+	docker compose -f test/providers/escrow/vault/docker-compose.yml down
+
+test-vault-escrow-logs:
+	docker compose -f test/providers/escrow/vault/docker-compose.yml logs -f identree
+
+test-vault-escrow-setup:
+	bash test/providers/escrow/vault/setup.sh
+
+test-vault-escrow-validate:
+	bash test/providers/escrow/vault/validate.sh
+
 # ── Convenience: bring down all environments ──────────────────────────────────
 .PHONY: down-all
 
-down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down
+down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down

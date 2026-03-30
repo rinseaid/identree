@@ -1,0 +1,158 @@
+services:
+  lldap:
+    image: lldap/lldap:stable
+    container_name: identree-vault-escrow-lldap
+    restart: unless-stopped
+    environment:
+      LLDAP_JWT_SECRET: "vault-escrow-test-jwt-secret"
+      LLDAP_KEY_SEED: "vault-escrow-test-key-seed"
+      LLDAP_LDAP_BASE_DN: "dc=test,dc=local"
+      LLDAP_LDAP_USER_DN: "admin"
+      LLDAP_LDAP_USER_PASS: "lldap-admin-pass"
+      LLDAP_HTTP_URL: "http://lldap:17170"
+    volumes:
+      - lldap-data:/data
+    ports:
+      - "127.0.0.1:17173:17170"  # lldap admin UI
+      - "127.0.0.1:3893:3890"    # LDAP
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:17170/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  dex:
+    image: ghcr.io/dex-idp/dex:v2.42.0
+    container_name: identree-vault-escrow-dex
+    restart: unless-stopped
+    depends_on:
+      lldap:
+        condition: service_healthy
+    volumes:
+      - ./dex-config.yaml:/etc/dex/config.yaml:ro
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "127.0.0.1:5557:5556"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5556/dex/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  vault:
+    image: hashicorp/vault:latest
+    container_name: identree-vault-escrow-vault
+    restart: unless-stopped
+    # Dev mode: auto-unsealed, in-memory, KV v2 at secret/, root token = VAULT_DEV_ROOT_TOKEN_ID.
+    # Not for production — test environment only.
+    command: ["vault", "server", "-dev"]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "identree-vault-test-token"
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "127.0.0.1:8200:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://localhost:8200"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  identree:
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: identree-vault-escrow-server
+    restart: unless-stopped
+    depends_on:
+      dex:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    environment:
+      # OIDC — Dex backed by lldap.
+      IDENTREE_OIDC_ISSUER_URL: "http://dex:5556/dex"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:5557/dex"
+      IDENTREE_OIDC_CLIENT_ID: "identree"
+      IDENTREE_OIDC_CLIENT_SECRET: "identree-dex-secret"
+
+      # Server
+      IDENTREE_EXTERNAL_URL: "http://localhost:8094"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-vault-escrow"
+
+      # Bridge mode — lldap handles LDAP; identree handles PAM challenges
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "false"
+
+      # Auth flow
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+
+      # Storage
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+
+      # Escrow — HashiCorp Vault KV v2.
+      # Dev mode root token used for auth (ESCROW_AUTH_ID empty = direct token auth).
+      # Secrets written at secret/identree/<hostname>.
+      IDENTREE_ESCROW_BACKEND: "vault"
+      IDENTREE_ESCROW_URL: "http://vault:8200"
+      IDENTREE_ESCROW_AUTH_SECRET: "identree-vault-test-token"
+      IDENTREE_ESCROW_PATH: "secret/identree"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8094:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: ../../../..
+      dockerfile: test/testclient/Dockerfile
+    container_name: identree-vault-escrow-client
+    hostname: vault-escrow-test-host
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      lldap:
+        condition: service_healthy
+    environment:
+      # LDAP — lldap (rfc2307bis schema)
+      LDAP_URI: "ldap://lldap:3890"
+      LDAP_BASE: "dc=test,dc=local"
+      LDAP_BIND_DN: "uid=admin,ou=people,dc=test,dc=local"
+      LDAP_BIND_PW: "lldap-admin-pass"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
+      SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
+      SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
+
+      # Static sudoers — bridge mode has no LDAP sudoers tree
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
+
+      # identree
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-vault-escrow"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  lldap-data:
+  identree-data:
