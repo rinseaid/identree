@@ -106,7 +106,25 @@ test-vault-escrow-setup:
 test-vault-escrow-validate:
 	bash test/providers/escrow/vault/validate.sh
 
+# ── Infisical escrow (bridge mode + Infisical Secrets Manager) ────────────────
+.PHONY: test-infisical-escrow test-infisical-escrow-down test-infisical-escrow-logs test-infisical-escrow-setup test-infisical-escrow-validate
+
+test-infisical-escrow:
+	docker compose -f test/providers/escrow/infisical/docker-compose.yml up --build -d
+
+test-infisical-escrow-down:
+	docker compose -f test/providers/escrow/infisical/docker-compose.yml down -v
+
+test-infisical-escrow-logs:
+	docker compose -f test/providers/escrow/infisical/docker-compose.yml logs -f identree
+
+test-infisical-escrow-setup:
+	bash test/providers/escrow/infisical/setup.sh
+
+test-infisical-escrow-validate:
+	bash test/providers/escrow/infisical/validate.sh
+
 # ── Convenience: bring down all environments ──────────────────────────────────
 .PHONY: down-all
 
-down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down
+down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down

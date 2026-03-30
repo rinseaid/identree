@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Provider to test (lldap-dex | keycloak | kanidm | vault-escrow | all)"
+        description: "Provider to test (lldap-dex | keycloak | kanidm | vault-escrow | infisical-escrow | all)"
         required: false
         default: "all"
 
@@ -279,3 +279,60 @@ jobs:
       - name: Tear down
         if: always()
         run: make test-vault-escrow-down
+
+  # ── Infisical escrow ──────────────────────────────────────────────────────────
+  infisical-escrow:
+    name: Infisical escrow (Secrets Manager)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'infisical-escrow'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start Infisical escrow environment
+        run: make test-infisical-escrow
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for all services to be healthy
+        # Infisical takes longer — it needs postgres migrations to complete before serving.
+        run: |
+          echo "Waiting for Infisical..."
+          timeout 180 bash -c 'until curl -sf http://localhost:8095/api/status; do sleep 5; done'
+          echo "Waiting for identree (first start, escrow creds not yet set)..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8096/healthz; do sleep 3; done'
+          echo "All services healthy."
+
+      - name: Run setup (lldap users + Infisical workspace + machine identity)
+        run: make test-infisical-escrow-setup
+
+      - name: Wait for sssd to populate
+        run: sleep 15
+
+      - name: Validate environment
+        run: make test-infisical-escrow-validate
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== infisical logs ==="
+          docker logs identree-infisical-escrow-infisical 2>&1 | tail -80
+          echo "=== identree logs ==="
+          docker logs identree-infisical-escrow-server 2>&1 | tail -50
+          echo "=== lldap logs ==="
+          docker logs identree-infisical-escrow-lldap 2>&1 | tail -30
+          echo "=== postgres logs ==="
+          docker logs identree-infisical-escrow-postgres 2>&1 | tail -20
+          echo "=== testclient sssd.conf ==="
+          docker exec identree-infisical-escrow-client cat /etc/sssd/sssd.conf 2>/dev/null || true
+
+      - name: Tear down
+        if: always()
+        run: make test-infisical-escrow-down

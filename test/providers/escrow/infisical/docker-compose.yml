@@ -1,0 +1,198 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: identree-infisical-escrow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD: infisical-test-pass
+      POSTGRES_DB: infisical
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infisical"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: identree-infisical-escrow-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  infisical:
+    image: infisical/infisical:latest-postgres
+    container_name: identree-infisical-escrow-infisical
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database + cache
+      DB_CONNECTION_URI: "postgresql://infisical:infisical-test-pass@postgres:5432/infisical"
+      REDIS_URL: "redis://redis:6379"
+
+      # Secrets / signing keys — fixed values for reproducible test env
+      AUTH_SECRET: "infisical-test-auth-secret-32charslong!"
+      ENCRYPTION_KEY: "6ce3a75a3f45e25f9c2d1b0e8f7a4c3d"
+
+      # Self-hosted config
+      SITE_URL: "http://localhost:8095"
+      TELEMETRY_ENABLED: "false"
+      INVITE_ONLY_SIGNUP: "false"
+      NODE_ENV: "production"
+    ports:
+      - "127.0.0.1:8095:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/status"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  lldap:
+    image: lldap/lldap:stable
+    container_name: identree-infisical-escrow-lldap
+    restart: unless-stopped
+    environment:
+      LLDAP_JWT_SECRET: "infisical-escrow-test-jwt-secret"
+      LLDAP_KEY_SEED: "infisical-escrow-test-key-seed"
+      LLDAP_LDAP_BASE_DN: "dc=test,dc=local"
+      LLDAP_LDAP_USER_DN: "admin"
+      LLDAP_LDAP_USER_PASS: "lldap-admin-pass"
+      LLDAP_HTTP_URL: "http://lldap:17170"
+    volumes:
+      - lldap-data:/data
+    ports:
+      - "127.0.0.1:17174:17170"  # lldap admin UI
+      - "127.0.0.1:3894:3890"    # LDAP
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:17170/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  dex:
+    image: ghcr.io/dex-idp/dex:v2.42.0
+    container_name: identree-infisical-escrow-dex
+    restart: unless-stopped
+    depends_on:
+      lldap:
+        condition: service_healthy
+    volumes:
+      - ./dex-config.yaml:/etc/dex/config.yaml:ro
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "127.0.0.1:5558:5556"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5556/dex/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  identree:
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: identree-infisical-escrow-server
+    restart: unless-stopped
+    depends_on:
+      dex:
+        condition: service_healthy
+      infisical:
+        condition: service_healthy
+    environment:
+      # OIDC — Dex backed by lldap
+      IDENTREE_OIDC_ISSUER_URL: "http://dex:5556/dex"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:5558/dex"
+      IDENTREE_OIDC_CLIENT_ID: "identree"
+      IDENTREE_OIDC_CLIENT_SECRET: "identree-dex-secret"
+
+      # Server
+      IDENTREE_EXTERNAL_URL: "http://localhost:8096"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-infisical-escrow"
+
+      # Bridge mode
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "false"
+
+      # Auth flow
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+
+      # Storage
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+
+      # Escrow — Infisical Universal Auth.
+      # ESCROW_PATH = "{workspaceId}/prod" — set by setup.sh after workspace is created.
+      # Set as a placeholder; identree will be restarted with the real values by setup.sh.
+      IDENTREE_ESCROW_BACKEND: "infisical"
+      IDENTREE_ESCROW_URL: "http://infisical:8080"
+      IDENTREE_ESCROW_AUTH_ID: "${INFISICAL_CLIENT_ID:-}"
+      IDENTREE_ESCROW_AUTH_SECRET: "${INFISICAL_CLIENT_SECRET:-}"
+      IDENTREE_ESCROW_PATH: "${INFISICAL_ESCROW_PATH:-}"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8096:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: ../../../..
+      dockerfile: test/testclient/Dockerfile
+    container_name: identree-infisical-escrow-client
+    hostname: infisical-escrow-test-host
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      lldap:
+        condition: service_healthy
+    environment:
+      # LDAP — lldap (rfc2307bis schema)
+      LDAP_URI: "ldap://lldap:3890"
+      LDAP_BASE: "dc=test,dc=local"
+      LDAP_BIND_DN: "uid=admin,ou=people,dc=test,dc=local"
+      LDAP_BIND_PW: "lldap-admin-pass"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
+      SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
+      SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
+
+      # Static sudoers — bridge mode has no LDAP sudoers tree
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
+
+      # identree — updated after setup.sh restarts identree
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-infisical-escrow"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  postgres-data:
+  lldap-data:
+  identree-data:

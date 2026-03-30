@@ -21,19 +21,20 @@ These environments swap the default **local** escrow backend for an external sec
 | Directory | Escrow backend | Escrow port | identree port |
 |-----------|---------------|------------|---------------|
 | `escrow/vault/` | [HashiCorp Vault](https://www.vaultproject.io) KV v2 (dev mode) | 8200 | 8094 |
+| `escrow/infisical/` | [Infisical](https://infisical.com) Secrets Manager (self-hosted) | 8095 | 8096 |
 
-> **Vaultwarden note:** Vaultwarden implements the Bitwarden **Password Manager** API (client-side encrypted ciphers). identree's `bitwarden` escrow backend requires the **Secrets Manager** API (`/api/secrets`), which Vaultwarden does not implement. To test Bitwarden SM escrow, use an official Bitwarden self-hosted instance or the Bitwarden cloud. For a fully self-hostable SM-style backend, use [Infisical](https://infisical.com) (already supported via the `infisical` backend).
+> **Vaultwarden note:** Vaultwarden implements the Bitwarden **Password Manager** API (client-side encrypted ciphers). identree's `bitwarden` escrow backend requires the **Secrets Manager** API (`/api/secrets`), which Vaultwarden does not implement. To test Bitwarden SM escrow, use an official Bitwarden self-hosted instance or the Bitwarden cloud. Infisical is the recommended fully self-hostable alternative — it has a proper SM-style server-side API and is already supported by identree.
 
 ## Port Allocation
 
-| Service | PocketID (full) | lldap+Dex | Keycloak | Kanidm | Vault escrow |
-|---------|----------------|-----------|----------|--------|--------------|
-| identree HTTP | 8090 | 8091 | 8092 | 8093 | 8094 |
-| identree LDAP | 3389 | — | — | — | — |
-| Provider OIDC | 1411 | 5556 (Dex) | 8180 (Keycloak) | 8443 | 5557 (Dex) |
-| Provider LDAP | 3389 | 3891 (lldap) | 3892 (lldap) | 3636 | 3893 (lldap) |
-| lldap admin UI | — | 17171 | 17172 | — | 17173 |
-| Escrow service | — | — | — | — | 8200 (Vault) |
+| Service | PocketID (full) | lldap+Dex | Keycloak | Kanidm | Vault escrow | Infisical escrow |
+|---------|----------------|-----------|----------|--------|--------------|-----------------|
+| identree HTTP | 8090 | 8091 | 8092 | 8093 | 8094 | 8096 |
+| identree LDAP | 3389 | — | — | — | — | — |
+| Provider OIDC | 1411 | 5556 (Dex) | 8180 (Keycloak) | 8443 | 5557 (Dex) | 5558 (Dex) |
+| Provider LDAP | 3389 | 3891 (lldap) | 3892 (lldap) | 3636 | 3893 (lldap) | 3894 (lldap) |
+| lldap admin UI | — | 17171 | 17172 | — | 17173 | 17174 |
+| Escrow service | — | — | — | — | 8200 (Vault) | 8095 (Infisical) |
 
 All host bindings are `127.0.0.1` only.
 
@@ -92,6 +93,20 @@ To inspect the escrowed break-glass secret directly:
 curl -sf http://localhost:8200/v1/secret/data/identree/vault-escrow-test-host \
   -H "X-Vault-Token: identree-vault-test-token" | python3 -m json.tool
 ```
+
+### Infisical Escrow
+
+```bash
+make test-infisical-escrow         # bring up: postgres, redis, Infisical, lldap, Dex, identree, testclient
+make test-infisical-escrow-setup   # bootstrap admin, create workspace+identity, restart identree
+make test-infisical-escrow-validate
+# Check Infisical UI: http://localhost:8095 → Project 'identree-test' → Secrets → prod
+make test-infisical-escrow-down
+```
+
+`setup.sh` must run after the environment is up — it bootstraps the admin account via `/api/v1/admin/bootstrap`, creates the `identree-test` workspace, provisions a machine identity with Universal Auth, generates a `client_id`/`client_secret`, then restarts identree with `IDENTREE_ESCROW_AUTH_ID`, `IDENTREE_ESCROW_AUTH_SECRET`, and `IDENTREE_ESCROW_PATH={workspaceId}/prod`.
+
+Use `make test-infisical-escrow-down` (not plain `docker compose down`) — the target passes `-v` to remove postgres/redis volumes, allowing a clean re-run.
 
 ## Manual Testing (PAM challenge flow)
 
@@ -183,7 +198,7 @@ Logs are captured on failure for debugging. The Kanidm job may need adjustment i
 
 ```yaml
 # workflow_dispatch input:
-provider: lldap-dex   # or keycloak, kanidm, vault-escrow, all
+provider: lldap-dex   # or keycloak, kanidm, vault-escrow, infisical-escrow, all
 ```
 
 Or trigger via the GitHub Actions UI → "Run workflow" → select provider.
