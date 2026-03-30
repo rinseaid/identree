@@ -1,0 +1,131 @@
+services:
+  lldap:
+    image: lldap/lldap:stable
+    container_name: identree-lldap-dex-lldap
+    restart: unless-stopped
+    environment:
+      LLDAP_JWT_SECRET: "lldap-dex-test-jwt-secret"
+      LLDAP_KEY_SEED: "lldap-dex-test-key-seed"
+      LLDAP_LDAP_BASE_DN: "dc=test,dc=local"
+      LLDAP_LDAP_USER_DN: "admin"
+      LLDAP_LDAP_USER_PASS: "lldap-admin-pass"
+      LLDAP_HTTP_URL: "http://lldap:17170"
+    volumes:
+      - lldap-data:/data
+    ports:
+      - "127.0.0.1:17171:17170"  # lldap admin UI
+      - "127.0.0.1:3891:3890"    # LDAP
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:17170/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  dex:
+    image: ghcr.io/dex-idp/dex:v2.42.0
+    container_name: identree-lldap-dex-dex
+    restart: unless-stopped
+    depends_on:
+      lldap:
+        condition: service_healthy
+    volumes:
+      - ./dex-config.yaml:/etc/dex/config.yaml:ro
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "127.0.0.1:5556:5556"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5556/dex/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  identree:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: identree-lldap-dex-server
+    restart: unless-stopped
+    depends_on:
+      dex:
+        condition: service_healthy
+    environment:
+      # OIDC — internal URL used for server-side discovery; public URL for browser redirects.
+      # identree uses InsecureIssuerURLContext so the iss claim (localhost) is accepted
+      # even when the server fetches discovery from the Docker-internal hostname.
+      IDENTREE_OIDC_ISSUER_URL: "http://dex:5556/dex"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:5556/dex"
+      IDENTREE_OIDC_CLIENT_ID: "identree"
+      IDENTREE_OIDC_CLIENT_SECRET: "identree-dex-secret"
+
+      # Server
+      IDENTREE_EXTERNAL_URL: "http://localhost:8091"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-lldap-dex"
+
+      # Bridge mode — no PocketID API key; no embedded LDAP (lldap handles it)
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "false"
+
+      # Auth flow
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+
+      # Storage
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_ESCROW_BACKEND: "local"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "b25da3f1f4efd4fedde53b9fd9208ddf6c2080604c5fe127070673b02efe1f41"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8091:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: ../../..
+      dockerfile: test/testclient/Dockerfile
+    container_name: identree-lldap-dex-client
+    hostname: lldap-dex-test-host
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      lldap:
+        condition: service_healthy
+    environment:
+      # LDAP — lldap uses groupOfUniqueNames with uniqueMember (rfc2307bis)
+      LDAP_URI: "ldap://lldap:3890"
+      LDAP_BASE: "dc=test,dc=local"
+      LDAP_BIND_DN: "uid=admin,ou=people,dc=test,dc=local"
+      LDAP_BIND_PW: "lldap-admin-pass"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
+      SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
+      SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
+
+      # Bridge mode: no LDAP sudoers tree — use static file rules instead
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
+
+      # identree
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-lldap-dex"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  lldap-data:
+  identree-data:

@@ -1,0 +1,108 @@
+services:
+  kanidm:
+    image: docker.io/kanidm/server:latest
+    container_name: identree-kanidm-server
+    restart: unless-stopped
+    # Mount our server.toml which configures plain HTTP mode (no TLS).
+    volumes:
+      - ./server.toml:/data/server.toml:ro
+      - kanidm-data:/data
+    ports:
+      - "127.0.0.1:8443:8443"    # OIDC / admin UI
+      - "127.0.0.1:3636:3636"    # LDAP (plain, no TLS)
+    healthcheck:
+      # Kanidm's status endpoint returns 200 when ready
+      test: ["CMD", "curl", "-sf", "http://localhost:8443/status"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  identree:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: identree-kanidm-identree
+    restart: unless-stopped
+    depends_on:
+      kanidm:
+        condition: service_healthy
+    environment:
+      # OIDC — Kanidm per-client issuer URL format: <origin>/oauth2/openid/<client_name>
+      # Internal: identree fetches discovery from the Docker-internal hostname.
+      # Public: the iss claim in tokens uses origin from server.toml (localhost).
+      # InsecureIssuerURLContext allows the iss/fetch mismatch in test environments.
+      IDENTREE_OIDC_ISSUER_URL: "http://kanidm:8443/oauth2/openid/identree-test"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:8443/oauth2/openid/identree-test"
+      IDENTREE_OIDC_CLIENT_ID: "identree-test"
+      # Client secret set by setup.sh — supply via env or update after running setup
+      IDENTREE_OIDC_CLIENT_SECRET: "${KANIDM_CLIENT_SECRET:-}"
+
+      # Server
+      IDENTREE_EXTERNAL_URL: "http://localhost:8093"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-kanidm"
+
+      # Bridge mode — Kanidm serves LDAP; identree only handles PAM challenges
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "false"
+
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_ESCROW_BACKEND: "local"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "d47fc5h3h6gff6hgfg75d1hf1420ffh8e4202826e7hg339292895d24hgh3h63"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8093:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: ../../..
+      dockerfile: test/testclient/Dockerfile
+    container_name: identree-kanidm-client
+    hostname: kanidm-test-host
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      kanidm:
+        condition: service_healthy
+    environment:
+      # Kanidm LDAP — rfc2307bis with posixaccount/posixgroup objectClasses.
+      # Users appear at: spn=username@domain,dc=kanidm,dc=test,dc=local
+      # Kanidm's base DN is derived from the domain in server.toml: dc=test,dc=local
+      LDAP_URI: "ldap://kanidm:3636"
+      LDAP_BASE: "dc=test,dc=local"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "posixaccount"
+      SSSD_GROUP_OBJECT_CLASS: "posixgroup"
+      SSSD_GROUP_MEMBER_ATTR: "member"
+      LDAP_USER_SEARCH_BASE: "dc=test,dc=local"
+      LDAP_GROUP_SEARCH_BASE: "dc=test,dc=local"
+
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
+
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-kanidm"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  kanidm-data:
+  identree-data:

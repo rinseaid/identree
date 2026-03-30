@@ -1,0 +1,21 @@
+# Kanidm server configuration for the identree test environment.
+# Runs in plain HTTP mode (no TLS) — test/dev only.
+#
+# HTTP mode: when no tls_chain/tls_key is provided and origin starts with
+# http://, Kanidm 1.4+ binds on plain HTTP.  Do NOT use in production.
+
+bindaddress    = "0.0.0.0:8443"
+ldapbindaddress = "0.0.0.0:3636"
+
+# origin is the public-facing URL — it appears as the iss claim in OIDC tokens
+# and in LDAP referrals.  Must be reachable from the browser.
+# identree uses IDENTREE_OIDC_ISSUER_PUBLIC_URL=http://localhost:8443/... to
+# match this, and IDENTREE_OIDC_ISSUER_URL=http://kanidm:8443/... for
+# server-side discovery (InsecureIssuerURLContext bridges the gap).
+origin = "http://localhost:8443"
+domain = "test.local"
+
+db_path     = "/data/kanidm.db"
+db_arc_size = 2048
+
+log_level = "info"

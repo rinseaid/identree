@@ -1,0 +1,218 @@
+name: Provider Integration Tests
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - "test/providers/**"
+      - "test/testclient/**"
+      - "Dockerfile"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "test/providers/**"
+      - "test/testclient/**"
+      - "Dockerfile"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Provider to test (lldap-dex | keycloak | kanidm | all)"
+        required: false
+        default: "all"
+
+# Only run one workflow per branch at a time; cancel superseded runs.
+concurrency:
+  group: provider-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── lldap + Dex ─────────────────────────────────────────────────────────────
+  lldap-dex:
+    name: lldap + Dex (bridge mode)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'lldap-dex'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start lldap+Dex environment
+        run: make test-lldap-dex
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for all services to be healthy
+        run: |
+          echo "Waiting for identree-lldap-dex-server..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8091/healthz; do sleep 3; done'
+          echo "All services healthy."
+
+      - name: Run setup (create users/groups in lldap)
+        run: make test-lldap-dex-setup
+
+      - name: Wait for sssd to populate (lldap enumeration)
+        run: sleep 15
+
+      - name: Validate environment
+        run: make test-lldap-dex-validate
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== lldap logs ==="
+          docker logs identree-lldap-dex-lldap 2>&1 | tail -50
+          echo "=== dex logs ==="
+          docker logs identree-lldap-dex-dex 2>&1 | tail -50
+          echo "=== identree logs ==="
+          docker logs identree-lldap-dex-server 2>&1 | tail -50
+          echo "=== testclient sssd.conf ==="
+          docker exec identree-lldap-dex-client cat /etc/sssd/sssd.conf 2>/dev/null || true
+          echo "=== testclient sssd logs ==="
+          docker exec identree-lldap-dex-client journalctl -u sssd 2>/dev/null || \
+            docker exec identree-lldap-dex-client cat /var/log/sssd/sssd.log 2>/dev/null || true
+
+      - name: Tear down
+        if: always()
+        run: make test-lldap-dex-down
+
+  # ── Keycloak + lldap ────────────────────────────────────────────────────────
+  keycloak:
+    name: Keycloak + lldap (bridge mode)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'keycloak'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start Keycloak environment
+        run: make test-keycloak
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for Keycloak to be ready
+        # Keycloak start-dev takes longer than other providers
+        run: |
+          echo "Waiting for Keycloak..."
+          timeout 180 bash -c 'until curl -sf http://localhost:8180/health/ready; do sleep 5; done'
+          echo "Waiting for identree..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8092/healthz; do sleep 3; done'
+          echo "All services healthy."
+
+      - name: Run setup (Keycloak realm + lldap users)
+        id: setup
+        run: |
+          bash test/providers/keycloak/setup.sh | tee /tmp/keycloak-setup.log
+          # Extract the generated client secret
+          SECRET=$(grep 'client_secret:' /tmp/keycloak-setup.log | awk '{print $NF}' || echo "")
+          echo "client_secret=${SECRET}" >> "$GITHUB_OUTPUT"
+
+      - name: Restart identree with Keycloak client secret
+        if: steps.setup.outputs.client_secret != ''
+        run: |
+          KEYCLOAK_CLIENT_SECRET="${{ steps.setup.outputs.client_secret }}" \
+          docker compose -f test/providers/keycloak/docker-compose.yml up -d identree
+          timeout 60 bash -c 'until curl -sf http://localhost:8092/healthz; do sleep 3; done'
+
+      - name: Wait for sssd to populate
+        run: sleep 15
+
+      - name: Validate environment
+        run: make test-keycloak-validate
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== Keycloak logs ==="
+          docker logs identree-keycloak-server 2>&1 | tail -80
+          echo "=== identree logs ==="
+          docker logs identree-keycloak-identree 2>&1 | tail -50
+          echo "=== lldap logs ==="
+          docker logs identree-keycloak-lldap 2>&1 | tail -30
+
+      - name: Tear down
+        if: always()
+        run: make test-keycloak-down
+
+  # ── Kanidm ──────────────────────────────────────────────────────────────────
+  kanidm:
+    name: Kanidm (bridge mode)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'kanidm'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start Kanidm environment
+        run: make test-kanidm
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for Kanidm to be ready
+        run: |
+          echo "Waiting for Kanidm..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8443/status; do sleep 3; done'
+          echo "Waiting for identree..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8093/healthz; do sleep 3; done'
+          echo "All services healthy."
+
+      - name: Run setup (Kanidm OAuth2 client + users + groups)
+        id: setup
+        run: |
+          bash test/providers/kanidm/setup.sh | tee /tmp/kanidm-setup.log
+          SECRET=$(grep 'client_secret:' /tmp/kanidm-setup.log | awk '{print $NF}' || echo "")
+          echo "client_secret=${SECRET}" >> "$GITHUB_OUTPUT"
+
+      - name: Restart identree with Kanidm client secret
+        if: steps.setup.outputs.client_secret != ''
+        run: |
+          KANIDM_CLIENT_SECRET="${{ steps.setup.outputs.client_secret }}" \
+          docker compose -f test/providers/kanidm/docker-compose.yml up -d identree
+          timeout 60 bash -c 'until curl -sf http://localhost:8093/healthz; do sleep 3; done'
+
+      - name: Wait for sssd to populate (Kanidm LDAP enumeration)
+        run: sleep 20
+
+      - name: Validate environment
+        run: make test-kanidm-validate
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== Kanidm logs ==="
+          docker logs identree-kanidm-server 2>&1 | tail -80
+          echo "=== identree logs ==="
+          docker logs identree-kanidm-identree 2>&1 | tail -50
+          echo "=== testclient sssd.conf ==="
+          docker exec identree-kanidm-client cat /etc/sssd/sssd.conf 2>/dev/null || true
+
+      - name: Tear down
+        if: always()
+        run: make test-kanidm-down

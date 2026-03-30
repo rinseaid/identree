@@ -1,0 +1,139 @@
+services:
+  lldap:
+    image: lldap/lldap:stable
+    container_name: identree-keycloak-lldap
+    restart: unless-stopped
+    environment:
+      LLDAP_JWT_SECRET: "lldap-keycloak-test-jwt-secret"
+      LLDAP_KEY_SEED: "lldap-keycloak-test-key-seed"
+      LLDAP_LDAP_BASE_DN: "dc=test,dc=local"
+      LLDAP_LDAP_USER_DN: "admin"
+      LLDAP_LDAP_USER_PASS: "lldap-admin-pass"
+      LLDAP_HTTP_URL: "http://lldap:17170"
+    volumes:
+      - lldap-data:/data
+    ports:
+      - "127.0.0.1:17172:17170"  # lldap admin UI
+      - "127.0.0.1:3892:3890"    # LDAP
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:17170/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: identree-keycloak-server
+    restart: unless-stopped
+    # start-dev: no TLS required, embedded H2 database, relaxed hostname checks.
+    # Not for production — test environment only.
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      # No hostname redirect enforcement in dev mode
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    ports:
+      - "127.0.0.1:8180:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
+  identree:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: identree-keycloak-identree
+    restart: unless-stopped
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      # OIDC — Keycloak realm identree-test.
+      # Internal URL used for discovery/token validation; public URL for browser.
+      IDENTREE_OIDC_ISSUER_URL: "http://keycloak:8080/realms/identree-test"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:8180/realms/identree-test"
+      IDENTREE_OIDC_CLIENT_ID: "identree"
+      # Client secret is set by setup.sh and written to /data/config.toml via the admin UI
+      # or supplied here once known. Default placeholder — run setup.sh first.
+      IDENTREE_OIDC_CLIENT_SECRET: "${KEYCLOAK_CLIENT_SECRET:-}"
+
+      # Server
+      IDENTREE_EXTERNAL_URL: "http://localhost:8092"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-keycloak"
+
+      # Bridge mode — lldap serves LDAP; identree only handles PAM challenges
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "false"
+
+      # Auth flow
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+
+      # Storage
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_ESCROW_BACKEND: "local"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "c36eb4g2g5fge5gfef64c0ge0319eeg7d3191715d6gf228181784c13gfg2g52"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8092:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: ../../..
+      dockerfile: test/testclient/Dockerfile
+    container_name: identree-keycloak-client
+    hostname: keycloak-test-host
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      lldap:
+        condition: service_healthy
+    environment:
+      # NSS from lldap (rfc2307bis schema — same as lldap-dex env)
+      LDAP_URI: "ldap://lldap:3890"
+      LDAP_BASE: "dc=test,dc=local"
+      LDAP_BIND_DN: "uid=admin,ou=people,dc=test,dc=local"
+      LDAP_BIND_PW: "lldap-admin-pass"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
+      SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
+      SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
+
+      # Static sudoers — bridge mode has no LDAP sudoers tree
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
+
+      # identree
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-keycloak"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  lldap-data:
+  keycloak-data:
+  identree-data:
