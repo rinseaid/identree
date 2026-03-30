@@ -17,7 +17,9 @@ tls_key   = "/certs/server.key"
 # match this, and IDENTREE_OIDC_ISSUER_URL=https://kanidm:8443/... for
 # server-side discovery (InsecureIssuerURLContext bridges the gap).
 origin = "https://localhost:8443"
-domain = "test.local"
+# domain must be a parent of origin's hostname (Kanidm 1.9+ enforces this).
+# "localhost" is both the origin hostname and a valid single-label domain.
+domain = "localhost"
 
 db_path     = "/data/kanidm.db"
 db_arc_size = 2048
