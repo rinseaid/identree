@@ -67,7 +67,7 @@ jobs:
       - name: Wait for sssd to populate
         run: |
           echo "Waiting for sssd group membership..."
-          timeout 60 bash -c 'until docker exec identree-lldap-dex-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          timeout 60 bash -c 'until docker exec identree-lldap-dex-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
           echo "sssd ready."
 
       - name: Validate environment
@@ -140,7 +140,7 @@ jobs:
       - name: Wait for sssd to populate
         run: |
           echo "Waiting for sssd group membership..."
-          timeout 60 bash -c 'until docker exec identree-keycloak-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          timeout 60 bash -c 'until docker exec identree-keycloak-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
           echo "sssd ready."
 
       - name: Validate environment
@@ -208,7 +208,7 @@ jobs:
       - name: Wait for sssd to populate
         run: |
           echo "Waiting for sssd group membership..."
-          timeout 60 bash -c 'until docker exec identree-kanidm-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          timeout 60 bash -c 'until docker exec identree-kanidm-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
           echo "sssd ready."
 
       - name: Validate environment
@@ -263,7 +263,7 @@ jobs:
       - name: Wait for sssd to populate
         run: |
           echo "Waiting for sssd group membership..."
-          timeout 60 bash -c 'until docker exec identree-vault-escrow-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          timeout 60 bash -c 'until docker exec identree-vault-escrow-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
           echo "sssd ready."
 
       - name: Validate environment
@@ -330,7 +330,7 @@ jobs:
       - name: Wait for sssd to populate
         run: |
           echo "Waiting for sssd group membership..."
-          timeout 60 bash -c 'until docker exec identree-infisical-escrow-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          timeout 60 bash -c 'until docker exec identree-infisical-escrow-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
           echo "sssd ready."
 
       - name: Validate environment
@@ -391,7 +391,7 @@ jobs:
       - name: Wait for sssd to populate
         run: |
           echo "Waiting for sssd group membership..."
-          timeout 60 bash -c 'until docker exec identree-openldap-dex-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          timeout 60 bash -c 'until docker exec identree-openldap-dex-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
           echo "sssd ready."
 
       - name: Validate environment
@@ -451,7 +451,7 @@ jobs:
       - name: Wait for LDAP outpost to connect and sssd to populate
         run: |
           echo "Waiting for sssd group membership..."
-          timeout 60 bash -c 'until docker exec identree-authentik-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          timeout 60 bash -c 'until docker exec identree-authentik-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
           echo "sssd ready."
 
       - name: Wait for identree to be healthy after restart
@@ -518,7 +518,7 @@ jobs:
       - name: Wait for sssd to populate
         run: |
           echo "Waiting for sssd group membership..."
-          timeout 60 bash -c 'until docker exec identree-samba-ad-dex-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          timeout 60 bash -c 'until docker exec identree-samba-ad-dex-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
           echo "sssd ready."
 
       - name: Validate environment
