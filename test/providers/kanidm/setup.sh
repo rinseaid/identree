@@ -16,19 +16,19 @@
 # exec invocations (the container filesystem persists between exec calls).
 set -euo pipefail
 
-KC_URL="http://localhost:8443"
+KC_URL="https://localhost:8443"
 CONTAINER="identree-kanidm-server"
 HOME_DIR="/tmp/kanidm-home"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-wait_for() { echo "==> Waiting for ${2}..."; until curl -sf "$1" >/dev/null 2>&1; do sleep 2; done; echo "    ${2} ready."; }
+wait_for() { echo "==> Waiting for ${2}..."; until curl -skf "$1" >/dev/null 2>&1; do sleep 2; done; echo "    ${2} ready."; }
 
 # Run a kanidm CLI command inside the container with a consistent HOME dir
 # so the session token cache persists between exec invocations.
 ke() {
     docker exec -e HOME="${HOME_DIR}" "${CONTAINER}" \
-        kanidm "$@" -H "http://localhost:8443" --skip-hostname-verification 2>&1
+        kanidm "$@" -H "https://localhost:8443" --skip-hostname-verification 2>&1
 }
 
 # ── Wait for Kanidm ────────────────────────────────────────────────────────────
@@ -61,10 +61,10 @@ echo "    idm_admin recovered."
 echo "==> Logging in as idm_admin..."
 printf '%s\n' "$IDM_ADMIN_PW" | \
     docker exec -i -e HOME="${HOME_DIR}" "${CONTAINER}" \
-    kanidm login -D idm_admin -H http://localhost:8443 --skip-hostname-verification || {
+    kanidm login -D idm_admin -H https://localhost:8443 --skip-hostname-verification || {
     echo "ERROR: kanidm login failed. The kanidm CLI in this container version"
     echo "may require interactive authentication."
-    echo "Try manually: docker exec -it ${CONTAINER} kanidm login -D idm_admin -H http://localhost:8443"
+    echo "Try manually: docker exec -it ${CONTAINER} kanidm login -D idm_admin -H https://localhost:8443"
     exit 1
 }
 
@@ -124,7 +124,7 @@ echo "════════════════════════�
 echo "  Kanidm test environment ready"
 echo ""
 echo "  Services:"
-echo "    Kanidm:    http://localhost:8443   (admin recovered above)"
+echo "    Kanidm:    https://localhost:8443   (admin recovered above)"
 echo "    identree:  http://localhost:8093"
 echo "    LDAP:      ldap://localhost:3636   base=dc=test,dc=local"
 echo ""

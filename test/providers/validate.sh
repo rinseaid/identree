@@ -68,22 +68,24 @@ check "identree /healthz" curl -sf "${IDENTREE_URL}/healthz"
 #   Keycloak: <issuer>/.well-known/openid-configuration
 #   Kanidm:   <issuer>/.well-known/openid-configuration
 check "OIDC discovery endpoint reachable" \
-    curl -sf "${OIDC_ISSUER}/.well-known/openid-configuration"
+    curl -skf "${OIDC_ISSUER}/.well-known/openid-configuration"
 
 check_output "OIDC issuer field matches" \
     "\"issuer\"" \
-    curl -sf "${OIDC_ISSUER}/.well-known/openid-configuration"
+    curl -skf "${OIDC_ISSUER}/.well-known/openid-configuration"
 
 # ── 3. LDAP connectivity (if URI given) ────────────────────────────────────────
-# Uses bash /dev/tcp for pure TCP check (works without nc).
-# Tries both the given host and host.docker.internal (macOS Docker Desktop
-# maps 127.0.0.1-bound host ports via that alias).
+# Uses the internal LDAP URI from the container's sssd.conf rather than the
+# host-side URI arg — works in CI where host.docker.internal is unavailable.
+# Uses bash /dev/tcp for a pure TCP port check (works without nc).
 if [ -n "$LDAP_URI" ]; then
-    LDAP_PORT=$(echo "${LDAP_URI}" | sed 's|ldap://||' | cut -d: -f2)
-    LDAP_HOST=$(echo "${LDAP_URI}" | sed 's|ldap://||' | cut -d: -f1)
+    INTERNAL_URI=$(docker exec "${CLIENT}" bash -c \
+        "grep '^ldap_uri' /etc/sssd/sssd.conf 2>/dev/null | head -1 | awk '{print \$3}'" 2>/dev/null || echo "${LDAP_URI}")
+    LDAP_HOST=$(echo "${INTERNAL_URI}" | sed 's|ldaps\?://||' | cut -d: -f1)
+    LDAP_PORT=$(echo "${INTERNAL_URI}" | sed 's|ldaps\?://||' | cut -d: -f2)
     check "LDAP port reachable from testclient" \
         docker exec "${CLIENT}" \
-        bash -c "echo > /dev/tcp/${LDAP_HOST}/${LDAP_PORT} 2>/dev/null || echo > /dev/tcp/host.docker.internal/${LDAP_PORT} 2>/dev/null"
+        bash -c "echo > /dev/tcp/${LDAP_HOST}/${LDAP_PORT} 2>/dev/null"
 fi
 
 # ── 4. NSS user resolution ────────────────────────────────────────────────────

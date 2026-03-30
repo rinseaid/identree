@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -73,6 +74,10 @@ type Server struct {
 	removedUsers   map[string]time.Time
 	removedUsersMu sync.Mutex
 
+	// oidcHTTPClient is the HTTP client used for OIDC discovery and token exchange.
+	// When OIDCInsecureSkipVerify is set it uses InsecureSkipVerify (test only).
+	oidcHTTPClient *http.Client
+
 	// webhookClient is the hardened HTTP client for outbound notifications.
 	// Initialised in NewServer with the configured NotifyTimeout.
 	webhookClient *http.Client
@@ -85,9 +90,24 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	var oidcConfig oauth2.Config
 	var verifier *oidc.IDTokenVerifier
 
+	oidcTransport := http.DefaultTransport
+	if cfg.OIDCInsecureSkipVerify {
+		oidcTransport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test environments with self-signed certs only
+		}
+	}
+	oidcHTTPClient := &http.Client{
+		Timeout:   oidcExchangeTimeout,
+		Transport: oidcTransport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
 	if !cfg.DevLoginEnabled {
 		discoveryClient := &http.Client{
-			Timeout: oidcDiscoveryTimeout,
+			Timeout:   oidcDiscoveryTimeout,
+			Transport: oidcTransport,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -132,6 +152,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		deployRL:      newDeployRateLimiter(),
 		removedUsers:  make(map[string]time.Time),
 		ldapRefreshCh:  make(chan struct{}, 1),
+		oidcHTTPClient: oidcHTTPClient,
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
 		sudoRules:      store,
 		webhookClient: &http.Client{

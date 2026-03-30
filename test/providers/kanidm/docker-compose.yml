@@ -1,18 +1,40 @@
 services:
+  # Generate a self-signed TLS certificate for Kanidm before it starts.
+  # Kanidm 1.9+ requires TLS; the cert is only for test environments.
+  init-certs:
+    image: alpine:3.19
+    container_name: identree-kanidm-init-certs
+    volumes:
+      - kanidm-certs:/certs
+    command: >
+      sh -c "
+        apk add -q --no-cache openssl &&
+        openssl req -x509 -newkey rsa:2048
+          -keyout /certs/server.key
+          -out /certs/server.crt
+          -days 3650 -nodes
+          -subj '/CN=kanidm'
+      "
+    restart: "no"
+
   kanidm:
     image: docker.io/kanidm/server:latest
     container_name: identree-kanidm-server
     restart: unless-stopped
-    # Mount our server.toml which configures plain HTTP mode (no TLS).
+    depends_on:
+      init-certs:
+        condition: service_completed_successfully
+    # Mount our server.toml and the generated TLS certificate.
     volumes:
       - ./server.toml:/data/server.toml:ro
       - kanidm-data:/data
+      - kanidm-certs:/certs:ro
     ports:
-      - "127.0.0.1:8443:8443"    # OIDC / admin UI
-      - "127.0.0.1:3636:3636"    # LDAP (plain, no TLS)
+      - "127.0.0.1:8443:8443"    # OIDC / admin UI (HTTPS)
+      - "127.0.0.1:3636:3636"    # LDAP (LDAPS with TLS)
     healthcheck:
-      # Kanidm's status endpoint returns 200 when ready
-      test: ["CMD", "curl", "-sf", "http://localhost:8443/status"]
+      # Kanidm's status endpoint — use -k because cert is self-signed
+      test: ["CMD", "curl", "-skf", "https://localhost:8443/status"]
       interval: 15s
       timeout: 10s
       retries: 15
@@ -32,14 +54,16 @@ services:
         condition: service_healthy
     environment:
       # OIDC — Kanidm per-client issuer URL format: <origin>/oauth2/openid/<client_name>
-      # Internal: identree fetches discovery from the Docker-internal hostname.
-      # Public: the iss claim in tokens uses origin from server.toml (localhost).
+      # Internal: identree fetches discovery from the Docker-internal hostname (HTTPS).
+      # Public: the iss claim in tokens uses origin from server.toml (localhost HTTPS).
       # InsecureIssuerURLContext allows the iss/fetch mismatch in test environments.
-      IDENTREE_OIDC_ISSUER_URL: "http://kanidm:8443/oauth2/openid/identree-test"
-      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:8443/oauth2/openid/identree-test"
+      # InsecureSkipVerify skips TLS verification for the self-signed cert.
+      IDENTREE_OIDC_ISSUER_URL: "https://kanidm:8443/oauth2/openid/identree-test"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "https://localhost:8443/oauth2/openid/identree-test"
       IDENTREE_OIDC_CLIENT_ID: "identree-test"
       # Client secret set by setup.sh — supply via env or update after running setup
       IDENTREE_OIDC_CLIENT_SECRET: "${KANIDM_CLIENT_SECRET:-}"
+      IDENTREE_OIDC_INSECURE_SKIP_VERIFY: "true"
 
       # Server
       IDENTREE_EXTERNAL_URL: "http://localhost:8093"
@@ -85,7 +109,8 @@ services:
       # Kanidm LDAP — rfc2307bis with posixaccount/posixgroup objectClasses.
       # Users appear at: spn=username@domain,dc=kanidm,dc=test,dc=local
       # Kanidm's base DN is derived from the domain in server.toml: dc=test,dc=local
-      LDAP_URI: "ldap://kanidm:3636"
+      # With TLS required (Kanidm 1.9+), the LDAP port uses LDAPS (implicit TLS).
+      LDAP_URI: "ldaps://kanidm:3636"
       LDAP_BASE: "dc=test,dc=local"
       SSSD_SCHEMA: "rfc2307bis"
       SSSD_USER_OBJECT_CLASS: "posixaccount"
@@ -105,4 +130,5 @@ services:
 
 volumes:
   kanidm-data:
+  kanidm-certs:
   identree-data:

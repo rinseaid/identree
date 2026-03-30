@@ -65,7 +65,10 @@ jobs:
         run: make test-lldap-dex-setup
 
       - name: Wait for sssd to populate (lldap enumeration)
-        run: sleep 15
+        run: |
+          echo "Waiting for sssd group membership..."
+          timeout 90 bash -c 'until docker exec identree-lldap-dex-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          echo "sssd ready."
 
       - name: Validate environment
         run: make test-lldap-dex-validate
@@ -135,7 +138,10 @@ jobs:
           timeout 60 bash -c 'until curl -sf http://localhost:8092/healthz; do sleep 3; done'
 
       - name: Wait for sssd to populate
-        run: sleep 15
+        run: |
+          echo "Waiting for sssd group membership..."
+          timeout 90 bash -c 'until docker exec identree-keycloak-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          echo "sssd ready."
 
       - name: Validate environment
         run: make test-keycloak-validate
@@ -177,8 +183,8 @@ jobs:
 
       - name: Wait for Kanidm to be ready
         run: |
-          echo "Waiting for Kanidm..."
-          timeout 120 bash -c 'until curl -sf http://localhost:8443/status; do sleep 3; done'
+          echo "Waiting for Kanidm (HTTPS)..."
+          timeout 120 bash -c 'until curl -skf https://localhost:8443/status; do sleep 3; done'
           echo "Waiting for identree..."
           timeout 60 bash -c 'until curl -sf http://localhost:8093/healthz; do sleep 3; done'
           echo "All services healthy."
@@ -198,7 +204,10 @@ jobs:
           timeout 60 bash -c 'until curl -sf http://localhost:8093/healthz; do sleep 3; done'
 
       - name: Wait for sssd to populate (Kanidm LDAP enumeration)
-        run: sleep 20
+        run: |
+          echo "Waiting for sssd group membership..."
+          timeout 120 bash -c 'until docker exec identree-kanidm-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          echo "sssd ready."
 
       - name: Validate environment
         run: make test-kanidm-validate
@@ -250,7 +259,10 @@ jobs:
         run: make test-vault-escrow-setup
 
       - name: Wait for sssd to populate
-        run: sleep 15
+        run: |
+          echo "Waiting for sssd group membership..."
+          timeout 90 bash -c 'until docker exec identree-vault-escrow-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          echo "sssd ready."
 
       - name: Validate environment
         run: make test-vault-escrow-validate
@@ -314,7 +326,10 @@ jobs:
         run: make test-infisical-escrow-setup
 
       - name: Wait for sssd to populate
-        run: sleep 15
+        run: |
+          echo "Waiting for sssd group membership..."
+          timeout 90 bash -c 'until docker exec identree-infisical-escrow-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          echo "sssd ready."
 
       - name: Validate environment
         run: make test-infisical-escrow-validate
@@ -372,7 +387,10 @@ jobs:
         run: make test-openldap-dex-setup
 
       - name: Wait for sssd to populate
-        run: sleep 15
+        run: |
+          echo "Waiting for sssd group membership..."
+          timeout 90 bash -c 'until docker exec identree-openldap-dex-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          echo "sssd ready."
 
       - name: Validate environment
         run: make test-openldap-dex-validate
@@ -429,7 +447,10 @@ jobs:
         run: make test-authentik-setup
 
       - name: Wait for LDAP outpost to connect and sssd to populate
-        run: sleep 30
+        run: |
+          echo "Waiting for sssd group membership..."
+          timeout 120 bash -c 'until docker exec identree-authentik-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          echo "sssd ready."
 
       - name: Wait for identree to be healthy after restart
         run: timeout 60 bash -c 'until curl -sf http://localhost:8098/healthz; do sleep 3; done'
@@ -493,7 +514,10 @@ jobs:
         run: make test-samba-ad-dex-setup
 
       - name: Wait for sssd to populate (AD enumeration)
-        run: sleep 20
+        run: |
+          echo "Waiting for sssd group membership..."
+          timeout 120 bash -c 'until docker exec identree-samba-ad-dex-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
+          echo "sssd ready."
 
       - name: Validate environment
         run: make test-samba-ad-dex-validate

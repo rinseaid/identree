@@ -85,8 +85,8 @@ test-kanidm-validate:
 	bash test/providers/validate.sh \
 		identree-kanidm-client \
 		http://localhost:8093 \
-		"http://localhost:8443/oauth2/openid/identree-test" \
-		ldap://localhost:3636
+		"https://localhost:8443/oauth2/openid/identree-test" \
+		ldaps://localhost:3636
 
 # ── Vault escrow (bridge mode + Vault KV v2) ──────────────────────────────────
 .PHONY: test-vault-escrow test-vault-escrow-down test-vault-escrow-logs test-vault-escrow-setup test-vault-escrow-validate

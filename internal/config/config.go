@@ -31,10 +31,11 @@ const (
 // ServerConfig holds all configuration for identree in server mode.
 type ServerConfig struct {
 	// ── OIDC ──────────────────────────────────────────────────────────────────
-	IssuerURL       string // OIDC issuer (PocketID base URL) — used for discovery/token exchange
-	IssuerPublicURL string // Optional public-facing PocketID URL (rewrites auth redirects for split internal/external routing)
-	ClientID        string // OIDC client ID
-	ClientSecret    string // OIDC client secret
+	IssuerURL              string // OIDC issuer (PocketID base URL) — used for discovery/token exchange
+	IssuerPublicURL        string // Optional public-facing PocketID URL (rewrites auth redirects for split internal/external routing)
+	ClientID               string // OIDC client ID
+	ClientSecret           string // OIDC client secret
+	OIDCInsecureSkipVerify bool   // Skip TLS verification for OIDC discovery (test environments with self-signed certs only)
 
 	// ── PocketID API ──────────────────────────────────────────────────────────
 	// APIKey enables full mode (PocketID backend). When set, identree fetches
@@ -239,10 +240,11 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 
 	cfg := &ServerConfig{
-		IssuerURL:       get("IDENTREE_OIDC_ISSUER_URL"),
-		IssuerPublicURL: get("IDENTREE_OIDC_ISSUER_PUBLIC_URL"),
-		ClientID:        get("IDENTREE_OIDC_CLIENT_ID"),
-		ClientSecret:    get("IDENTREE_OIDC_CLIENT_SECRET"),
+		IssuerURL:              get("IDENTREE_OIDC_ISSUER_URL"),
+		IssuerPublicURL:        get("IDENTREE_OIDC_ISSUER_PUBLIC_URL"),
+		ClientID:               get("IDENTREE_OIDC_CLIENT_ID"),
+		ClientSecret:           get("IDENTREE_OIDC_CLIENT_SECRET"),
+		OIDCInsecureSkipVerify: get("IDENTREE_OIDC_INSECURE_SKIP_VERIFY") == "true",
 		APIKey:       get("IDENTREE_POCKETID_API_KEY"),
 		APIURL:       get("IDENTREE_POCKETID_API_URL"),
 

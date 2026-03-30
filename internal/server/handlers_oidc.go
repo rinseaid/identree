@@ -130,13 +130,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	// Exchange code for token
 	exchangeCtx, cancel := context.WithTimeout(r.Context(), oidcExchangeTimeout)
 	defer cancel()
-	exchangeClient := &http.Client{
-		Timeout: oidcExchangeTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	exchangeCtx = context.WithValue(exchangeCtx, oauth2.HTTPClient, exchangeClient)
+	exchangeCtx = context.WithValue(exchangeCtx, oauth2.HTTPClient, s.oidcHTTPClient)
 
 	exchangeStart := time.Now()
 	token, err := s.oidcConfig.Exchange(exchangeCtx, code)

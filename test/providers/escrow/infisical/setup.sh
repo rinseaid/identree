@@ -285,6 +285,13 @@ echo "    Waiting for identree to be healthy..."
 timeout 60 bash -c 'until curl -sf http://localhost:8096/healthz >/dev/null 2>&1; do sleep 3; done'
 echo "    identree ready."
 
+# Re-run rotate-breakglass now that identree has real Infisical credentials.
+# The initial run in entrypoint.sh used the local escrow backend (Infisical
+# credentials weren't set yet), so the secret was never written to Infisical.
+echo "==> Running rotate-breakglass to write secret to Infisical..."
+docker exec "${CLIENT}" identree rotate-breakglass && echo "    Break-glass secret written to Infisical." || \
+    echo "    WARNING: rotate-breakglass failed — check identree logs."
+
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo ""
 echo "════════════════════════════════════════════════════════════"
