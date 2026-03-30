@@ -42,13 +42,13 @@ services:
     ports:
       - "127.0.0.1:8180:8080"
     healthcheck:
-      # start-dev does a Quarkus build on every startup which can take 5-7 min
+      # start-dev does a Quarkus build on every startup which can take 8-10 min
       # on GitHub Actions runners; use a generous start_period + retries.
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health/ready"]
       interval: 15s
       timeout: 10s
-      retries: 20
-      start_period: 180s
+      retries: 40
+      start_period: 300s
 
   identree:
     build:

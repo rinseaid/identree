@@ -173,7 +173,7 @@ jobs:
       github.event_name != 'workflow_dispatch' ||
       github.event.inputs.provider == 'all' ||
       github.event.inputs.provider == 'kanidm'
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
