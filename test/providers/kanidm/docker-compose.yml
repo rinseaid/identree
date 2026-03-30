@@ -32,11 +32,12 @@ services:
       # kanidm/server is a minimal Debian image with no curl/wget.
       # Port 8443 (0x20FB) is listening when the server is ready; check via
       # /proc/net/tcp6 (IPv4-mapped) which is always available on Linux.
+      # Kanidm 1.9 runs a full DB integrity check before binding — allow 10min.
       test: ["CMD-SHELL", "grep -q ':20FB ' /proc/net/tcp6 2>/dev/null || grep -q ':20FB ' /proc/net/tcp 2>/dev/null"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 60
-      start_period: 10s
+      start_period: 60s
 
   identree:
     build:
