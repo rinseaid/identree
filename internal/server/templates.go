@@ -1101,7 +1101,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var justMineActive=false,myUsername='';
-      var sessionsAdminPage=1,sessionsAdminPs=15;
+      var sessionsAdminPage=1,sessionsAdminPs={{.DefaultPageSize}};
       function renderSessionsAdminPager(vis){
         var bar=document.getElementById('sessions-admin-pagination');
         if(!bar)return;
@@ -1223,7 +1223,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var activeOnly=false;
-      var sessionsUserPage=1,sessionsUserPs=15;
+      var sessionsUserPage=1,sessionsUserPs={{.DefaultPageSize}};
       function renderSessionsUserPager(vis){
         var bar=document.getElementById('sessions-user-pagination');
         if(!bar)return;
@@ -2249,7 +2249,7 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="pagination-bar" id="users-pagination"></div>
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var usersPage=1,usersPs=15;
+      var usersPage=1,usersPs={{.DefaultPageSize}};
       function hideRowAndPanel(r){r.style.display='none';var p=r.nextElementSibling;if(p&&p.classList.contains('user-claims-panel')){p.style.display='none';}}
       function renderUsersPager(vis){
         var bar=document.getElementById('users-pagination');
@@ -2457,7 +2457,7 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="pagination-bar" id="groups-pagination"></div>
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var groupsPage=1,groupsPs=15;
+      var groupsPage=1,groupsPs={{.DefaultPageSize}};
       function renderGroupsPager(vis){
         var bar=document.getElementById('groups-pagination');
         if(!bar)return;
@@ -2607,7 +2607,7 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="pagination-bar" id="hosts-pagination"></div>
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var hostsPage=1,hostsPs=15;
+      var hostsPage=1,hostsPs={{.DefaultPageSize}};
       function renderHostsPager(vis){
         var bar=document.getElementById('hosts-pagination');
         if(!bar)return;
@@ -3309,7 +3309,7 @@ const accessPageHTML = `<!DOCTYPE html>
     (function(){
       var accessJustMeActive=false,accessMyUsername='';
       var accessActiveOnlyActive=false;
-      var accessPage=1,accessPs=15;
+      var accessPage=1,accessPs={{.DefaultPageSize}};
       function renderAccessPager(vis){
         var bar=document.getElementById('access-pagination');
         if(!bar)return;

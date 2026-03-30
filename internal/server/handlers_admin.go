@@ -237,6 +237,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"ActivePage":          "admin",
 		"AdminTab":            "info",
 		"BridgeMode":          s.isBridgeMode(),
+		"DefaultPageSize":     s.cfg.DefaultPageSize,
 		"Theme":               getTheme(r),
 		"CSPNonce":            cspNonce(r),
 		"T":                   T(lang),
@@ -420,6 +421,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		"ActivePage":    "admin",
 		"AdminTab":      "config",
 		"BridgeMode":    s.isBridgeMode(),
+		"DefaultPageSize": s.cfg.DefaultPageSize,
 		"Theme":         getTheme(r),
 		"CSPNonce":      cspNonce(r),
 		"T":             T(lang),
@@ -490,7 +492,7 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS": strconv.Itoa(cfg.ClientBreakglassRotationDays),
 		"IDENTREE_CLIENT_TOKEN_CACHE_ENABLED":      tokenCache,
 		"IDENTREE_HOST_REGISTRY_FILE":              cfg.HostRegistryFile,
-		"IDENTREE_HISTORY_PAGE_SIZE":               strconv.Itoa(cfg.DefaultHistoryPageSize),
+		"IDENTREE_PAGE_SIZE":                       strconv.Itoa(cfg.DefaultPageSize),
 		"IDENTREE_SESSION_STATE_FILE":              cfg.SessionStateFile,
 		"IDENTREE_DEV_LOGIN":                       boolToString(cfg.DevLoginEnabled),
 	}
@@ -722,8 +724,8 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 			s.cfg.ClientTokenCacheEnabled = nil
 		}
 	}
-	if !config.IsEnvSourced("IDENTREE_HISTORY_PAGE_SIZE") {
-		s.cfg.DefaultHistoryPageSize = parseInt("IDENTREE_HISTORY_PAGE_SIZE", s.cfg.DefaultHistoryPageSize)
+	if !config.IsEnvSourced("IDENTREE_PAGE_SIZE") {
+		s.cfg.DefaultPageSize = parseInt("IDENTREE_PAGE_SIZE", s.cfg.DefaultPageSize)
 	}
 	if !config.IsEnvSourced("IDENTREE_SUDO_NO_AUTHENTICATE") {
 		if v := values["IDENTREE_SUDO_NO_AUTHENTICATE"]; v == "true" || v == "false" || v == "claims" {
@@ -968,6 +970,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		"ActivePage":    "admin",
 		"AdminTab":      "users",
 		"BridgeMode":    s.isBridgeMode(),
+		"DefaultPageSize": s.cfg.DefaultPageSize,
 		"Theme":         getTheme(r),
 		"CSPNonce":      cspNonce(r),
 		"T":             T(lang),
@@ -1151,6 +1154,7 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		"Timezone":      adminTZ,
 		"AdminTab":      "groups",
 		"BridgeMode":    s.isBridgeMode(),
+		"DefaultPageSize": s.cfg.DefaultPageSize,
 		"Groups":        groups,
 		"GroupSort":     sortBy,
 		"GroupDir":      sortDir,
@@ -1539,6 +1543,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"Durations":        durations,
 		"ActivePage":       "admin",
 		"AdminTab":         "hosts",
+		"DefaultPageSize":  s.cfg.DefaultPageSize,
 		"Theme":            getTheme(r),
 		"CSPNonce":         cspNonce(r),
 		"T":                T(lang),

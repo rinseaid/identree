@@ -490,6 +490,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":           isAdmin,
 		"AdminTab":          "",
 		"BridgeMode":        s.isBridgeMode(),
+		"DefaultPageSize":   s.cfg.DefaultPageSize,
 		"Durations":         elevateDurations,
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
@@ -832,11 +833,12 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		"Lang":       lang,
 		"Languages":  supportedLanguages,
 		"IsAdmin":    isAdmin,
-		"AdminTab":   "",
-		"BridgeMode": s.isBridgeMode(),
-		"Durations":  elevateDurations,
-		"FilterUser": accessFilterUser,
-		"Pending":    s.buildPendingViews(username, lang),
+		"AdminTab":        "",
+		"BridgeMode":      s.isBridgeMode(),
+		"DefaultPageSize": s.cfg.DefaultPageSize,
+		"Durations":       elevateDurations,
+		"FilterUser":      accessFilterUser,
+		"Pending":         s.buildPendingViews(username, lang),
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
 	}
@@ -1057,7 +1059,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse per_page with validation
-	perPage := s.cfg.DefaultHistoryPageSize
+	perPage := s.cfg.DefaultPageSize
 	if pp, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil {
 		validSizes := map[int]bool{15: true, 30: true, 50: true, 100: true}
 		if validSizes[pp] {
@@ -1415,6 +1417,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":         isAdmin,
 		"AdminTab":        "",
 		"BridgeMode":      s.isBridgeMode(),
+		"DefaultPageSize": s.cfg.DefaultPageSize,
 		"CSRFToken":       historyCSRFToken,
 		"CSRFTs":          historyCSRFTs,
 		"Pending":         s.buildPendingViews(username, lang),

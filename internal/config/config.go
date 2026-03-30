@@ -115,8 +115,8 @@ type ServerConfig struct {
 	// ── Host registry ─────────────────────────────────────────────────────────
 	HostRegistryFile string
 
-	// ── History ───────────────────────────────────────────────────────────────
-	DefaultHistoryPageSize int
+	// ── UI ────────────────────────────────────────────────────────────────────
+	DefaultPageSize int
 
 	// ── Session state ─────────────────────────────────────────────────────────
 	SessionStateFile string
@@ -291,7 +291,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		EscrowEncryptionKey:  get("IDENTREE_ESCROW_ENCRYPTION_KEY"),
 
 		HostRegistryFile:       stringDefault(get("IDENTREE_HOST_REGISTRY_FILE"), "/config/hosts.json"),
-		DefaultHistoryPageSize: getInt("IDENTREE_HISTORY_PAGE_SIZE", 15),
+		DefaultPageSize: getInt("IDENTREE_PAGE_SIZE", 15),
 		SessionStateFile:       stringDefault(get("IDENTREE_SESSION_STATE_FILE"), "/config/sessions.json"),
 
 		ClientPollInterval:           getDuration("IDENTREE_CLIENT_POLL_INTERVAL", 0),
