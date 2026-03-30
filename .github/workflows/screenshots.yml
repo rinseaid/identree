@@ -112,8 +112,9 @@ jobs:
           cp screenshots/*-split.png    "$DEST/docs/screenshots/" 2>/dev/null || true
           cp screenshots/elevation-*.png "$DEST/docs/screenshots/" 2>/dev/null || true
           cd "$DEST"
-          git rm -rf docs/screenshots/*.png 2>/dev/null || true
-          git add docs/screenshots/
+          # git add -A handles additions (new screenshots) and deletions (screenshots
+          # that no longer exist) without removing the newly copied files.
+          git add -A docs/screenshots/
           git diff --cached --quiet || git commit -m "Update UI screenshots (from ${{ github.sha }})"
           git push origin HEAD:screenshots
 
