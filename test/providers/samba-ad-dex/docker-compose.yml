@@ -1,0 +1,122 @@
+services:
+  samba:
+    image: diegogslomp/samba-ad-dc
+    container_name: identree-samba-ad-dex-dc
+    hostname: dc.samba.test.local
+    restart: unless-stopped
+    environment:
+      SAMBA_DOMAIN: SAMBA
+      SAMBA_REALM: SAMBA.TEST.LOCAL
+      SAMBA_ADMIN_PASSWORD: "Admin@samba1"
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    ports:
+      - "127.0.0.1:3897:389"
+    healthcheck:
+      test: ["CMD-SHELL", "samba-tool domain info 127.0.0.1 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  dex:
+    image: dexidp/dex:v2.41.0
+    container_name: identree-samba-ad-dex-dex
+    restart: unless-stopped
+    depends_on:
+      samba:
+        condition: service_healthy
+    volumes:
+      - ./dex-config.yaml:/etc/dex/config.yaml:ro
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "127.0.0.1:5560:5556"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5556/dex/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  identree:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: identree-samba-ad-dex-server
+    restart: unless-stopped
+    depends_on:
+      dex:
+        condition: service_healthy
+    environment:
+      IDENTREE_OIDC_ISSUER_URL: "http://dex:5556/dex"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:5560/dex"
+      IDENTREE_OIDC_CLIENT_ID: "identree"
+      IDENTREE_OIDC_CLIENT_SECRET: "identree-dex-secret"
+
+      IDENTREE_EXTERNAL_URL: "http://localhost:8099"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-samba-ad-dex"
+
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "false"
+
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_ESCROW_BACKEND: "local"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "d4e7a1f8b2c5e0d3a6f9b4c7e2a5d8f1b3c6e9a0d5f2b7e4a1c8d3f6a9b2e5c0"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8099:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: ../../..
+      dockerfile: test/testclient/Dockerfile
+    container_name: identree-samba-ad-dex-client
+    hostname: samba-ad-dex-test-host
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      samba:
+        condition: service_healthy
+    environment:
+      # Samba AD DC: AD schema with SID-based ID mapping.
+      # Users/groups live under CN=Users; sAMAccountName is the login name.
+      # ldap_schema=ad implicitly enables ldap_id_mapping=true (SID → UID/GID)
+      # and defaults ldap_user_name=sAMAccountName, ldap_user_object_class=user,
+      # ldap_group_object_class=group, ldap_group_member=member.
+      LDAP_URI: "ldap://samba:389"
+      LDAP_BASE: "dc=samba,dc=test,dc=local"
+      LDAP_BIND_DN: "CN=Administrator,CN=Users,DC=samba,DC=test,DC=local"
+      LDAP_BIND_PW: "Admin@samba1"
+      LDAP_USER_SEARCH_BASE: "CN=Users,DC=samba,DC=test,DC=local"
+      LDAP_GROUP_SEARCH_BASE: "CN=Users,DC=samba,DC=test,DC=local"
+      SSSD_SCHEMA: "ad"
+
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
+
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-samba-ad-dex"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  identree-data:

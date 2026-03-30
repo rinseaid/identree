@@ -168,7 +168,29 @@ test-authentik-validate:
 		"http://localhost:9000/application/o/identree" \
 		ldap://localhost:3896
 
+# ── Samba AD DC + Dex (bridge mode, AD schema) ────────────────────────────────
+.PHONY: test-samba-ad-dex test-samba-ad-dex-down test-samba-ad-dex-logs test-samba-ad-dex-setup test-samba-ad-dex-validate
+
+test-samba-ad-dex:
+	docker compose -f test/providers/samba-ad-dex/docker-compose.yml up --build -d
+
+test-samba-ad-dex-down:
+	docker compose -f test/providers/samba-ad-dex/docker-compose.yml down -v
+
+test-samba-ad-dex-logs:
+	docker compose -f test/providers/samba-ad-dex/docker-compose.yml logs -f identree
+
+test-samba-ad-dex-setup:
+	bash test/providers/samba-ad-dex/setup.sh
+
+test-samba-ad-dex-validate:
+	bash test/providers/validate.sh \
+		identree-samba-ad-dex-client \
+		http://localhost:8099 \
+		http://localhost:5560/dex \
+		ldap://localhost:3897
+
 # ── Convenience: bring down all environments ──────────────────────────────────
 .PHONY: down-all
 
-down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down test-openldap-dex-down test-authentik-down
+down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down test-openldap-dex-down test-authentik-down test-samba-ad-dex-down
