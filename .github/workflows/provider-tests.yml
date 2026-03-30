@@ -422,7 +422,7 @@ jobs:
           echo "Waiting for Authentik server..."
           timeout 180 bash -c 'until curl -sf http://localhost:9000/-/health/live/; do sleep 5; done'
           echo "Waiting for Authentik API (flows ready)..."
-          timeout 120 bash -c 'until curl -sf http://localhost:9000/api/v3/flows/instances/ -H "Authorization: Bearer identree-authentik-test-token" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get(\"count\",0)>0 else 1)" 2>/dev/null; do sleep 5; done'
+          timeout 120 bash -c 'until curl -sf http://localhost:9000/api/v3/flows/instances/ -H "Authorization: Bearer identree-authentik-test-token" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if len(d.get(\"results\",[]))>0 else 1)" 2>/dev/null; do sleep 5; done'
           echo "Authentik ready."
 
       - name: Run setup (users, groups, OIDC provider, LDAP outpost)
