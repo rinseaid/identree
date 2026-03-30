@@ -155,11 +155,13 @@ console.log("elevation-2 (browser — eve's pending challenge)...");
 const ctx2 = await browser.newContext({ viewport: BROWSER_VIEWPORT });
 const dashPage = await ctx2.newPage();
 await dashPage.setViewportSize(BROWSER_VIEWPORT);
-// Dev login as eve (the user who issued sudo)
+// Dev login as eve: sets pam_session cookie and redirects to /.
+// The redirect target (/) is already loaded when waitUntil:"load" resolves —
+// navigating to / a second time would trigger a fresh request that can race
+// against PocketID's OIDC state and end up authenticated as the wrong user.
 await dashPage.goto(`${BASE_URL}/dev/login?user=${USER}&role=user`, { waitUntil: "load" });
 await dashPage.emulateMedia({ colorScheme: "light" });
-// Navigate to dashboard — eve's pending challenge appears in the top bar
-await dashPage.goto(`${BASE_URL}/`, { waitUntil: "load" });
+// Already at / — wait for eve's pending challenge to appear in the top bar
 await dashPage.waitForSelector(".pending-bar", { timeout: 8000 }).catch(() => {});
 await dashPage.waitForTimeout(400);
 await dashPage.screenshot({ path: `${SCREENSHOTS_DIR}/elevation-2.png`, fullPage: false });
