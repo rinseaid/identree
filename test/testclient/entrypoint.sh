@@ -94,7 +94,7 @@ cat >> /etc/sssd/sssd.conf <<SSSD_REST
 
 ldap_id_use_start_tls = false
 ldap_tls_reqcert      = never
-enumerate             = true
+enumerate             = false
 
 # Do not cache credentials — identree handles auth; stale LDAP data should
 # not be served. Short refresh intervals keep user/group/sudo data current.
