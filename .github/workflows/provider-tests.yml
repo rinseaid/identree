@@ -68,6 +68,9 @@ jobs:
         run: |
           echo "Waiting for sssd group membership..."
           timeout 60 bash -c 'until docker exec identree-lldap-dex-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
+          # Prime user cache so group member DNs resolve during validate
+          docker exec identree-lldap-dex-client bash -c \
+            "getent passwd alice bob testadmin >/dev/null 2>&1; sss_cache -G 2>/dev/null; getent group developers admins >/dev/null 2>&1" || true
           echo "sssd ready."
 
       - name: Validate environment
@@ -141,6 +144,8 @@ jobs:
         run: |
           echo "Waiting for sssd group membership..."
           timeout 60 bash -c 'until docker exec identree-keycloak-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
+          docker exec identree-keycloak-client bash -c \
+            "getent passwd alice bob testadmin >/dev/null 2>&1; sss_cache -G 2>/dev/null; getent group developers admins >/dev/null 2>&1" || true
           echo "sssd ready."
 
       - name: Validate environment
@@ -209,6 +214,8 @@ jobs:
         run: |
           echo "Waiting for sssd group membership..."
           timeout 60 bash -c 'until docker exec identree-kanidm-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
+          docker exec identree-kanidm-client bash -c \
+            "getent passwd alice bob testadmin >/dev/null 2>&1; sss_cache -G 2>/dev/null; getent group developers admins >/dev/null 2>&1" || true
           echo "sssd ready."
 
       - name: Validate environment
@@ -264,6 +271,8 @@ jobs:
         run: |
           echo "Waiting for sssd group membership..."
           timeout 60 bash -c 'until docker exec identree-vault-escrow-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
+          docker exec identree-vault-escrow-client bash -c \
+            "getent passwd alice bob testadmin >/dev/null 2>&1; sss_cache -G 2>/dev/null; getent group developers admins >/dev/null 2>&1" || true
           echo "sssd ready."
 
       - name: Validate environment
@@ -331,6 +340,8 @@ jobs:
         run: |
           echo "Waiting for sssd group membership..."
           timeout 60 bash -c 'until docker exec identree-infisical-escrow-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
+          docker exec identree-infisical-escrow-client bash -c \
+            "getent passwd alice bob testadmin >/dev/null 2>&1; sss_cache -G 2>/dev/null; getent group developers admins >/dev/null 2>&1" || true
           echo "sssd ready."
 
       - name: Validate environment
@@ -392,6 +403,8 @@ jobs:
         run: |
           echo "Waiting for sssd group membership..."
           timeout 60 bash -c 'until docker exec identree-openldap-dex-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
+          docker exec identree-openldap-dex-client bash -c \
+            "getent passwd alice bob testadmin >/dev/null 2>&1; sss_cache -G 2>/dev/null; getent group developers admins >/dev/null 2>&1" || true
           echo "sssd ready."
 
       - name: Validate environment
@@ -452,6 +465,8 @@ jobs:
         run: |
           echo "Waiting for sssd group membership..."
           timeout 60 bash -c 'until docker exec identree-authentik-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
+          docker exec identree-authentik-client bash -c \
+            "getent passwd alice bob testadmin >/dev/null 2>&1; sss_cache -G 2>/dev/null; getent group developers admins >/dev/null 2>&1" || true
           echo "sssd ready."
 
       - name: Wait for identree to be healthy after restart
@@ -519,6 +534,8 @@ jobs:
         run: |
           echo "Waiting for sssd group membership..."
           timeout 60 bash -c 'until docker exec identree-samba-ad-dex-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
+          docker exec identree-samba-ad-dex-client bash -c \
+            "getent passwd alice bob testadmin >/dev/null 2>&1; sss_cache -G 2>/dev/null; getent group developers admins >/dev/null 2>&1" || true
           echo "sssd ready."
 
       - name: Validate environment
