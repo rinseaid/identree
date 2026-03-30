@@ -98,9 +98,14 @@ check_output "getent group developers" "developers" docker exec "${CLIENT}" gete
 check_output "getent group admins"     "admins"     docker exec "${CLIENT}" getent group admins
 
 # ── 6. Group membership ───────────────────────────────────────────────────────
-check_output "alice in developers"     "alice"     docker exec "${CLIENT}" getent group developers
-check_output "bob in developers"       "bob"       docker exec "${CLIENT}" getent group developers
-check_output "testadmin in admins"     "testadmin" docker exec "${CLIENT}" getent group admins
+# Use 'id' (initgroups path) rather than 'getent group' (getgrnam path).
+# With enumerate=false + rfc2307bis, getgrnam may return empty member lists
+# because SSSD resolves member DNs lazily. initgroups is the PAM-relevant
+# path: it answers "what groups does this user belong to?" which is what
+# sudo/PAM check at authentication time.
+check_output "alice in developers"     "developers" docker exec "${CLIENT}" id alice
+check_output "bob in developers"       "developers" docker exec "${CLIENT}" id bob
+check_output "testadmin in admins"     "admins"     docker exec "${CLIENT}" id testadmin
 
 # ── 7. PAM configuration ──────────────────────────────────────────────────────
 check_output "PAM sudo uses identree" "identree" \

@@ -64,8 +64,8 @@ check_output "getent passwd testadmin" "testadmin" docker exec "${CLIENT}" geten
 
 check_output "getent group developers" "developers" docker exec "${CLIENT}" getent group developers
 check_output "getent group admins"     "admins"     docker exec "${CLIENT}" getent group admins
-check_output "alice in developers"     "alice"      docker exec "${CLIENT}" getent group developers
-check_output "testadmin in admins"     "testadmin"  docker exec "${CLIENT}" getent group admins
+check_output "alice in developers"     "developers" docker exec "${CLIENT}" id alice
+check_output "testadmin in admins"     "admins"     docker exec "${CLIENT}" id testadmin
 
 # ── 3. PAM / identree client ──────────────────────────────────────────────────
 check_output "PAM sudo uses identree" "identree" \
