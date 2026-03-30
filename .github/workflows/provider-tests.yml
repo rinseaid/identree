@@ -66,10 +66,12 @@ jobs:
 
       - name: Wait for sssd to populate (lldap enumeration)
         run: |
-          # Force SSSD to re-enumerate now that setup has added users/groups to LDAP.
-          # sss_cache -E expires all cached entries; refresh_expired_interval=30s will
-          # trigger a fresh LDAP fetch within ~30s.
-          docker exec identree-lldap-dex-client sss_cache -E 2>/dev/null || true
+          # Restart SSSD so it re-enumerates from scratch now that setup has
+          # populated lldap. sss_cache -E only expires existing entries but
+          # doesn't pick up new entries added after the initial enumeration.
+          docker exec identree-lldap-dex-client bash -c \
+            "pkill -x sssd 2>/dev/null; sleep 2; rm -rf /var/lib/sss/db/* /var/lib/sss/mc/*; sssd -D" \
+            2>/dev/null || true
           echo "Waiting for sssd group membership..."
           timeout 120 bash -c 'until docker exec identree-lldap-dex-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
           echo "sssd ready."
@@ -143,7 +145,9 @@ jobs:
 
       - name: Wait for sssd to populate
         run: |
-          docker exec identree-keycloak-client sss_cache -E 2>/dev/null || true
+          docker exec identree-keycloak-client bash -c \
+            "pkill -x sssd 2>/dev/null; sleep 2; rm -rf /var/lib/sss/db/* /var/lib/sss/mc/*; sssd -D" \
+            2>/dev/null || true
           echo "Waiting for sssd group membership..."
           timeout 120 bash -c 'until docker exec identree-keycloak-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
           echo "sssd ready."
@@ -210,7 +214,9 @@ jobs:
 
       - name: Wait for sssd to populate (Kanidm LDAP enumeration)
         run: |
-          docker exec identree-kanidm-client sss_cache -E 2>/dev/null || true
+          docker exec identree-kanidm-client bash -c \
+            "pkill -x sssd 2>/dev/null; sleep 2; rm -rf /var/lib/sss/db/* /var/lib/sss/mc/*; sssd -D" \
+            2>/dev/null || true
           echo "Waiting for sssd group membership..."
           timeout 120 bash -c 'until docker exec identree-kanidm-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
           echo "sssd ready."
@@ -266,7 +272,9 @@ jobs:
 
       - name: Wait for sssd to populate
         run: |
-          docker exec identree-vault-escrow-client sss_cache -E 2>/dev/null || true
+          docker exec identree-vault-escrow-client bash -c \
+            "pkill -x sssd 2>/dev/null; sleep 2; rm -rf /var/lib/sss/db/* /var/lib/sss/mc/*; sssd -D" \
+            2>/dev/null || true
           echo "Waiting for sssd group membership..."
           timeout 120 bash -c 'until docker exec identree-vault-escrow-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
           echo "sssd ready."
@@ -334,7 +342,9 @@ jobs:
 
       - name: Wait for sssd to populate
         run: |
-          docker exec identree-infisical-escrow-client sss_cache -E 2>/dev/null || true
+          docker exec identree-infisical-escrow-client bash -c \
+            "pkill -x sssd 2>/dev/null; sleep 2; rm -rf /var/lib/sss/db/* /var/lib/sss/mc/*; sssd -D" \
+            2>/dev/null || true
           echo "Waiting for sssd group membership..."
           timeout 120 bash -c 'until docker exec identree-infisical-escrow-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
           echo "sssd ready."
@@ -396,7 +406,9 @@ jobs:
 
       - name: Wait for sssd to populate
         run: |
-          docker exec identree-openldap-dex-client sss_cache -E 2>/dev/null || true
+          docker exec identree-openldap-dex-client bash -c \
+            "pkill -x sssd 2>/dev/null; sleep 2; rm -rf /var/lib/sss/db/* /var/lib/sss/mc/*; sssd -D" \
+            2>/dev/null || true
           echo "Waiting for sssd group membership..."
           timeout 120 bash -c 'until docker exec identree-openldap-dex-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
           echo "sssd ready."
@@ -457,7 +469,9 @@ jobs:
 
       - name: Wait for LDAP outpost to connect and sssd to populate
         run: |
-          docker exec identree-authentik-client sss_cache -E 2>/dev/null || true
+          docker exec identree-authentik-client bash -c \
+            "pkill -x sssd 2>/dev/null; sleep 2; rm -rf /var/lib/sss/db/* /var/lib/sss/mc/*; sssd -D" \
+            2>/dev/null || true
           echo "Waiting for sssd group membership..."
           timeout 120 bash -c 'until docker exec identree-authentik-client getent group developers 2>/dev/null | grep -q alice; do sleep 3; done'
           echo "sssd ready."

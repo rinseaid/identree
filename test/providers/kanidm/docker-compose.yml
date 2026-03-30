@@ -29,12 +29,14 @@ services:
       - "127.0.0.1:8443:8443"    # OIDC / admin UI (HTTPS)
       - "127.0.0.1:3636:3636"    # LDAP (LDAPS with TLS)
     healthcheck:
-      # Kanidm's status endpoint — use -k because cert is self-signed
-      test: ["CMD", "curl", "-skf", "https://localhost:8443/status"]
-      interval: 15s
-      timeout: 10s
-      retries: 15
-      start_period: 30s
+      # kanidm/server is a minimal Debian image with no curl/wget.
+      # Port 8443 (0x20FB) is listening when the server is ready; check via
+      # /proc/net/tcp6 (IPv4-mapped) which is always available on Linux.
+      test: ["CMD-SHELL", "grep -q ':20FB ' /proc/net/tcp6 2>/dev/null || grep -q ':20FB ' /proc/net/tcp 2>/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
 
   identree:
     build:
