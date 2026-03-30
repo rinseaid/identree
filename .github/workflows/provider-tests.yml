@@ -111,19 +111,21 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Start Keycloak environment
-        run: make test-keycloak
+        # Build all images then start only Keycloak + lldap.
+        # identree requires IDENTREE_OIDC_CLIENT_SECRET which setup.sh creates below,
+        # so we can't start identree until after setup. Start it in the next step.
+        run: |
+          docker compose -f test/providers/keycloak/docker-compose.yml build
+          docker compose -f test/providers/keycloak/docker-compose.yml up -d keycloak lldap
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
 
       - name: Wait for Keycloak to be ready
-        # Keycloak start-dev takes longer than other providers
         run: |
           echo "Waiting for Keycloak..."
-          timeout 180 bash -c 'until curl -sf http://localhost:8180/health/ready; do sleep 5; done'
-          echo "Waiting for identree..."
-          timeout 60 bash -c 'until curl -sf http://localhost:8092/healthz; do sleep 3; done'
-          echo "All services healthy."
+          timeout 300 bash -c 'until curl -sf http://localhost:8180/realms/master -o /dev/null; do sleep 5; done'
+          echo "Keycloak ready."
 
       - name: Run setup (Keycloak realm + lldap users)
         id: setup
@@ -133,11 +135,10 @@ jobs:
           SECRET=$(grep 'client_secret:' /tmp/keycloak-setup.log | awk '{print $NF}' || echo "")
           echo "client_secret=${SECRET}" >> "$GITHUB_OUTPUT"
 
-      - name: Restart identree with Keycloak client secret
-        if: steps.setup.outputs.client_secret != ''
+      - name: Start identree with Keycloak client secret
         run: |
           KEYCLOAK_CLIENT_SECRET="${{ steps.setup.outputs.client_secret }}" \
-          docker compose -f test/providers/keycloak/docker-compose.yml up -d identree
+          docker compose -f test/providers/keycloak/docker-compose.yml up -d
           timeout 60 bash -c 'until curl -sf http://localhost:8092/healthz; do sleep 3; done'
 
       - name: Wait for sssd to populate
@@ -181,20 +182,22 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Start Kanidm environment
-        run: make test-kanidm
+        # Build all images then start only Kanidm (init-certs runs as a dependency).
+        # identree requires IDENTREE_OIDC_CLIENT_SECRET which setup.sh creates below,
+        # so we can't start identree until after setup. Start it in the next step.
+        run: |
+          docker compose -f test/providers/kanidm/docker-compose.yml build
+          docker compose -f test/providers/kanidm/docker-compose.yml up -d kanidm
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
 
       - name: Wait for Kanidm to be ready
-        # Kanidm runs a DB integrity check at startup; allow up to 10 min total.
+        # Kanidm runs a DB integrity check at startup; allow up to 18 min total.
         run: |
           echo "Waiting for Kanidm (HTTPS) — docker healthcheck polls /proc/net/tcp..."
-          timeout 600 bash -c 'until curl -skf https://localhost:8443/status 2>/dev/null; do sleep 5; done'
+          timeout 1080 bash -c 'until curl -skf https://localhost:8443/status 2>/dev/null; do sleep 5; done'
           echo "Kanidm ready."
-          echo "Waiting for identree..."
-          timeout 60 bash -c 'until curl -sf http://localhost:8093/healthz; do sleep 3; done'
-          echo "All services healthy."
 
       - name: Run setup (Kanidm OAuth2 client + users + groups)
         id: setup
@@ -203,11 +206,10 @@ jobs:
           SECRET=$(grep 'client_secret:' /tmp/kanidm-setup.log | awk '{print $NF}' || echo "")
           echo "client_secret=${SECRET}" >> "$GITHUB_OUTPUT"
 
-      - name: Restart identree with Kanidm client secret
-        if: steps.setup.outputs.client_secret != ''
+      - name: Start identree with Kanidm client secret
         run: |
           KANIDM_CLIENT_SECRET="${{ steps.setup.outputs.client_secret }}" \
-          docker compose -f test/providers/kanidm/docker-compose.yml up -d identree
+          docker compose -f test/providers/kanidm/docker-compose.yml up -d
           timeout 60 bash -c 'until curl -sf http://localhost:8093/healthz; do sleep 3; done'
 
       - name: Wait for sssd to populate
