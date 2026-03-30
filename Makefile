@@ -165,7 +165,7 @@ test-authentik-validate:
 	bash test/providers/validate.sh \
 		identree-authentik-client \
 		http://localhost:8098 \
-		"http://localhost:9000/application/o/identree/" \
+		"http://localhost:9000/application/o/identree" \
 		ldap://localhost:3896
 
 # ── Convenience: bring down all environments ──────────────────────────────────

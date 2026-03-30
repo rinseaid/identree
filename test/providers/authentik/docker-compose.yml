@@ -78,6 +78,8 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: authentik-test-pass
       AUTHENTIK_POSTGRESQL__NAME: authentik
       AUTHENTIK_SECRET_KEY: "authentik-test-secret-key-32chars!!"
+      AUTHENTIK_BOOTSTRAP_PASSWORD: "AuthentikAdmin123!"
+      AUTHENTIK_BOOTSTRAP_TOKEN: "identree-authentik-test-token"
       AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
       AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
       AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
@@ -112,13 +114,13 @@ services:
     restart: unless-stopped
     depends_on:
       authentik-server:
-        condition: service_healthy
+        condition: service_started
     environment:
       # OIDC — Authentik. Client secret is fixed in setup.sh.
       IDENTREE_OIDC_ISSUER_URL: "http://authentik-server:9000/application/o/identree/"
       IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:9000/application/o/identree/"
       IDENTREE_OIDC_CLIENT_ID: "identree"
-      IDENTREE_OIDC_CLIENT_SECRET: "${AUTHENTIK_OIDC_SECRET:-}"
+      IDENTREE_OIDC_CLIENT_SECRET: "identree-authentik-oidc-secret"
 
       IDENTREE_EXTERNAL_URL: "http://localhost:8098"
       IDENTREE_INSTALL_URL: "http://identree:8090"
@@ -154,8 +156,8 @@ services:
     hostname: authentik-test-host
     restart: unless-stopped
     depends_on:
-      identree:
-        condition: service_healthy
+      authentik-ldap:
+        condition: service_started
     environment:
       # Authentik LDAP outpost: users at ou=users (not ou=people), groups at ou=groups.
       # Schema: rfc2307bis — group membership via member (full DNs).
@@ -171,6 +173,8 @@ services:
       SSSD_USER_OBJECT_CLASS: "user"
       SSSD_GROUP_OBJECT_CLASS: "group"
       SSSD_GROUP_MEMBER_ATTR: "member"
+      # Authentik LDAP sets uid to a hex hash; use cn (the username) instead
+      SSSD_USER_NAME_ATTR: "cn"
 
       SSSD_SUDO_PROVIDER: "none"
       STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"

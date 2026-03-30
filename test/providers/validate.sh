@@ -75,10 +75,15 @@ check_output "OIDC issuer field matches" \
     curl -sf "${OIDC_ISSUER}/.well-known/openid-configuration"
 
 # ── 3. LDAP connectivity (if URI given) ────────────────────────────────────────
+# Uses bash /dev/tcp for pure TCP check (works without nc).
+# Tries both the given host and host.docker.internal (macOS Docker Desktop
+# maps 127.0.0.1-bound host ports via that alias).
 if [ -n "$LDAP_URI" ]; then
+    LDAP_PORT=$(echo "${LDAP_URI}" | sed 's|ldap://||' | cut -d: -f2)
+    LDAP_HOST=$(echo "${LDAP_URI}" | sed 's|ldap://||' | cut -d: -f1)
     check "LDAP port reachable from testclient" \
         docker exec "${CLIENT}" \
-        sh -c "ldapwhoami -H '${LDAP_URI}' -x 2>/dev/null || nc -z \$(echo '${LDAP_URI}' | sed 's|ldap://||' | cut -d: -f1) \$(echo '${LDAP_URI}' | sed 's|ldap://||' | cut -d: -f2) 2>/dev/null"
+        bash -c "echo > /dev/tcp/${LDAP_HOST}/${LDAP_PORT} 2>/dev/null || echo > /dev/tcp/host.docker.internal/${LDAP_PORT} 2>/dev/null"
 fi
 
 # ── 4. NSS user resolution ────────────────────────────────────────────────────

@@ -44,7 +44,7 @@ py() { python3 -c "import sys,json; d=json.load(sys.stdin); $1"; }
 wait_for "${AK_URL}/-/health/live/" "authentik"
 # Give the worker time to run migrations and create default objects
 echo "==> Waiting for Authentik worker (migrations + default flows)..."
-until ak GET /flows/instances/ 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('count',0)>0 else 1)" 2>/dev/null; do
+until ak GET /flows/instances/ 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if len(d.get('results',[]))>0 else 1)" 2>/dev/null; do
     sleep 5
 done
 echo "    Authentik API ready."
@@ -60,25 +60,34 @@ AUTH_FLOW_PK=$(ak GET "/flows/instances/?designation=authorization&ordering=slug
 AUTHN_FLOW_PK=$(ak GET "/flows/instances/?designation=authentication&ordering=slug" | \
     py "print(d['results'][0]['pk'] if d.get('results') else '')" 2>/dev/null || echo "")
 
-if [ -z "$AUTH_FLOW_PK" ] || [ -z "$AUTHN_FLOW_PK" ]; then
+# Invalidation flow (required since Authentik 2024.x)
+INVAL_FLOW_PK=$(ak GET "/flows/instances/?designation=invalidation&ordering=slug" | \
+    py "print(d['results'][0]['pk'] if d.get('results') else '')" 2>/dev/null || echo "")
+
+if [ -z "$AUTH_FLOW_PK" ] || [ -z "$AUTHN_FLOW_PK" ] || [ -z "$INVAL_FLOW_PK" ]; then
     echo "ERROR: Could not find default flows. Is the Authentik worker done with migrations?"
     exit 1
 fi
 echo "    authorization flow: ${AUTH_FLOW_PK}"
 echo "    authentication flow: ${AUTHN_FLOW_PK}"
+echo "    invalidation flow:   ${INVAL_FLOW_PK}"
 
 # ── Create groups ──────────────────────────────────────────────────────────────
 echo "==> Creating groups..."
 
-DEV_PK=$(ak POST /core/groups/ -d '{"name":"developers","is_superuser":false}' | \
+DEV_PK=$(ak POST /core/groups/ -d '{"name":"developers","is_superuser":false,"attributes":{"gidNumber":20001}}' | \
     py "print(d.get('pk',''))" 2>/dev/null || echo "")
 [ -z "$DEV_PK" ] && DEV_PK=$(ak GET "/core/groups/?name=developers" | \
     py "print(d['results'][0]['pk'] if d.get('results') else '')" 2>/dev/null || echo "")
+[ -n "$DEV_PK" ] && ak PATCH "/core/groups/${DEV_PK}/" \
+    -d '{"attributes":{"gidNumber":20001}}' >/dev/null 2>&1 || true
 
-ADM_PK=$(ak POST /core/groups/ -d '{"name":"admins","is_superuser":false}' | \
+ADM_PK=$(ak POST /core/groups/ -d '{"name":"admins","is_superuser":false,"attributes":{"gidNumber":20002}}' | \
     py "print(d.get('pk',''))" 2>/dev/null || echo "")
 [ -z "$ADM_PK" ] && ADM_PK=$(ak GET "/core/groups/?name=admins" | \
     py "print(d['results'][0]['pk'] if d.get('results') else '')" 2>/dev/null || echo "")
+[ -n "$ADM_PK" ] && ak PATCH "/core/groups/${ADM_PK}/" \
+    -d '{"attributes":{"gidNumber":20002}}' >/dev/null 2>&1 || true
 
 echo "    developers=${DEV_PK:-?}  admins=${ADM_PK:-?}"
 
@@ -98,6 +107,21 @@ SVC_PK=$(ak POST /core/users/ -d '{
 [ -n "$SVC_PK" ] && ak POST "/core/users/${SVC_PK}/set_password/" \
     -d '{"password":"LdapService123!"}' >/dev/null 2>&1 || true
 echo "    ldapservice pk=${SVC_PK:-?}"
+
+# ── Grant ldapservice LDAP search permissions ──────────────────────────────────
+# In Authentik, only superusers (or members of is_superuser=true groups) can
+# enumerate all users via LDAP. Add ldapservice to authentik Admins so it can
+# perform directory-wide searches that SSSD requires.
+echo "==> Granting ldapservice LDAP search permissions..."
+ADMINS_GROUP_PK=$(ak GET "/core/groups/?name=authentik+Admins" | \
+    py "print(d['results'][0]['pk'] if d.get('results') else '')" 2>/dev/null || echo "")
+if [ -n "$ADMINS_GROUP_PK" ] && [ -n "$SVC_PK" ]; then
+    ak POST "/core/groups/${ADMINS_GROUP_PK}/add_user/" \
+        -d "{\"pk\": ${SVC_PK}}" >/dev/null 2>&1 || true
+    echo "    ldapservice added to authentik Admins (pk=${ADMINS_GROUP_PK})"
+else
+    echo "    WARNING: could not find authentik Admins group or ldapservice pk"
+fi
 
 # ── Create users ───────────────────────────────────────────────────────────────
 
@@ -142,21 +166,21 @@ create_user "testadmin" "Test Admin"    "admin@test.local"  10003 20002 "/home/t
 # ── Fetch scope mappings for OIDC provider ─────────────────────────────────────
 echo "==> Fetching OIDC scope mappings..."
 
-SCOPE_OPENID=$(ak GET "/propertymappings/scope/?managed=goauthentik.io%2Fproviders%2Foauth2%2Fscope-openid" | \
+SCOPE_OPENID=$(ak GET "/propertymappings/provider/scope/?managed=goauthentik.io%2Fproviders%2Foauth2%2Fscope-openid" | \
     py "print(d['results'][0]['pk'] if d.get('results') else '')" 2>/dev/null || echo "")
-SCOPE_EMAIL=$(ak GET "/propertymappings/scope/?managed=goauthentik.io%2Fproviders%2Foauth2%2Fscope-email" | \
+SCOPE_EMAIL=$(ak GET "/propertymappings/provider/scope/?managed=goauthentik.io%2Fproviders%2Foauth2%2Fscope-email" | \
     py "print(d['results'][0]['pk'] if d.get('results') else '')" 2>/dev/null || echo "")
-SCOPE_PROFILE=$(ak GET "/propertymappings/scope/?managed=goauthentik.io%2Fproviders%2Foauth2%2Fscope-profile" | \
+SCOPE_PROFILE=$(ak GET "/propertymappings/provider/scope/?managed=goauthentik.io%2Fproviders%2Foauth2%2Fscope-profile" | \
     py "print(d['results'][0]['pk'] if d.get('results') else '')" 2>/dev/null || echo "")
 
 # Create a groups scope mapping so identree receives the groups claim
-SCOPE_GROUPS=$(ak POST /propertymappings/scope/ -d '{
+SCOPE_GROUPS=$(ak POST /propertymappings/provider/scope/ -d '{
     "name": "identree-groups",
     "scope_name": "groups",
     "description": "Expose group membership as groups claim",
     "expression": "return {\"groups\": [g.name for g in request.user.ak_groups.all()]}"
 }' | py "print(d.get('pk',''))" 2>/dev/null || echo "")
-[ -z "$SCOPE_GROUPS" ] && SCOPE_GROUPS=$(ak GET "/propertymappings/scope/?name=identree-groups" | \
+[ -z "$SCOPE_GROUPS" ] && SCOPE_GROUPS=$(ak GET "/propertymappings/provider/scope/?name=identree-groups" | \
     py "print(d['results'][0]['pk'] if d.get('results') else '')" 2>/dev/null || echo "")
 
 echo "    openid=${SCOPE_OPENID:-?}  email=${SCOPE_EMAIL:-?}  profile=${SCOPE_PROFILE:-?}  groups=${SCOPE_GROUPS:-?}"
@@ -173,10 +197,14 @@ echo "==> Creating OIDC provider..."
 OIDC_PK=$(ak POST /providers/oauth2/ -d "{
     \"name\": \"identree-oidc\",
     \"authorization_flow\": \"${AUTH_FLOW_PK}\",
+    \"invalidation_flow\": \"${INVAL_FLOW_PK}\",
     \"client_type\": \"confidential\",
     \"client_id\": \"identree\",
     \"client_secret\": \"${OIDC_CLIENT_SECRET}\",
-    \"redirect_uris\": \"http://identree:8090/callback\nhttp://localhost:8098/callback\",
+    \"redirect_uris\": [
+        {\"matching_mode\": \"strict\", \"url\": \"http://identree:8090/callback\"},
+        {\"matching_mode\": \"strict\", \"url\": \"http://localhost:8098/callback\"}
+    ],
     \"sub_mode\": \"user_username\",
     \"include_claims_in_id_token\": true,
     \"property_mappings\": ${MAPPINGS}
@@ -192,13 +220,18 @@ ak POST /core/applications/ -d "{
     \"provider\": ${OIDC_PK:-0}
 }" >/dev/null 2>&1 || true
 
+# Restart identree now that the OIDC application exists
+echo "==> Restarting identree (OIDC application now exists)..."
+docker compose -f "${COMPOSE_FILE}" up -d --no-deps identree
+
 # ── Create LDAP provider ───────────────────────────────────────────────────────
 echo "==> Creating LDAP provider..."
 
 LDAP_PK=$(ak POST /providers/ldap/ -d "{
     \"name\": \"identree-ldap\",
     \"base_dn\": \"dc=test,dc=local\",
-    \"bind_flow\": \"${AUTHN_FLOW_PK}\",
+    \"authorization_flow\": \"${AUTHN_FLOW_PK}\",
+    \"invalidation_flow\": \"${INVAL_FLOW_PK}\",
     \"uid_start_number\": 10000,
     \"gid_start_number\": 20000
 }" | py "print(d.get('pk',''))" 2>/dev/null || echo "")
@@ -237,12 +270,12 @@ fi
 # ── Retrieve outpost service account token ────────────────────────────────────
 echo "==> Retrieving outpost service account token..."
 
-# Authentik creates a managed token for each outpost with key goauthentik.io/outpost/<pk_hex>
-OUTPOST_PK_HEX=$(echo "$OUTPOST_PK" | tr -d '-')
+# Authentik 2024.10+ creates a managed token with key goauthentik.io/outpost/ak-outpost-<pk>-api
+OUTPOST_MANAGED_URL="goauthentik.io%2Foutpost%2Fak-outpost-${OUTPOST_PK}-api"
 TOKEN_IDENTIFIER=""
 # Retry a few times — the worker may not have created the token yet
 for i in 1 2 3 4 5; do
-    TOKEN_IDENTIFIER=$(ak GET "/core/tokens/?managed=goauthentik.io%2Foutpost%2F${OUTPOST_PK_HEX}" | \
+    TOKEN_IDENTIFIER=$(ak GET "/core/tokens/?managed=${OUTPOST_MANAGED_URL}" | \
         py "print(d['results'][0]['identifier'] if d.get('results') else '')" 2>/dev/null || echo "")
     [ -n "$TOKEN_IDENTIFIER" ] && break
     echo "    waiting for token (attempt ${i}/5)..."
@@ -254,7 +287,7 @@ if [ -z "$TOKEN_IDENTIFIER" ]; then
     exit 1
 fi
 
-OUTPOST_TOKEN=$(ak POST "/core/tokens/${TOKEN_IDENTIFIER}/view_key/" -d '{}' | \
+OUTPOST_TOKEN=$(ak GET "/core/tokens/${TOKEN_IDENTIFIER}/view_key/" | \
     py "print(d.get('key',''))" 2>/dev/null || echo "")
 
 if [ -z "$OUTPOST_TOKEN" ]; then
@@ -263,21 +296,25 @@ if [ -z "$OUTPOST_TOKEN" ]; then
 fi
 echo "    token retrieved (${#OUTPOST_TOKEN} chars)"
 
-# ── Restart services with real credentials ────────────────────────────────────
+# ── Restart authentik-ldap with the real outpost token ────────────────────────
 echo "==> Restarting authentik-ldap with outpost token..."
 export AUTHENTIK_LDAP_TOKEN="${OUTPOST_TOKEN}"
 docker compose -f "${COMPOSE_FILE}" up -d --no-deps authentik-ldap
 
-echo "==> Restarting identree with OIDC client secret..."
-export AUTHENTIK_OIDC_SECRET="${OIDC_CLIENT_SECRET}"
-docker compose -f "${COMPOSE_FILE}" up -d --no-deps identree
+echo "==> Waiting for LDAP outpost to connect (30s)..."
+sleep 30
 
-echo "==> Waiting for identree to be healthy after restart..."
+echo "==> Waiting for identree to be healthy..."
 until curl -sf http://localhost:8098/healthz >/dev/null 2>&1; do sleep 3; done
 echo "    identree ready."
 
-echo "==> Waiting for LDAP outpost to connect (30s)..."
-sleep 30
+# ── Ensure break-glass password is provisioned ─────────────────────────────────
+# The testclient starts before identree is ready, so rotate-breakglass may have
+# failed at container startup. Retry here now that identree is confirmed healthy.
+echo "==> Ensuring break-glass password is provisioned..."
+docker exec identree-authentik-client \
+    sh -c 'test -f /etc/identree-breakglass || identree rotate-breakglass' \
+    >/dev/null 2>&1 && echo "    break-glass ready." || echo "    WARNING: break-glass setup failed (validate will check)"
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo ""

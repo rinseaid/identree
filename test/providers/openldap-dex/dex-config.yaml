@@ -29,7 +29,7 @@ connectors:
     id: openldap
     name: OpenLDAP
     config:
-      host: openldap:1389
+      host: openldap:389
       insecureNoSSL: true
       insecureSkipVerify: true
 

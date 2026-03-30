@@ -19,6 +19,7 @@ SSSD_SCHEMA="${SSSD_SCHEMA:-rfc2307}"
 SSSD_USER_OBJECT_CLASS="${SSSD_USER_OBJECT_CLASS:-}"    # e.g. inetOrgPerson for lldap
 SSSD_GROUP_OBJECT_CLASS="${SSSD_GROUP_OBJECT_CLASS:-}"  # e.g. groupOfUniqueNames for lldap
 SSSD_GROUP_MEMBER_ATTR="${SSSD_GROUP_MEMBER_ATTR:-}"    # e.g. uniqueMember for lldap
+SSSD_USER_NAME_ATTR="${SSSD_USER_NAME_ATTR:-}"          # e.g. cn for Authentik (uid is a hex hash there)
 
 # ── Search base overrides ──────────────────────────────────────────────────────
 LDAP_USER_SEARCH_BASE="${LDAP_USER_SEARCH_BASE:-ou=people,${LDAP_BASE}}"
@@ -70,6 +71,7 @@ SSSD_BASE
 [ -n "$SSSD_USER_OBJECT_CLASS" ]  && echo "ldap_user_object_class  = ${SSSD_USER_OBJECT_CLASS}"  >> /etc/sssd/sssd.conf
 [ -n "$SSSD_GROUP_OBJECT_CLASS" ] && echo "ldap_group_object_class = ${SSSD_GROUP_OBJECT_CLASS}" >> /etc/sssd/sssd.conf
 [ -n "$SSSD_GROUP_MEMBER_ATTR" ]  && echo "ldap_group_member       = ${SSSD_GROUP_MEMBER_ATTR}"  >> /etc/sssd/sssd.conf
+[ -n "$SSSD_USER_NAME_ATTR" ]     && echo "ldap_user_name          = ${SSSD_USER_NAME_ATTR}"     >> /etc/sssd/sssd.conf
 
 # Append bind credentials when a non-anonymous bind is required
 if [ -n "$LDAP_BIND_DN" ]; then
