@@ -1155,6 +1155,7 @@ const dashboardHTML = `<!DOCTYPE html>
         btn.addEventListener('click',function(e){e.stopPropagation();var m=btn.parentElement.querySelector('.elevate-menu');var open=m.classList.contains('open');document.querySelectorAll('.elevate-menu.open').forEach(function(x){x.classList.remove('open');});if(!open){var r=btn.getBoundingClientRect();m.style.top=(r.bottom+4)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';m.classList.add('open');}});
       });
       document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
+      filterSessions();
     })();
     </script>
     {{else}}
@@ -1268,6 +1269,7 @@ const dashboardHTML = `<!DOCTYPE html>
         btn.addEventListener('click',function(e){e.stopPropagation();var m=btn.parentElement.querySelector('.elevate-menu');var open=m.classList.contains('open');document.querySelectorAll('.elevate-menu.open').forEach(function(x){x.classList.remove('open');});if(!open){var r=btn.getBoundingClientRect();m.style.top=(r.bottom+4)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';m.classList.add('open');}});
       });
       document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
+      filterUser();
     })();
     // L5: prevent double-submit on approve/reject forms
     document.querySelectorAll('.list form, .bulk-row form').forEach(function(f){
@@ -2357,6 +2359,7 @@ const adminPageHTML = `<!DOCTYPE html>
         var hidden=items.length-maxShow;
         if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(){items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){items[maxShow-1].style.display='none';maxShow--;hidden++;btn.textContent='+'+hidden+' more';}}
       });
+      filterUsers();
     })();
     </script>
     {{else}}
@@ -2546,6 +2549,7 @@ const adminPageHTML = `<!DOCTYPE html>
         var hidden=items.length-maxShow;
         if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(){items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){items[maxShow-1].style.display='none';maxShow--;hidden++;btn.textContent='+'+hidden+' more';}}
       });
+      filterGroups();
     })();
     </script>
     {{else}}
@@ -2714,6 +2718,7 @@ const adminPageHTML = `<!DOCTYPE html>
           if(labelEl&&input&&!input.getAttribute('aria-label')){input.setAttribute('aria-label',labelEl.textContent.trim());}
         });
       });
+      filterHosts();
     })();
     </script>
     <div id="reveal-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.55);align-items:center;justify-content:center">
@@ -3421,6 +3426,7 @@ const accessPageHTML = `<!DOCTYPE html>
         filterAccess();
       });
       (function(){var ftb=document.getElementById('access-admin-filter-toggle');var ftr=document.getElementById('access-admin-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
+      filterAccess();
       document.querySelectorAll('.access-saction-confirm').forEach(function(btn){btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});});
       document.querySelectorAll('.elevate-toggle').forEach(function(btn){
         btn.addEventListener('click',function(e){e.stopPropagation();var m=btn.parentElement.querySelector('.elevate-menu');var open=m.classList.contains('open');document.querySelectorAll('.elevate-menu.open').forEach(function(x){x.classList.remove('open');});if(!open){var r=btn.getBoundingClientRect();m.style.top=(r.bottom+4)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';m.classList.add('open');}});
