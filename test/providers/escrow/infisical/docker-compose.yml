@@ -82,7 +82,7 @@ services:
       start_period: 15s
 
   dex:
-    image: ghcr.io/dex-idp/dex:v2.42.0
+    image: dexidp/dex:v2.41.0
     container_name: identree-infisical-escrow-dex
     restart: unless-stopped
     depends_on:

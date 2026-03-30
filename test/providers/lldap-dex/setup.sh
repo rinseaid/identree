@@ -15,7 +15,9 @@
 set -euo pipefail
 
 LLDAP_URL="${LLDAP_URL:-http://localhost:17171}"
-LLDAP_LDAP_URI="${LLDAP_LDAP_URI:-ldap://localhost:3891}"
+# ldappasswd runs inside the testclient container via docker exec, so the URI
+# must use the Docker-internal service name, not the host-side port binding.
+LLDAP_LDAP_INTERNAL_URI="ldap://lldap:3890"
 LLDAP_ADMIN_USER="admin"
 LLDAP_ADMIN_PASS="lldap-admin-pass"
 LDAP_BASE="dc=test,dc=local"
@@ -47,10 +49,10 @@ gql() {
 
 ldap_set_password() {
     # Set a user's password via the LDAP Password Modify Extended Operation.
-    # Run inside the testclient container (which has ldap-utils installed).
+    # Runs inside the testclient container (which has ldap-utils installed).
     local uid="$1" pass="$2"
     docker exec "${CLIENT}" ldappasswd \
-        -H "${LLDAP_LDAP_URI}" \
+        -H "${LLDAP_LDAP_INTERNAL_URI}" \
         -D "uid=${LLDAP_ADMIN_USER},ou=people,${LDAP_BASE}" \
         -w "${LLDAP_ADMIN_PASS}" \
         -s "${pass}" \
@@ -63,19 +65,20 @@ wait_for "${LLDAP_URL}/healthz" "lldap"
 TOKEN=$(get_token)
 
 # ── Create POSIX attribute schema ──────────────────────────────────────────────
-# lldap does not ship uidNumber/gidNumber/homeDirectory/loginShell by default.
-# These mutations are idempotent: they fail silently if the attribute already exists.
+# lldap stable uses addUserAttribute/addGroupAttribute (not addCustomUserAttribute).
+# Attribute names are stored lowercase. attributeType: INTEGER or STRING (not TEXT).
+# Mutations are idempotent — silently ignore "already exists" errors.
 echo "==> Registering POSIX attributes in lldap schema..."
 
 for attr in uidNumber gidNumber; do
-    gql "{\"query\":\"mutation { addCustomUserAttribute(attribute:{name:\\\"${attr}\\\",attributeType:INTEGER,isList:false}) }\"}" \
+    gql "{\"query\":\"mutation { addUserAttribute(name:\\\"${attr}\\\",attributeType:INTEGER,isList:false,isVisible:true,isEditable:true) { ok } }\"}" \
         >/dev/null 2>&1 || true
 done
 for attr in homeDirectory loginShell; do
-    gql "{\"query\":\"mutation { addCustomUserAttribute(attribute:{name:\\\"${attr}\\\",attributeType:TEXT,isList:false}) }\"}" \
+    gql "{\"query\":\"mutation { addUserAttribute(name:\\\"${attr}\\\",attributeType:STRING,isList:false,isVisible:true,isEditable:true) { ok } }\"}" \
         >/dev/null 2>&1 || true
 done
-gql '{"query":"mutation { addCustomGroupAttribute(attribute:{name:\"gidNumber\",attributeType:INTEGER,isList:false}) }"}' \
+gql '{"query":"mutation { addGroupAttribute(name:\"gidNumber\",attributeType:INTEGER,isList:false,isVisible:true,isEditable:true) { ok } }"}' \
     >/dev/null 2>&1 || true
 
 echo "    Schema ready."
@@ -89,7 +92,8 @@ create_user() {
     gql "{\"query\":\"mutation { createUser(user:{id:\\\"${id}\\\",email:\\\"${email}\\\",displayName:\\\"${display}\\\",firstName:\\\"${first}\\\",lastName:\\\"${last}\\\"}) { id } }\"}" \
         >/dev/null 2>&1 || echo "    (user ${id} may already exist)"
 
-    gql "{\"query\":\"mutation { updateUser(user:{id:\\\"${id}\\\",attributes:[{name:\\\"uidNumber\\\",value:[\\\"${uid}\\\"]},{name:\\\"gidNumber\\\",value:[\\\"${gid}\\\"]},{name:\\\"homeDirectory\\\",value:[\\\"${home}\\\"]},{name:\\\"loginShell\\\",value:[\\\"${shell}\\\"]}]}) { id } }\"}" \
+    # updateUser uses insertAttributes (not attributes); lldap stores names lowercase.
+    gql "{\"query\":\"mutation { updateUser(user:{id:\\\"${id}\\\",insertAttributes:[{name:\\\"uidnumber\\\",value:[\\\"${uid}\\\"]},{name:\\\"gidnumber\\\",value:[\\\"${gid}\\\"]},{name:\\\"homedirectory\\\",value:[\\\"${home}\\\"]},{name:\\\"loginshell\\\",value:[\\\"${shell}\\\"]}]}) { ok } }\"}" \
         >/dev/null 2>&1 || true
 }
 
@@ -119,8 +123,8 @@ fi
 echo "    developers=${DEV_ID:-?}  admins=${ADM_ID:-?}"
 
 # Set gidNumber on groups
-[ -n "$DEV_ID" ] && gql "{\"query\":\"mutation { updateGroup(group:{id:${DEV_ID},attributes:[{name:\\\"gidNumber\\\",value:[\\\"20001\\\"]}]}) { id } }\"}" >/dev/null 2>&1 || true
-[ -n "$ADM_ID" ] && gql "{\"query\":\"mutation { updateGroup(group:{id:${ADM_ID},attributes:[{name:\\\"gidNumber\\\",value:[\\\"20002\\\"]}]}) { id } }\"}" >/dev/null 2>&1 || true
+[ -n "$DEV_ID" ] && gql "{\"query\":\"mutation { updateGroup(group:{id:${DEV_ID},insertAttributes:[{name:\\\"gidnumber\\\",value:[\\\"20001\\\"]}]}) { ok } }\"}" >/dev/null 2>&1 || true
+[ -n "$ADM_ID" ] && gql "{\"query\":\"mutation { updateGroup(group:{id:${ADM_ID},insertAttributes:[{name:\\\"gidnumber\\\",value:[\\\"20002\\\"]}]}) { ok } }\"}" >/dev/null 2>&1 || true
 
 # ── Assign group membership ────────────────────────────────────────────────────
 echo "==> Assigning group membership..."

@@ -17,7 +17,9 @@
 set -euo pipefail
 
 LLDAP_URL="${LLDAP_URL:-http://localhost:17172}"
-LLDAP_LDAP_URI="${LLDAP_LDAP_URI:-ldap://localhost:3892}"
+# ldappasswd runs inside the testclient container via docker exec, so the URI
+# must use the Docker-internal service name, not the host-side port binding.
+LLDAP_LDAP_INTERNAL_URI="ldap://lldap:3890"
 LLDAP_ADMIN_PASS="lldap-admin-pass"
 LDAP_BASE="dc=test,dc=local"
 LLDAP_CLIENT="identree-keycloak-client"  # testclient container
@@ -64,7 +66,7 @@ kc() {
 ldap_set_password() {
     local uid="$1" pass="$2"
     docker exec "${LLDAP_CLIENT}" ldappasswd \
-        -H "${LLDAP_LDAP_URI}" \
+        -H "${LLDAP_LDAP_INTERNAL_URI}" \
         -D "uid=admin,ou=people,${LDAP_BASE}" \
         -w "${LLDAP_ADMIN_PASS}" \
         -s "${pass}" \
@@ -82,21 +84,21 @@ LLDAP_TOKEN=$(lldap_token)
 
 echo "    Registering POSIX attributes..."
 for attr in uidNumber gidNumber; do
-    lldap_gql "{\"query\":\"mutation { addCustomUserAttribute(attribute:{name:\\\"${attr}\\\",attributeType:INTEGER,isList:false}) }\"}" \
+    lldap_gql "{\"query\":\"mutation { addUserAttribute(name:\\\"${attr}\\\",attributeType:INTEGER,isList:false,isVisible:true,isEditable:true) { ok } }\"}" \
         >/dev/null 2>&1 || true
 done
 for attr in homeDirectory loginShell; do
-    lldap_gql "{\"query\":\"mutation { addCustomUserAttribute(attribute:{name:\\\"${attr}\\\",attributeType:TEXT,isList:false}) }\"}" \
+    lldap_gql "{\"query\":\"mutation { addUserAttribute(name:\\\"${attr}\\\",attributeType:STRING,isList:false,isVisible:true,isEditable:true) { ok } }\"}" \
         >/dev/null 2>&1 || true
 done
-lldap_gql '{"query":"mutation { addCustomGroupAttribute(attribute:{name:\"gidNumber\",attributeType:INTEGER,isList:false}) }"}' \
+lldap_gql '{"query":"mutation { addGroupAttribute(name:\"gidNumber\",attributeType:INTEGER,isList:false,isVisible:true,isEditable:true) { ok } }"}' \
     >/dev/null 2>&1 || true
 
 create_lldap_user() {
     local id="$1" email="$2" display="$3" first="$4" last="$5" uid="$6" gid="$7" home="$8" shell="$9"
     lldap_gql "{\"query\":\"mutation { createUser(user:{id:\\\"${id}\\\",email:\\\"${email}\\\",displayName:\\\"${display}\\\",firstName:\\\"${first}\\\",lastName:\\\"${last}\\\"}) { id } }\"}" \
         >/dev/null 2>&1 || true
-    lldap_gql "{\"query\":\"mutation { updateUser(user:{id:\\\"${id}\\\",attributes:[{name:\\\"uidNumber\\\",value:[\\\"${uid}\\\"]},{name:\\\"gidNumber\\\",value:[\\\"${gid}\\\"]},{name:\\\"homeDirectory\\\",value:[\\\"${home}\\\"]},{name:\\\"loginShell\\\",value:[\\\"${shell}\\\"]}]}) { id } }\"}" \
+    lldap_gql "{\"query\":\"mutation { updateUser(user:{id:\\\"${id}\\\",insertAttributes:[{name:\\\"uidnumber\\\",value:[\\\"${uid}\\\"]},{name:\\\"gidnumber\\\",value:[\\\"${gid}\\\"]},{name:\\\"homedirectory\\\",value:[\\\"${home}\\\"]},{name:\\\"loginshell\\\",value:[\\\"${shell}\\\"]}]}) { ok } }\"}" \
         >/dev/null 2>&1 || true
     echo "    lldap user: ${id}"
 }
@@ -120,8 +122,8 @@ if [ -z "$ADM_ID" ]; then
         python3 -c "import sys,json; gs=json.load(sys.stdin)['data']['groups']; print(next((g['id'] for g in gs if g['name']=='admins'), ''))" 2>/dev/null || echo "")
 fi
 
-[ -n "$DEV_ID" ] && lldap_gql "{\"query\":\"mutation { updateGroup(group:{id:${DEV_ID},attributes:[{name:\\\"gidNumber\\\",value:[\\\"20001\\\"]}]}) { id } }\"}" >/dev/null 2>&1 || true
-[ -n "$ADM_ID" ] && lldap_gql "{\"query\":\"mutation { updateGroup(group:{id:${ADM_ID},attributes:[{name:\\\"gidNumber\\\",value:[\\\"20002\\\"]}]}) { id } }\"}" >/dev/null 2>&1 || true
+[ -n "$DEV_ID" ] && lldap_gql "{\"query\":\"mutation { updateGroup(group:{id:${DEV_ID},insertAttributes:[{name:\\\"gidnumber\\\",value:[\\\"20001\\\"]}]}) { ok } }\"}" >/dev/null 2>&1 || true
+[ -n "$ADM_ID" ] && lldap_gql "{\"query\":\"mutation { updateGroup(group:{id:${ADM_ID},insertAttributes:[{name:\\\"gidnumber\\\",value:[\\\"20002\\\"]}]}) { ok } }\"}" >/dev/null 2>&1 || true
 
 [ -n "$DEV_ID" ] && lldap_gql "{\"query\":\"mutation { addUserToGroup(userId:\\\"alice\\\",groupId:${DEV_ID}) }\"}" >/dev/null 2>&1 || true
 [ -n "$DEV_ID" ] && lldap_gql "{\"query\":\"mutation { addUserToGroup(userId:\\\"bob\\\",groupId:${DEV_ID}) }\"}" >/dev/null 2>&1 || true
