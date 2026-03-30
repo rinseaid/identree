@@ -61,7 +61,7 @@ check_output "Vault initialized+unsealed" '"initialized":true' \
 # ── 2. LDAP / NSS ─────────────────────────────────────────────────────────────
 check "LDAP port reachable from testclient" \
     docker exec "${CLIENT}" \
-    sh -c "echo > /dev/tcp/lldap/3890 2>/dev/null"
+    bash -c "echo > /dev/tcp/lldap/3890 2>/dev/null"
 
 check_output "getent passwd alice"     "alice"     docker exec "${CLIENT}" getent passwd alice
 check_output "getent passwd bob"       "bob"       docker exec "${CLIENT}" getent passwd bob
