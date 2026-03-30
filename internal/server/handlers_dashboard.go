@@ -1059,7 +1059,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	// Parse per_page with validation
 	perPage := s.cfg.DefaultHistoryPageSize
 	if pp, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil {
-		validSizes := map[int]bool{5: true, 10: true, 25: true, 50: true, 100: true, 500: true, 1000: true}
+		validSizes := map[int]bool{15: true, 30: true, 50: true, 100: true}
 		if validSizes[pp] {
 			perPage = pp
 		}
@@ -1374,7 +1374,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	perPageOptions := []int{5, 10, 25, 50, 100, 500, 1000}
+	perPageOptions := []int{15, 30, 50, 100}
 
 	historyCSRFTs := fmt.Sprintf("%d", time.Now().Unix())
 	historyCSRFToken := computeCSRFToken(s.cfg.SharedSecret, username, historyCSRFTs)

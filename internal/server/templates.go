@@ -1101,7 +1101,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var justMineActive=false,myUsername='';
-      var sessionsAdminPage=1,sessionsAdminPs=25;
+      var sessionsAdminPage=1,sessionsAdminPs=15;
       function renderSessionsAdminPager(vis){
         var bar=document.getElementById('sessions-admin-pagination');
         if(!bar)return;
@@ -1113,7 +1113,7 @@ const dashboardHTML = `<!DOCTYPE html>
         vis.slice(start,start+sessionsAdminPs).forEach(function(r){r.style.display='';});
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(sessionsAdminPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+sessionsAdminPs,total)+' of '+total+'</span><button class="pagination-btn" '+(sessionsAdminPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[10,25,50,100].map(function(n){return'<option value="'+n+'"'+(n===sessionsAdminPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
+        bar.innerHTML='<button class="pagination-btn" '+(sessionsAdminPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+sessionsAdminPs,total)+' of '+total+'</span><button class="pagination-btn" '+(sessionsAdminPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===sessionsAdminPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
         var btns=bar.querySelectorAll('.pagination-btn');
         if(!btns[0].disabled)btns[0].addEventListener('click',function(){sessionsAdminPage--;filterSessions();});
         if(!btns[1].disabled)btns[1].addEventListener('click',function(){sessionsAdminPage++;filterSessions();});
@@ -1222,7 +1222,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var activeOnly=false;
-      var sessionsUserPage=1,sessionsUserPs=25;
+      var sessionsUserPage=1,sessionsUserPs=15;
       function renderSessionsUserPager(vis){
         var bar=document.getElementById('sessions-user-pagination');
         if(!bar)return;
@@ -1234,7 +1234,7 @@ const dashboardHTML = `<!DOCTYPE html>
         vis.slice(start,start+sessionsUserPs).forEach(function(r){r.style.display='';});
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(sessionsUserPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+sessionsUserPs,total)+' of '+total+'</span><button class="pagination-btn" '+(sessionsUserPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[10,25,50,100].map(function(n){return'<option value="'+n+'"'+(n===sessionsUserPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
+        bar.innerHTML='<button class="pagination-btn" '+(sessionsUserPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+sessionsUserPs,total)+' of '+total+'</span><button class="pagination-btn" '+(sessionsUserPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===sessionsUserPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
         var btns=bar.querySelectorAll('.pagination-btn');
         if(!btns[0].disabled)btns[0].addEventListener('click',function(){sessionsUserPage--;filterUser();});
         if(!btns[1].disabled)btns[1].addEventListener('click',function(){sessionsUserPage++;filterUser();});
@@ -2247,7 +2247,7 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="pagination-bar" id="users-pagination"></div>
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var usersPage=1,usersPs=25;
+      var usersPage=1,usersPs=15;
       function hideRowAndPanel(r){r.style.display='none';var p=r.nextElementSibling;if(p&&p.classList.contains('user-claims-panel')){p.style.display='none';}}
       function renderUsersPager(vis){
         var bar=document.getElementById('users-pagination');
@@ -2260,7 +2260,7 @@ const adminPageHTML = `<!DOCTYPE html>
         vis.slice(start,start+usersPs).forEach(function(r){r.style.display='';});
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(usersPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+usersPs,total)+' of '+total+'</span><button class="pagination-btn" '+(usersPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[10,25,50,100].map(function(n){return'<option value="'+n+'"'+(n===usersPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
+        bar.innerHTML='<button class="pagination-btn" '+(usersPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+usersPs,total)+' of '+total+'</span><button class="pagination-btn" '+(usersPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===usersPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
         var btns=bar.querySelectorAll('.pagination-btn');
         if(!btns[0].disabled)btns[0].addEventListener('click',function(){usersPage--;filterUsers();});
         if(!btns[1].disabled)btns[1].addEventListener('click',function(){usersPage++;filterUsers();});
@@ -2454,7 +2454,7 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="pagination-bar" id="groups-pagination"></div>
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var groupsPage=1,groupsPs=25;
+      var groupsPage=1,groupsPs=15;
       function renderGroupsPager(vis){
         var bar=document.getElementById('groups-pagination');
         if(!bar)return;
@@ -2466,7 +2466,7 @@ const adminPageHTML = `<!DOCTYPE html>
         vis.slice(start,start+groupsPs).forEach(function(r){r.style.display='';});
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(groupsPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+groupsPs,total)+' of '+total+'</span><button class="pagination-btn" '+(groupsPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[10,25,50,100].map(function(n){return'<option value="'+n+'"'+(n===groupsPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
+        bar.innerHTML='<button class="pagination-btn" '+(groupsPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+groupsPs,total)+' of '+total+'</span><button class="pagination-btn" '+(groupsPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===groupsPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
         var btns=bar.querySelectorAll('.pagination-btn');
         if(!btns[0].disabled)btns[0].addEventListener('click',function(){groupsPage--;filterGroups();});
         if(!btns[1].disabled)btns[1].addEventListener('click',function(){groupsPage++;filterGroups();});
@@ -2603,7 +2603,7 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="pagination-bar" id="hosts-pagination"></div>
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var hostsPage=1,hostsPs=25;
+      var hostsPage=1,hostsPs=15;
       function renderHostsPager(vis){
         var bar=document.getElementById('hosts-pagination');
         if(!bar)return;
@@ -2615,7 +2615,7 @@ const adminPageHTML = `<!DOCTYPE html>
         vis.slice(start,start+hostsPs).forEach(function(r){r.style.display='';});
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(hostsPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+hostsPs,total)+' of '+total+'</span><button class="pagination-btn" '+(hostsPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[10,25,50,100].map(function(n){return'<option value="'+n+'"'+(n===hostsPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
+        bar.innerHTML='<button class="pagination-btn" '+(hostsPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+hostsPs,total)+' of '+total+'</span><button class="pagination-btn" '+(hostsPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===hostsPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
         var btns=bar.querySelectorAll('.pagination-btn');
         if(!btns[0].disabled)btns[0].addEventListener('click',function(){hostsPage--;filterHosts();});
         if(!btns[1].disabled)btns[1].addEventListener('click',function(){hostsPage++;filterHosts();});
@@ -3304,7 +3304,7 @@ const accessPageHTML = `<!DOCTYPE html>
     (function(){
       var accessJustMeActive=false,accessMyUsername='';
       var accessActiveOnlyActive=false;
-      var accessPage=1,accessPs=25;
+      var accessPage=1,accessPs=15;
       function renderAccessPager(vis){
         var bar=document.getElementById('access-pagination');
         if(!bar)return;
@@ -3317,7 +3317,7 @@ const accessPageHTML = `<!DOCTYPE html>
         vis.slice(start,start+accessPs).forEach(function(r){r.style.display='';});
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(accessPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+accessPs,total)+' of '+total+'</span><button class="pagination-btn" '+(accessPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[10,25,50,100].map(function(n){return'<option value="'+n+'"'+(n===accessPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
+        bar.innerHTML='<button class="pagination-btn" '+(accessPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+accessPs,total)+' of '+total+'</span><button class="pagination-btn" '+(accessPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===accessPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
         var btns=bar.querySelectorAll('.pagination-btn');
         if(!btns[0].disabled)btns[0].addEventListener('click',function(){accessPage--;filterAccess();});
         if(!btns[1].disabled)btns[1].addEventListener('click',function(){accessPage++;filterAccess();});
