@@ -1,0 +1,119 @@
+services:
+  openldap:
+    image: bitnami/openldap:latest
+    container_name: identree-openldap-dex-ldap
+    restart: unless-stopped
+    environment:
+      LDAP_ROOT: "dc=test,dc=local"
+      LDAP_ADMIN_USERNAME: "admin"
+      LDAP_ADMIN_PASSWORD: "openldap-admin-pass"
+      LDAP_CUSTOM_LDIF_DIR: "/ldifs"
+    volumes:
+      - ./ldifs:/ldifs:ro
+      - openldap-data:/bitnami/openldap
+    ports:
+      - "127.0.0.1:3895:1389"   # LDAP (bitnami uses non-root port 1389)
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -H ldap://localhost:1389 -x -b 'dc=test,dc=local' -s base '(objectClass=*)' dn 2>/dev/null | grep -q 'dn:' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  dex:
+    image: dexidp/dex:v2.41.0
+    container_name: identree-openldap-dex-dex
+    restart: unless-stopped
+    depends_on:
+      openldap:
+        condition: service_healthy
+    volumes:
+      - ./dex-config.yaml:/etc/dex/config.yaml:ro
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "127.0.0.1:5559:5556"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5556/dex/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  identree:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: identree-openldap-dex-server
+    restart: unless-stopped
+    depends_on:
+      dex:
+        condition: service_healthy
+    environment:
+      IDENTREE_OIDC_ISSUER_URL: "http://dex:5556/dex"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:5559/dex"
+      IDENTREE_OIDC_CLIENT_ID: "identree"
+      IDENTREE_OIDC_CLIENT_SECRET: "identree-dex-secret"
+
+      IDENTREE_EXTERNAL_URL: "http://localhost:8097"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-openldap-dex"
+
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "false"
+
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_ESCROW_BACKEND: "local"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "a14fc2e8d3b76591af0c5e82de9f1b3c7a08d4e6f2c1b9a5843d7e0f6c2b8a4d"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8097:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: ../../..
+      dockerfile: test/testclient/Dockerfile
+    container_name: identree-openldap-dex-client
+    hostname: openldap-dex-test-host
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      openldap:
+        condition: service_healthy
+    environment:
+      # OpenLDAP uses RFC 2307: posixAccount users, posixGroup with memberUid
+      # bitnami/openldap listens on port 1389 (non-root)
+      LDAP_URI: "ldap://openldap:1389"
+      LDAP_BASE: "dc=test,dc=local"
+      LDAP_BIND_DN: "cn=admin,dc=test,dc=local"
+      LDAP_BIND_PW: "openldap-admin-pass"
+      # rfc2307 is the testclient default — no object class overrides needed
+      SSSD_SCHEMA: "rfc2307"
+
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
+
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-openldap-dex"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  openldap-data:
+  identree-data:

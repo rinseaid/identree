@@ -1,0 +1,188 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: identree-authentik-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: authentik-test-pass
+      POSTGRES_DB: authentik
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: identree-authentik-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2024.10.5
+    container_name: identree-authentik-server
+    restart: unless-stopped
+    command: server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik-test-pass
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_SECRET_KEY: "authentik-test-secret-key-32chars!!"
+      AUTHENTIK_BOOTSTRAP_PASSWORD: "AuthentikAdmin123!"
+      AUTHENTIK_BOOTSTRAP_TOKEN: "identree-authentik-test-token"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      AUTHENTIK_AVATARS: "none"
+    volumes:
+      - authentik-media:/media
+      - authentik-templates:/templates
+    ports:
+      - "127.0.0.1:9000:9000"
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2024.10.5
+    container_name: identree-authentik-worker
+    restart: unless-stopped
+    command: worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik-test-pass
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_SECRET_KEY: "authentik-test-secret-key-32chars!!"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+    volumes:
+      - authentik-media:/media
+      - authentik-templates:/templates
+
+  # LDAP outpost — started with a placeholder token; setup.sh restarts it
+  # with the real outpost service account token after creating the outpost.
+  authentik-ldap:
+    image: ghcr.io/goauthentik/ldap:2024.10.5
+    container_name: identree-authentik-ldap
+    restart: unless-stopped
+    depends_on:
+      authentik-server:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_HOST: "http://authentik-server:9000"
+      AUTHENTIK_TOKEN: "${AUTHENTIK_LDAP_TOKEN:-}"
+      AUTHENTIK_INSECURE: "true"
+    ports:
+      - "127.0.0.1:3896:3389"   # LDAP
+
+  identree:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: identree-authentik-server-app
+    restart: unless-stopped
+    depends_on:
+      authentik-server:
+        condition: service_healthy
+    environment:
+      # OIDC — Authentik. Client secret is fixed in setup.sh.
+      IDENTREE_OIDC_ISSUER_URL: "http://authentik-server:9000/application/o/identree/"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:9000/application/o/identree/"
+      IDENTREE_OIDC_CLIENT_ID: "identree"
+      IDENTREE_OIDC_CLIENT_SECRET: "${AUTHENTIK_OIDC_SECRET:-}"
+
+      IDENTREE_EXTERNAL_URL: "http://localhost:8098"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-authentik"
+
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "false"
+
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_ESCROW_BACKEND: "local"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "c27eb3f9a4d82e1b5f0c6a7d893e4f2b1a0d5c8e7b6a9f3d2c4e8b1a7f0d5c3"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8098:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: ../../..
+      dockerfile: test/testclient/Dockerfile
+    container_name: identree-authentik-client
+    hostname: authentik-test-host
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+    environment:
+      # Authentik LDAP outpost: users at ou=users (not ou=people), groups at ou=groups.
+      # Schema: rfc2307bis — group membership via member (full DNs).
+      # User objectClass is "user" (Authentik-specific, not inetOrgPerson by default).
+      # Group objectClass is "group" (Authentik-specific).
+      LDAP_URI: "ldap://authentik-ldap:3389"
+      LDAP_BASE: "dc=test,dc=local"
+      LDAP_BIND_DN: "cn=ldapservice,ou=users,dc=test,dc=local"
+      LDAP_BIND_PW: "LdapService123!"
+      LDAP_USER_SEARCH_BASE: "ou=users,dc=test,dc=local"
+      LDAP_GROUP_SEARCH_BASE: "ou=groups,dc=test,dc=local"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "user"
+      SSSD_GROUP_OBJECT_CLASS: "group"
+      SSSD_GROUP_MEMBER_ATTR: "member"
+
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
+
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-authentik"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  postgres-data:
+  authentik-media:
+  authentik-templates:
+  identree-data:

@@ -1,0 +1,12 @@
+dn: cn=developers,ou=groups,dc=test,dc=local
+objectClass: posixGroup
+cn: developers
+gidNumber: 20001
+memberUid: alice
+memberUid: bob
+
+dn: cn=admins,ou=groups,dc=test,dc=local
+objectClass: posixGroup
+cn: admins
+gidNumber: 20002
+memberUid: testadmin

@@ -1,0 +1,64 @@
+# Dex OIDC configuration for the OpenLDAP+Dex test environment.
+# Dex acts as the OIDC provider; OpenLDAP (bitnami) is its LDAP identity backend.
+#
+# Key difference from lldap: OpenLDAP uses RFC 2307 schema.
+# Groups are posixGroup entries with memberUid (uid strings, not DNs).
+# Dex groupSearch uses userAttr=uid / groupAttr=memberUid to match membership.
+
+issuer: http://dex:5556/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+logger:
+  level: "info"
+  format: "text"
+
+oauth2:
+  skipApprovalScreen: true
+  responseTypes:
+    - code
+
+# ── OpenLDAP LDAP connector ────────────────────────────────────────────────────
+# RFC 2307: posixGroup/memberUid. bitnami/openldap listens on port 1389.
+connectors:
+  - type: ldap
+    id: openldap
+    name: OpenLDAP
+    config:
+      host: openldap:1389
+      insecureNoSSL: true
+      insecureSkipVerify: true
+
+      bindDN: cn=admin,dc=test,dc=local
+      bindPW: openldap-admin-pass
+
+      userSearch:
+        baseDN: ou=people,dc=test,dc=local
+        filter: "(objectClass=posixAccount)"
+        username: uid
+        idAttr: uid
+        emailAttr: mail
+        nameAttr: cn
+
+      groupSearch:
+        baseDN: ou=groups,dc=test,dc=local
+        filter: "(objectClass=posixGroup)"
+        # RFC 2307: memberUid contains uid strings (not DNs).
+        # userAttr=uid means Dex compares the user's uid value against memberUid entries.
+        userMatchers:
+          - userAttr: uid
+            groupAttr: memberUid
+        nameAttr: cn
+
+# ── identree OIDC client ───────────────────────────────────────────────────────
+staticClients:
+  - id: identree
+    secret: identree-dex-secret
+    name: identree (OpenLDAP+Dex test)
+    redirectURIs:
+      - http://identree:8090/callback
+      - http://localhost:8097/callback

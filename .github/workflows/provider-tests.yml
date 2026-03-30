@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Provider to test (lldap-dex | keycloak | kanidm | vault-escrow | infisical-escrow | all)"
+        description: "Provider to test (lldap-dex | keycloak | kanidm | vault-escrow | infisical-escrow | openldap-dex | authentik | all)"
         required: false
         default: "all"
 
@@ -336,3 +336,123 @@ jobs:
       - name: Tear down
         if: always()
         run: make test-infisical-escrow-down
+
+  # ── OpenLDAP + Dex ────────────────────────────────────────────────────────────
+  openldap-dex:
+    name: OpenLDAP + Dex (RFC 2307)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'openldap-dex'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start OpenLDAP+Dex environment
+        run: make test-openldap-dex
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for all services to be healthy
+        run: |
+          echo "Waiting for OpenLDAP..."
+          timeout 90 bash -c 'until docker exec identree-openldap-dex-ldap ldapsearch -H ldap://localhost:1389 -x -b "dc=test,dc=local" -s base dn 2>/dev/null | grep -q dn; do sleep 3; done'
+          echo "Waiting for Dex..."
+          timeout 60 bash -c 'until curl -sf http://localhost:5559/dex/healthz; do sleep 3; done'
+          echo "Waiting for identree..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8097/healthz; do sleep 3; done'
+          echo "All services healthy."
+
+      - name: Run setup (set user passwords via ldappasswd)
+        run: make test-openldap-dex-setup
+
+      - name: Wait for sssd to populate
+        run: sleep 15
+
+      - name: Validate environment
+        run: make test-openldap-dex-validate
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== openldap logs ==="
+          docker logs identree-openldap-dex-ldap 2>&1 | tail -50
+          echo "=== dex logs ==="
+          docker logs identree-openldap-dex-dex 2>&1 | tail -30
+          echo "=== identree logs ==="
+          docker logs identree-openldap-dex-server 2>&1 | tail -50
+          echo "=== testclient sssd.conf ==="
+          docker exec identree-openldap-dex-client cat /etc/sssd/sssd.conf 2>/dev/null || true
+          echo "=== testclient sssd logs ==="
+          docker exec identree-openldap-dex-client cat /var/log/sssd/sssd_LDAP.log 2>/dev/null | tail -30 || true
+
+      - name: Tear down
+        if: always()
+        run: make test-openldap-dex-down
+
+  # ── Authentik ─────────────────────────────────────────────────────────────────
+  authentik:
+    name: Authentik (OIDC + LDAP outpost)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'authentik'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start Authentik environment
+        run: make test-authentik
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for Authentik to be healthy
+        # Authentik needs postgres migrations + worker startup before the API is ready
+        run: |
+          echo "Waiting for Authentik server..."
+          timeout 180 bash -c 'until curl -sf http://localhost:9000/-/health/live/; do sleep 5; done'
+          echo "Waiting for Authentik API (flows ready)..."
+          timeout 120 bash -c 'until curl -sf http://localhost:9000/api/v3/flows/instances/ -H "Authorization: Bearer identree-authentik-test-token" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get(\"count\",0)>0 else 1)" 2>/dev/null; do sleep 5; done'
+          echo "Authentik ready."
+
+      - name: Run setup (users, groups, OIDC provider, LDAP outpost)
+        run: make test-authentik-setup
+
+      - name: Wait for LDAP outpost to connect and sssd to populate
+        run: sleep 30
+
+      - name: Wait for identree to be healthy after restart
+        run: timeout 60 bash -c 'until curl -sf http://localhost:8098/healthz; do sleep 3; done'
+
+      - name: Validate environment
+        run: make test-authentik-validate
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== authentik-server logs ==="
+          docker logs identree-authentik-server 2>&1 | tail -80
+          echo "=== authentik-worker logs ==="
+          docker logs identree-authentik-worker 2>&1 | tail -30
+          echo "=== authentik-ldap logs ==="
+          docker logs identree-authentik-ldap 2>&1 | tail -50
+          echo "=== identree logs ==="
+          docker logs identree-authentik-server-app 2>&1 | tail -50
+          echo "=== testclient sssd.conf ==="
+          docker exec identree-authentik-client cat /etc/sssd/sssd.conf 2>/dev/null || true
+          echo "=== testclient sssd logs ==="
+          docker exec identree-authentik-client cat /var/log/sssd/sssd_LDAP.log 2>/dev/null | tail -30 || true
+
+      - name: Tear down
+        if: always()
+        run: make test-authentik-down

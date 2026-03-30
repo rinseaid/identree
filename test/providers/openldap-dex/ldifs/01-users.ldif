@@ -1,0 +1,38 @@
+dn: uid=alice,ou=people,dc=test,dc=local
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+cn: Alice Liddell
+sn: Liddell
+uid: alice
+uidNumber: 10001
+gidNumber: 20001
+homeDirectory: /home/alice
+loginShell: /bin/bash
+mail: alice@test.local
+
+dn: uid=bob,ou=people,dc=test,dc=local
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+cn: Bob Builder
+sn: Builder
+uid: bob
+uidNumber: 10002
+gidNumber: 20001
+homeDirectory: /home/bob
+loginShell: /bin/bash
+mail: bob@test.local
+
+dn: uid=testadmin,ou=people,dc=test,dc=local
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+cn: Test Admin
+sn: Admin
+uid: testadmin
+uidNumber: 10003
+gidNumber: 20002
+homeDirectory: /home/testadmin
+loginShell: /bin/bash
+mail: admin@test.local

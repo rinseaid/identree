@@ -124,7 +124,51 @@ test-infisical-escrow-setup:
 test-infisical-escrow-validate:
 	bash test/providers/escrow/infisical/validate.sh
 
+# ── OpenLDAP + Dex (bridge mode, RFC 2307) ────────────────────────────────────
+.PHONY: test-openldap-dex test-openldap-dex-down test-openldap-dex-logs test-openldap-dex-setup test-openldap-dex-validate
+
+test-openldap-dex:
+	docker compose -f test/providers/openldap-dex/docker-compose.yml up --build -d
+
+test-openldap-dex-down:
+	docker compose -f test/providers/openldap-dex/docker-compose.yml down -v
+
+test-openldap-dex-logs:
+	docker compose -f test/providers/openldap-dex/docker-compose.yml logs -f identree
+
+test-openldap-dex-setup:
+	bash test/providers/openldap-dex/setup.sh
+
+test-openldap-dex-validate:
+	bash test/providers/validate.sh \
+		identree-openldap-dex-client \
+		http://localhost:8097 \
+		http://localhost:5559/dex \
+		ldap://localhost:3895
+
+# ── Authentik (bridge mode, OIDC + LDAP outpost) ──────────────────────────────
+.PHONY: test-authentik test-authentik-down test-authentik-logs test-authentik-setup test-authentik-validate
+
+test-authentik:
+	docker compose -f test/providers/authentik/docker-compose.yml up --build -d
+
+test-authentik-down:
+	docker compose -f test/providers/authentik/docker-compose.yml down -v
+
+test-authentik-logs:
+	docker compose -f test/providers/authentik/docker-compose.yml logs -f identree-authentik-server-app
+
+test-authentik-setup:
+	bash test/providers/authentik/setup.sh
+
+test-authentik-validate:
+	bash test/providers/validate.sh \
+		identree-authentik-client \
+		http://localhost:8098 \
+		"http://localhost:9000/application/o/identree/" \
+		ldap://localhost:3896
+
 # ── Convenience: bring down all environments ──────────────────────────────────
 .PHONY: down-all
 
-down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down
+down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down test-openldap-dex-down test-authentik-down
