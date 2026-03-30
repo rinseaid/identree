@@ -360,8 +360,12 @@ seed_session "dave"    "staging-02"
 seed_session "neil"    "prod-web-01"
 seed_session "olivia"  "prod-db-01"
 seed_session "frank"   "staging-01"
+# Eve's session on a different host so her Sessions page isn't empty during
+# elevation-2. The prod-web-01 PAM challenge still triggers normally because
+# grace period is per-host and she has no session there.
+seed_session "eve"     "staging-01"
 
-echo "    12 approved sessions created."
+echo "    13 approved sessions created."
 
 # ── Seed pending challenges ─────────────────────────────────────────────────────
 
@@ -437,5 +441,5 @@ echo "    History entries injected."
 
 echo ""
 echo "==> Seed complete."
-echo "    PocketID users/groups, 12 approved sessions, and 3 pending challenges created."
+echo "    PocketID users/groups, 13 approved sessions, and 3 pending challenges created."
 echo ""
