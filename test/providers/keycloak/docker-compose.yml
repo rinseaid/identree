@@ -42,11 +42,11 @@ services:
     ports:
       - "127.0.0.1:8180:8080"
     healthcheck:
-      # Keycloak 25+ health endpoints are on the management port (9000), but
-      # /health/ready may return DOWN immediately after start-dev startup while
-      # background tasks complete. Use the master realm endpoint on port 8080
-      # instead — it returns 200 as soon as Keycloak is fully serving requests.
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/realms/master", "-o", "/dev/null"]
+      # quay.io/keycloak/keycloak uses a minimal UBI9 image with no curl/wget.
+      # Port 8080 (0x1F90) is listening when Keycloak is ready to serve requests;
+      # check via /proc/net/tcp6 (IPv4-mapped) which is always available on Linux.
+      # start-dev Quarkus build takes ~20s on CI; give 60s before first check.
+      test: ["CMD-SHELL", "grep -q ':1F90 ' /proc/net/tcp6 2>/dev/null || grep -q ':1F90 ' /proc/net/tcp 2>/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 30
