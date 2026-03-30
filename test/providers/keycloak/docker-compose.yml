@@ -42,13 +42,13 @@ services:
     ports:
       - "127.0.0.1:8180:8080"
     healthcheck:
-      # start-dev does a Quarkus build on every startup which can take 8-10 min
-      # on GitHub Actions runners; use a generous start_period + retries.
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/health/ready"]
-      interval: 15s
-      timeout: 10s
-      retries: 40
-      start_period: 300s
+      # Keycloak 25+ serves health endpoints on the management port (9000), not
+      # the main port (8080). start-dev Quarkus build is fast (~2 min) on CI runners.
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   identree:
     build:
