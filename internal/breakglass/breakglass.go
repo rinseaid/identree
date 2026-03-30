@@ -688,7 +688,7 @@ func MaybeRotateBreakglass(cfg *config.ClientConfig, rotateBefore time.Time) {
 		return
 	}
 
-	if BreakglassFileExists(cfg.BreakglassFile) {
+	if !BreakglassFileExists(cfg.BreakglassFile) {
 		// Initial provisioning: create the break-glass hash file automatically.
 		fmt.Fprintf(os.Stderr, "identree: no break-glass hash file found — generating initial password\n")
 		if _, err :=RotateBreakglass(cfg, true, true); err != nil {
