@@ -42,13 +42,15 @@ services:
     ports:
       - "127.0.0.1:8180:8080"
     healthcheck:
-      # Keycloak 25+ serves health endpoints on the management port (9000), not
-      # the main port (8080). start-dev Quarkus build is fast (~2 min) on CI runners.
-      test: ["CMD", "curl", "-sf", "http://localhost:9000/health/ready"]
+      # Keycloak 25+ health endpoints are on the management port (9000), but
+      # /health/ready may return DOWN immediately after start-dev startup while
+      # background tasks complete. Use the master realm endpoint on port 8080
+      # instead — it returns 200 as soon as Keycloak is fully serving requests.
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/realms/master", "-o", "/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 60s
+      start_period: 30s
 
   identree:
     build:
