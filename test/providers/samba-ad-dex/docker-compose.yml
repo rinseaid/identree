@@ -5,9 +5,14 @@ services:
     hostname: dc.samba.test.local
     restart: unless-stopped
     environment:
-      SAMBA_DOMAIN: SAMBA
-      SAMBA_REALM: SAMBA.TEST.LOCAL
-      SAMBA_ADMIN_PASSWORD: "Admin@samba1"
+      DOMAIN: SAMBA
+      REALM: SAMBA.TEST.LOCAL
+      ADMIN_PASS: "Admin@samba1"
+      DNS_FORWARDER: "8.8.8.8"
+      # Disable interface binding — Docker veth names (eth0@if*) confuse Samba
+      # and cause it to bind only to loopback. With this false, Samba listens
+      # on all interfaces, which is what we need for container-to-container LDAP.
+      BIND_NETWORK_INTERFACES: "false"
     cap_add:
       - SYS_ADMIN
       - NET_ADMIN
@@ -108,6 +113,7 @@ services:
       LDAP_USER_SEARCH_BASE: "CN=Users,DC=samba,DC=test,DC=local"
       LDAP_GROUP_SEARCH_BASE: "CN=Users,DC=samba,DC=test,DC=local"
       SSSD_SCHEMA: "ad"
+      SSSD_ID_MAPPING: "true"
 
       SSSD_SUDO_PROVIDER: "none"
       STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"

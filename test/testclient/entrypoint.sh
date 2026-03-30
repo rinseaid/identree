@@ -21,6 +21,11 @@ SSSD_GROUP_OBJECT_CLASS="${SSSD_GROUP_OBJECT_CLASS:-}"  # e.g. groupOfUniqueName
 SSSD_GROUP_MEMBER_ATTR="${SSSD_GROUP_MEMBER_ATTR:-}"    # e.g. uniqueMember for lldap
 SSSD_USER_NAME_ATTR="${SSSD_USER_NAME_ATTR:-}"          # e.g. cn for Authentik (uid is a hex hash there)
 
+# SID-based ID mapping (required for AD schema; id_provider=ldap defaults to false)
+# Set to "true" when using ldap_schema=ad so UIDs/GIDs are derived from objectSID
+# instead of requiring uidNumber/gidNumber POSIX attributes.
+SSSD_ID_MAPPING="${SSSD_ID_MAPPING:-false}"
+
 # ── Search base overrides ──────────────────────────────────────────────────────
 LDAP_USER_SEARCH_BASE="${LDAP_USER_SEARCH_BASE:-ou=people,${LDAP_BASE}}"
 LDAP_GROUP_SEARCH_BASE="${LDAP_GROUP_SEARCH_BASE:-ou=groups,${LDAP_BASE}}"
@@ -72,6 +77,8 @@ SSSD_BASE
 [ -n "$SSSD_GROUP_OBJECT_CLASS" ] && echo "ldap_group_object_class = ${SSSD_GROUP_OBJECT_CLASS}" >> /etc/sssd/sssd.conf
 [ -n "$SSSD_GROUP_MEMBER_ATTR" ]  && echo "ldap_group_member       = ${SSSD_GROUP_MEMBER_ATTR}"  >> /etc/sssd/sssd.conf
 [ -n "$SSSD_USER_NAME_ATTR" ]     && echo "ldap_user_name          = ${SSSD_USER_NAME_ATTR}"     >> /etc/sssd/sssd.conf
+# SID-based ID mapping: required for AD schema (id_provider=ldap defaults to false)
+[ "$SSSD_ID_MAPPING" = "true" ]   && echo "ldap_id_mapping         = true"                       >> /etc/sssd/sssd.conf
 
 # Append bind credentials when a non-anonymous bind is required
 if [ -n "$LDAP_BIND_DN" ]; then
