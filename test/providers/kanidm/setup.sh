@@ -161,20 +161,41 @@ echo "==> Authenticating idm_admin..."
 IDM_TOKEN=$(kanidm_auth "idm_admin" "$IDM_PW")
 echo "    idm_admin authenticated."
 
-# ── Create groups with POSIX GIDs ─────────────────────────────────────────────
-# Group creation requires entry_managed_by pointing to a group the actor IS in.
-# admin is in system_admins@localhost (built-in Kanidm group).
-# POST /v1/group/{name}/_unix enables POSIX (adds posixgroup class + gidnumber).
-echo "==> Creating groups (as admin)..."
-TOKEN="$SYS_TOKEN"
-echo "    developers:"; kapi POST /v1/group \
-    -d '{"attrs":{"name":["developers"],"displayname":["developers"],"entry_managed_by":["system_admins@localhost"]}}' | head -c 200; echo
-echo "    admins:";     kapi POST /v1/group \
-    -d '{"attrs":{"name":["admins"],"displayname":["admins"],"entry_managed_by":["system_admins@localhost"]}}' | head -c 200; echo
+# ── Diagnostics: check idm_admin group memberships ────────────────────────────
+echo "==> Checking idm_admin memberOf..."
+TOKEN="$IDM_TOKEN"
+kapi GET /v1/account/idm_admin | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    mo = d.get('attrs', {}).get('memberof', [])
+    print('    memberof:', mo[:10])
+except Exception as e:
+    print('    (parse error:', e, ')')
+" 2>/dev/null || echo "    (query failed)"
 
-echo "    posix gids:"; \
-    kapi POST /v1/group/developers/_unix -d '{"gidnumber": 20001}' | head -c 200; echo; \
-    kapi POST /v1/group/admins/_unix     -d '{"gidnumber": 20002}' | head -c 200; echo
+# ── Create groups with POSIX GIDs ─────────────────────────────────────────────
+# Group creation ACP (idm_acp_group_manage) receiver is idm_group_admins.
+# idm_admin is transitively in idm_group_admins via idm_admins → idm_group_admins.
+# Do NOT set entry_managed_by: pointing it at an HP group (like idm_admins)
+# makes the new group HP, which the ACP target filter excludes — causing accessdenied.
+echo "==> Creating groups (as idm_admin)..."
+TOKEN="$IDM_TOKEN"
+echo "    developers:"
+kapi POST /v1/group \
+    -d '{"attrs":{"name":["developers"],"displayname":["developers"]}}'
+echo
+echo "    admins:"
+kapi POST /v1/group \
+    -d '{"attrs":{"name":["admins"],"displayname":["admins"]}}'
+echo
+
+echo "    posix gids (developers):"
+kapi POST /v1/group/developers/_unix -d '{"gidnumber": 20001}'
+echo
+echo "    posix gids (admins):"
+kapi POST /v1/group/admins/_unix -d '{"gidnumber": 20002}'
+echo
 
 # ── Create users ──────────────────────────────────────────────────────────────
 # Persons are managed by idm_admin.
@@ -189,16 +210,18 @@ echo "    testadmin:"; kapi POST /v1/person \
 
 # ── Enable POSIX for users ────────────────────────────────────────────────────
 # POST /v1/person/{name}/_unix enables the posixaccount class.
-# AccountUnixExtend struct: {"gidnumber": u32 (primary GID), "shell": String}
+# AccountUnixExtend struct: {gidnumber: Option<u32>, shell: Option<String>}
 # uidnumber is auto-assigned by Kanidm — do NOT pass it in the body.
+# gidnumber must be unique across ALL POSIX entries (users + groups), so we
+# omit it here and let Kanidm auto-assign a unique primary GID per user.
 echo "==> Enabling POSIX for users (as idm_admin)..."
 TOKEN="$IDM_TOKEN"
 echo "    alice:";     kapi POST /v1/person/alice/_unix \
-    -d '{"gidnumber": 20001, "shell": "/bin/bash"}' | head -c 200; echo
+    -d '{"shell": "/bin/bash"}' | head -c 200; echo
 echo "    bob:";       kapi POST /v1/person/bob/_unix \
-    -d '{"gidnumber": 20001, "shell": "/bin/bash"}' | head -c 200; echo
+    -d '{"shell": "/bin/bash"}' | head -c 200; echo
 echo "    testadmin:"; kapi POST /v1/person/testadmin/_unix \
-    -d '{"gidnumber": 20002, "shell": "/bin/bash"}' | head -c 200; echo
+    -d '{"shell": "/bin/bash"}' | head -c 200; echo
 
 # Set homedirectory via _attr (posixaccount class now present after _unix call).
 echo "    homedirs:"; \
@@ -207,10 +230,10 @@ echo "    homedirs:"; \
     kapi PUT /v1/person/testadmin/_attr/homedirectory -d '["/home/testadmin"]' | head -c 100; echo
 
 # ── Assign group membership ────────────────────────────────────────────────────
-# Groups were created by admin with entry_managed_by=system_admins@localhost,
-# so only admin can modify group members.
-echo "==> Assigning group membership (as admin)..."
-TOKEN="$SYS_TOKEN"
+# Groups were created by idm_admin (non-HP, no entry_managed_by), so
+# idm_admin (in idm_group_admins) can also manage their membership.
+echo "==> Assigning group membership (as idm_admin)..."
+TOKEN="$IDM_TOKEN"
 # POST appends members; members are referenced by SPN (name@domain).
 echo "    developers members:"; kapi POST /v1/group/developers/_attr/member \
     -d '["alice@localhost","bob@localhost"]' | head -c 200; echo
