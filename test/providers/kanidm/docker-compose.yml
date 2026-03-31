@@ -21,14 +21,11 @@ services:
       - >-
         apk add -q --no-cache openssl &&
         openssl genrsa -out /certs/ca.key 2048 &&
-        openssl req -x509 -new -nodes -key /certs/ca.key -sha256 -days 3650
-          -out /certs/ca.crt -subj '/CN=kanidm-test-ca' &&
+        openssl req -x509 -new -nodes -key /certs/ca.key -sha256 -days 3650 -out /certs/ca.crt -subj '/CN=kanidm-test-ca' &&
         openssl genrsa -out /certs/server.key 2048 &&
         openssl req -new -key /certs/server.key -out /certs/server.csr -subj '/CN=kanidm' &&
-        printf 'basicConstraints=critical,CA:FALSE\nsubjectAltName=DNS:kanidm,DNS:localhost\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n'
-          > /tmp/ext.cnf &&
-        openssl x509 -req -in /certs/server.csr -CA /certs/ca.crt -CAkey /certs/ca.key
-          -CAcreateserial -out /certs/server.crt -days 3650 -sha256 -extfile /tmp/ext.cnf
+        printf 'basicConstraints=critical,CA:FALSE\nsubjectAltName=DNS:kanidm,DNS:localhost\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' > /tmp/ext.cnf &&
+        openssl x509 -req -in /certs/server.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/server.crt -days 3650 -sha256 -extfile /tmp/ext.cnf
     restart: "no"
 
   kanidm:
