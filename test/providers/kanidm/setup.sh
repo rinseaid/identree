@@ -154,16 +154,18 @@ echo "    admin authenticated."
 
 # ── Create groups with POSIX GIDs ─────────────────────────────────────────────
 echo "==> Creating groups..."
-# POST /v1/group creates a new group.  Setting gidnumber enables POSIX access
-# (server automatically adds posixgroup class).
+# POST /v1/group creates a new group.  entry_managed_by is required in Kanidm
+# 1.4+ for idm_admin to pass the ACP check (idm_admins@localhost manages the
+# group entry itself).  POST /v1/group/{name}/_unix enables POSIX (adds
+# posixgroup class and sets gidnumber).
 echo "    developers:"; kapi POST /v1/group \
-    -d '{"attrs":{"name":["developers"],"displayname":["developers"]}}' | head -c 200; echo
+    -d '{"attrs":{"name":["developers"],"displayname":["developers"],"entry_managed_by":["idm_admins@localhost"]}}' | head -c 200; echo
 echo "    admins:";     kapi POST /v1/group \
-    -d '{"attrs":{"name":["admins"],"displayname":["admins"]}}' | head -c 200; echo
+    -d '{"attrs":{"name":["admins"],"displayname":["admins"],"entry_managed_by":["idm_admins@localhost"]}}' | head -c 200; echo
 
 echo "    posix gids:"; \
-    kapi PUT /v1/group/developers/_attr/gidnumber -d '["20001"]' | head -c 200; echo; \
-    kapi PUT /v1/group/admins/_attr/gidnumber     -d '["20002"]' | head -c 200; echo
+    kapi POST /v1/group/developers/_unix -d '{"gidnumber": 20001}' | head -c 200; echo; \
+    kapi POST /v1/group/admins/_unix     -d '{"gidnumber": 20002}' | head -c 200; echo
 
 # ── Create users with POSIX attributes ────────────────────────────────────────
 echo "==> Creating users..."
@@ -175,24 +177,23 @@ echo "    testadmin:"; kapi POST /v1/person \
     -d '{"attrs":{"name":["testadmin"],"displayname":["Test Admin"]}}' | head -c 200; echo
 
 # Enable POSIX attributes — required for sssd to resolve UID/GID/shell/home.
-# Setting uidnumber on a person enables posixaccount in the Kanidm schema.
+# POST /v1/person/{name}/_unix adds the posixaccount class and sets uidnumber +
+# shell in one call.  After that, gidnumber and homedirectory can be set via
+# _attr PUT (the posixaccount class is now present so the schema allows them).
 echo "    Setting POSIX for alice..."
-kapi PUT /v1/person/alice/_attr/uidnumber    -d '["10001"]'         | head -c 100; echo
-kapi PUT /v1/person/alice/_attr/gidnumber    -d '["20001"]'         | head -c 100; echo
-kapi PUT /v1/person/alice/_attr/loginshell   -d '["/bin/bash"]'     | head -c 100; echo
-kapi PUT /v1/person/alice/_attr/homedirectory -d '["/home/alice"]'  | head -c 100; echo
+kapi POST /v1/person/alice/_unix -d '{"uidnumber": 10001, "shell": "/bin/bash"}' | head -c 100; echo
+kapi PUT /v1/person/alice/_attr/gidnumber    -d '["20001"]'        | head -c 100; echo
+kapi PUT /v1/person/alice/_attr/homedirectory -d '["/home/alice"]' | head -c 100; echo
 
 echo "    Setting POSIX for bob..."
-kapi PUT /v1/person/bob/_attr/uidnumber    -d '["10002"]'        | head -c 100; echo
-kapi PUT /v1/person/bob/_attr/gidnumber    -d '["20001"]'        | head -c 100; echo
-kapi PUT /v1/person/bob/_attr/loginshell   -d '["/bin/bash"]'    | head -c 100; echo
-kapi PUT /v1/person/bob/_attr/homedirectory -d '["/home/bob"]'   | head -c 100; echo
+kapi POST /v1/person/bob/_unix -d '{"uidnumber": 10002, "shell": "/bin/bash"}' | head -c 100; echo
+kapi PUT /v1/person/bob/_attr/gidnumber    -d '["20001"]'      | head -c 100; echo
+kapi PUT /v1/person/bob/_attr/homedirectory -d '["/home/bob"]' | head -c 100; echo
 
 echo "    Setting POSIX for testadmin..."
-kapi PUT /v1/person/testadmin/_attr/uidnumber    -d '["10003"]'             | head -c 100; echo
-kapi PUT /v1/person/testadmin/_attr/gidnumber    -d '["20002"]'             | head -c 100; echo
-kapi PUT /v1/person/testadmin/_attr/loginshell   -d '["/bin/bash"]'         | head -c 100; echo
-kapi PUT /v1/person/testadmin/_attr/homedirectory -d '["/home/testadmin"]'  | head -c 100; echo
+kapi POST /v1/person/testadmin/_unix -d '{"uidnumber": 10003, "shell": "/bin/bash"}' | head -c 100; echo
+kapi PUT /v1/person/testadmin/_attr/gidnumber    -d '["20002"]'           | head -c 100; echo
+kapi PUT /v1/person/testadmin/_attr/homedirectory -d '["/home/testadmin"]' | head -c 100; echo
 
 # ── Assign group membership ────────────────────────────────────────────────────
 echo "==> Assigning group membership..."
@@ -205,12 +206,14 @@ echo "    admins members:";     kapi POST /v1/group/admins/_attr/member \
 # ── Create OAuth2/OIDC client ──────────────────────────────────────────────────
 echo "==> Creating OAuth2 client identree-test..."
 # POST /v1/oauth2/_basic creates a confidential (basic auth) OAuth2 client.
+# oauth2_rs_origin_landing is a MUST attribute in Kanidm 1.4+.
 echo "    create:"; kapi POST /v1/oauth2/_basic \
     -d '{
         "attrs": {
-            "name":         ["identree-test"],
-            "displayname":  ["identree (test)"],
-            "oauth2_rs_origin": ["http://localhost:8093/callback"]
+            "name":                    ["identree-test"],
+            "displayname":             ["identree (test)"],
+            "oauth2_rs_origin":        ["http://localhost:8093/callback"],
+            "oauth2_rs_origin_landing": ["http://localhost:8093"]
         }
     }' | head -c 200; echo
 
