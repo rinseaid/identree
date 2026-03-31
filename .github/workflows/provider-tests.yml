@@ -132,6 +132,7 @@ jobs:
       - name: Run setup (Keycloak realm + lldap users)
         id: setup
         run: |
+          set -o pipefail
           bash test/providers/keycloak/setup.sh | tee /tmp/keycloak-setup.log
           # Extract the generated client secret
           SECRET=$(grep 'client_secret:' /tmp/keycloak-setup.log | awk '{print $NF}' || echo "")
@@ -204,6 +205,7 @@ jobs:
       - name: Run setup (Kanidm OAuth2 client + users + groups)
         id: setup
         run: |
+          set -o pipefail
           bash test/providers/kanidm/setup.sh | tee /tmp/kanidm-setup.log
           SECRET=$(grep 'client_secret:' /tmp/kanidm-setup.log | awk '{print $NF}' || echo "")
           echo "client_secret=${SECRET}" >> "$GITHUB_OUTPUT"
