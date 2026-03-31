@@ -209,12 +209,12 @@ jobs:
           echo "client_secret=${SECRET}" >> "$GITHUB_OUTPUT"
 
       - name: Start identree with Kanidm client secret
-        # Only start identree + testclient; kanidm and init-certs are already
-        # running/completed. Specifying services prevents docker compose from
-        # recreating init-certs (exited) and triggering a full kanidm restart.
+        # Use --no-deps to prevent docker compose from restarting init-certs
+        # (exited) and kanidm through the dependency chain. kanidm is already
+        # running and healthy; only identree and testclient need to be created.
         run: |
           KANIDM_CLIENT_SECRET="${{ steps.setup.outputs.client_secret }}" \
-          docker compose -f test/providers/kanidm/docker-compose.yml up -d identree testclient
+          docker compose -f test/providers/kanidm/docker-compose.yml up -d --no-deps identree testclient
           timeout 60 bash -c 'until curl -sf http://localhost:8093/healthz; do sleep 3; done'
 
       - name: Wait for sssd to populate
