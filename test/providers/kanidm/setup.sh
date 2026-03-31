@@ -11,24 +11,38 @@
 #   6. Configures scope maps so groups appear in tokens
 #   7. Outputs KANIDM_CLIENT_SECRET
 #
-# All kanidm CLI commands run inside the kanidm container via docker exec.
-# The kanidm CLI caches its session token in /tmp/kanidm-home/.config/ across
-# exec invocations (the container filesystem persists between exec calls).
+# kanidmd (daemon) commands run via docker exec into the server container.
+# kanidm (client) commands run via docker run using kanidm/tools:latest, which
+# contains the client CLI. The tools container connects to the server over the
+# Docker-internal network (kanidm_default) using the service hostname "kanidm".
+# A host temp dir is mounted at /kanidm-home so the session token cache persists
+# between kanidm client invocations.
 set -euo pipefail
 
 KC_URL="https://localhost:8443"
 CONTAINER="identree-kanidm-server"
-HOME_DIR="/tmp/kanidm-home"
+NETWORK="kanidm_default"
+TOOLS_IMAGE="docker.io/kanidm/tools:latest"
+
+# Temp dir on the host for the kanidm client session token cache.
+KANIDM_HOME=$(mktemp -d)
+trap 'rm -rf "${KANIDM_HOME}"' EXIT
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 wait_for() { echo "==> Waiting for ${2}..."; until curl -skf "$1" >/dev/null 2>&1; do sleep 2; done; echo "    ${2} ready."; }
 
-# Run a kanidm CLI command inside the container with a consistent HOME dir
-# so the session token cache persists between exec invocations.
+# Run a kanidm CLI command using the tools image.
+# The tools container joins the kanidm Docker network so it can reach
+# the server at https://kanidm:8443 using the Docker-internal hostname.
+# The host KANIDM_HOME dir is mounted so the session token persists.
 ke() {
-    docker exec -e HOME="${HOME_DIR}" "${CONTAINER}" \
-        kanidm "$@" -H "https://localhost:8443" --skip-hostname-verification 2>&1
+    docker run --rm \
+        --network "${NETWORK}" \
+        -v "${KANIDM_HOME}:/kanidm-home" \
+        -e HOME="/kanidm-home" \
+        "${TOOLS_IMAGE}" \
+        kanidm "$@" -H "https://kanidm:8443" --skip-hostname-verification 2>&1
 }
 
 # ── Wait for Kanidm ────────────────────────────────────────────────────────────
@@ -36,10 +50,8 @@ wait_for "${KC_URL}/status" "Kanidm"
 
 # ── Recover idm_admin ──────────────────────────────────────────────────────────
 # kanidmd recover-account resets the account password and prints the new one.
-# It connects to the running server (not directly to the DB).
+# kanidmd IS available in the server container (kanidm/server:latest).
 echo "==> Recovering idm_admin account..."
-# The Kanidm container is a minimal binary-only image (no sh/mkdir).
-# kanidm/kanidmd create ~/.config/kanidm/ automatically on first use.
 
 RECOVERY=$(docker exec "${CONTAINER}" \
     kanidmd recover-account idm_admin 2>&1 || true)
@@ -61,11 +73,14 @@ echo "    idm_admin recovered."
 # ── Login ──────────────────────────────────────────────────────────────────────
 echo "==> Logging in as idm_admin..."
 printf '%s\n' "$IDM_ADMIN_PW" | \
-    docker exec -i -e HOME="${HOME_DIR}" "${CONTAINER}" \
-    kanidm login -D idm_admin -H https://localhost:8443 --skip-hostname-verification || {
-    echo "ERROR: kanidm login failed. The kanidm CLI in this container version"
-    echo "may require interactive authentication."
-    echo "Try manually: docker exec -it ${CONTAINER} kanidm login -D idm_admin -H https://localhost:8443"
+    docker run --rm -i \
+        --network "${NETWORK}" \
+        -v "${KANIDM_HOME}:/kanidm-home" \
+        -e HOME="/kanidm-home" \
+        "${TOOLS_IMAGE}" \
+        kanidm login -D idm_admin -H https://kanidm:8443 --skip-hostname-verification || {
+    echo "ERROR: kanidm login failed."
+    echo "Try manually: docker run --rm -it --network ${NETWORK} ${TOOLS_IMAGE} kanidm login -D idm_admin -H https://kanidm:8443 --skip-hostname-verification"
     exit 1
 }
 
@@ -134,7 +149,7 @@ echo "    client_id:     identree-test"
 echo "    client_secret: ${CLIENT_SECRET:-<retrieve manually: ke system oauth2 show-basic-secret identree-test -D admin>}"
 echo ""
 echo "  Set user passwords (required for Kanidm web login):"
-echo "    docker exec -it ${CONTAINER} kanidm person credential create-reset-token alice -D idm_admin"
+echo "    docker run --rm -it --network ${NETWORK} ${TOOLS_IMAGE} kanidm person credential create-reset-token alice -D idm_admin -H https://kanidm:8443 --skip-hostname-verification"
 echo "    (follow the reset link to set alice's password)"
 echo ""
 echo "  Restart identree with the client secret:"
