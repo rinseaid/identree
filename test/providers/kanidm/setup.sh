@@ -103,17 +103,17 @@ if [ -z "$SESSION_ID" ]; then
     exit 1
 fi
 
-# Step 2: Select Password mechanism
+# Step 2: Select Password mechanism (session ID must be in body — header alone is ignored)
 curl -sk -X POST "${KC_URL}/v1/auth" \
     -H "Content-Type: application/json" \
     -H "X-KANIDM-AUTH-SESSION-ID: ${SESSION_ID}" \
-    -d '{"step":{"begin":"password"}}' >/dev/null
+    -d "{\"sessionid\":\"${SESSION_ID}\",\"step\":{\"begin\":\"password\"}}" >/dev/null
 
-# Step 3: Submit password credential → receive bearer token
+# Step 3: Submit password credential → receive bearer token (session ID in body)
 CRED_RESP=$(curl -sk -X POST "${KC_URL}/v1/auth" \
     -H "Content-Type: application/json" \
     -H "X-KANIDM-AUTH-SESSION-ID: ${SESSION_ID}" \
-    -d "{\"step\":{\"cred\":{\"password\":\"${ADMIN_PW}\"}}}")
+    -d "{\"sessionid\":\"${SESSION_ID}\",\"step\":{\"cred\":{\"password\":\"${ADMIN_PW}\"}}}")
 echo "    Cred response: $(printf '%s' "$CRED_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print({k: v[:20]+'...' if isinstance(v,str) and len(v)>20 else v for k,v in d.items()})" 2>/dev/null || echo "$CRED_RESP")"
 
 ADMIN_TOKEN=$(printf '%s' "$CRED_RESP" | python3 -c "
