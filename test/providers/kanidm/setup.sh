@@ -87,16 +87,19 @@ echo "    admin recovered."
 # directly to get a bearer token, then pass it as KANIDM_AUTH_TOKEN.
 echo "==> Authenticating as admin via Kanidm REST API..."
 
+# Kanidm AuthStep enum uses #[serde(rename_all = "lowercase")] so all variant
+# names and inner enum values must be lowercase in the JSON body.
+
 # Step 1: Init auth session
 INIT_RESP=$(curl -sk -X POST "${KC_URL}/v1/auth" \
     -H "Content-Type: application/json" \
-    -d "{\"step\":{\"Init2\":{\"username\":\"admin\",\"issue\":\"Token\",\"privileged\":false}}}")
+    -d '{"step":{"init2":{"username":"admin","issue":"token","privileged":false}}}')
+echo "    Init response: $INIT_RESP"
 SESSION_ID=$(printf '%s' "$INIT_RESP" | \
     python3 -c "import sys,json; print(json.load(sys.stdin)['sessionid'])" 2>/dev/null || echo "")
 
 if [ -z "$SESSION_ID" ]; then
     echo "ERROR: Failed to init auth session."
-    echo "Response: $INIT_RESP"
     exit 1
 fi
 
@@ -104,13 +107,14 @@ fi
 curl -sk -X POST "${KC_URL}/v1/auth" \
     -H "Content-Type: application/json" \
     -H "X-KANIDM-AUTH-SESSION-ID: ${SESSION_ID}" \
-    -d '{"step":{"Begin":"Password"}}' >/dev/null
+    -d '{"step":{"begin":"password"}}' >/dev/null
 
 # Step 3: Submit password credential → receive bearer token
 CRED_RESP=$(curl -sk -X POST "${KC_URL}/v1/auth" \
     -H "Content-Type: application/json" \
     -H "X-KANIDM-AUTH-SESSION-ID: ${SESSION_ID}" \
-    -d "{\"step\":{\"Cred\":{\"Password\":\"${ADMIN_PW}\"}}}")
+    -d "{\"step\":{\"cred\":{\"password\":\"${ADMIN_PW}\"}}}")
+echo "    Cred response: $(printf '%s' "$CRED_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print({k: v[:20]+'...' if isinstance(v,str) and len(v)>20 else v for k,v in d.items()})" 2>/dev/null || echo "$CRED_RESP")"
 
 ADMIN_TOKEN=$(printf '%s' "$CRED_RESP" | python3 -c "
 import sys, json
