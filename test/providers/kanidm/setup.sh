@@ -48,9 +48,12 @@ wait_for "${KC_URL}/status" "Kanidm"
 # kanidmd recover-account resets the account password and prints the new one.
 # We recover 'admin' (system superadmin) which can manage persons, groups,
 # POSIX attributes, and OAuth2 clients.
-echo "==> Recovering admin account..."
+echo "==> Recovering idm_admin account..."
+# idm_admin is the IDM superadmin that can manage persons, groups, POSIX
+# attributes, and OAuth2 clients.  (admin is the system superadmin and is
+# not allowed to create OAuth2 resource server entries.)
 ADMIN_RECOVERY=$(docker exec "${CONTAINER}" \
-    kanidmd recover-account admin 2>&1 || true)
+    kanidmd recover-account idm_admin 2>&1 || true)
 
 # Extract the generated password — try "Password: <value>" first, then fall back
 # to any 20+ char alphanumeric token as a last resort.
@@ -60,14 +63,14 @@ if [ -z "$ADMIN_PW" ]; then
 fi
 
 if [ -z "$ADMIN_PW" ]; then
-    echo "ERROR: Could not extract admin password from recover-account output."
+    echo "ERROR: Could not extract idm_admin password from recover-account output."
     echo "Recovery output:"
     echo "$ADMIN_RECOVERY"
     echo ""
-    echo "Try manually: docker exec ${CONTAINER} kanidmd recover-account admin"
+    echo "Try manually: docker exec ${CONTAINER} kanidmd recover-account idm_admin"
     exit 1
 fi
-echo "    admin recovered."
+echo "    idm_admin recovered."
 
 # ── Authenticate via Kanidm REST API ──────────────────────────────────────────
 # kanidm login requires /dev/tty (rpassword library) which is not available
@@ -91,7 +94,7 @@ INIT_RESP=$(curl -sk \
     -D "${HEADER_FILE}" \
     -X POST "${KC_URL}/v1/auth" \
     -H "Content-Type: application/json" \
-    -d '{"step":{"init2":{"username":"admin","issue":"token","privileged":false}}}')
+    -d '{"step":{"init2":{"username":"idm_admin","issue":"token","privileged":false}}}')
 echo "    Init response: $INIT_RESP"
 
 # Extract HMAC-signed session token from response header (what the server
@@ -103,6 +106,7 @@ SESSION_ID=$(printf '%s' "$INIT_RESP" | \
 
 echo "    Session header: ${SESSION_HDR:-(not set)}"
 echo "    Session UUID:   ${SESSION_ID:-(not set)}"
+# (SPN for idm_admin in domain "localhost" is idm_admin@localhost)
 
 if [ -z "$SESSION_ID" ]; then
     echo "ERROR: Failed to init auth session."
@@ -222,9 +226,15 @@ echo "    scope maps:"; \
         -d '["admins@localhost:openid profile email groups"]' | head -c 200; echo
 
 # Retrieve the client secret
-CLIENT_SECRET=$(kapi GET /v1/oauth2/identree-test/_basic_secret | \
-    python3 -c "import sys,json; v=json.load(sys.stdin); print(v if isinstance(v,str) else '')" \
-    2>/dev/null || echo "")
+SECRET_RESP=$(kapi GET /v1/oauth2/identree-test/_basic_secret)
+echo "    _basic_secret raw: $(printf '%s' "$SECRET_RESP" | head -c 60)"
+CLIENT_SECRET=$(printf '%s' "$SECRET_RESP" | \
+    python3 -c "
+import sys, json
+v = json.load(sys.stdin)
+if isinstance(v, str) and v:
+    print(v)
+" 2>/dev/null || echo "")
 
 # ── Summary ────────────────────────────────════════════════════════════════════
 echo ""
