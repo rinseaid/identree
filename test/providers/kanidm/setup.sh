@@ -148,8 +148,11 @@ ADMIN_TOKEN=$(printf '%s' "$CRED_RESP" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 state = d.get('state', {})
-if isinstance(state, dict) and 'Success' in state:
-    print(state['Success'])
+# Kanidm serde rename_all=lowercase: variant is 'success' not 'Success'
+if isinstance(state, dict):
+    token = state.get('success') or state.get('Success')
+    if token:
+        print(token)
 " 2>/dev/null || echo "")
 
 if [ -z "$ADMIN_TOKEN" ]; then
