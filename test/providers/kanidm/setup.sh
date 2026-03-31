@@ -31,7 +31,9 @@ CERTS_VOLUME="kanidm_kanidm-certs"
 
 # Temp dir on the host for the kanidm client session token cache.
 KANIDM_HOME=$(mktemp -d)
-trap 'rm -rf "${KANIDM_HOME}"' EXIT
+COOKIE_FILE=$(mktemp)
+HEADER_FILE=$(mktemp)
+trap 'rm -rf "${KANIDM_HOME}" "${COOKIE_FILE}" "${HEADER_FILE}"' EXIT
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -85,35 +87,61 @@ echo "    admin recovered."
 # kanidm login requires /dev/tty (rpassword library) which is not available
 # in CI containers run without a pseudo-TTY. We use the Kanidm REST API
 # directly to get a bearer token, then pass it as KANIDM_AUTH_TOKEN.
+#
+# Session tracking: Kanidm uses HMAC-signed session tokens.  The raw UUID
+# in the JSON response body is NOT what the server accepts as the session
+# identifier for subsequent requests — it expects the HMAC-signed value
+# returned in the X-KANIDM-AUTH-SESSION-ID response header.  Cookies are
+# also set (auth-session-id) as an alternative mechanism.
+# We capture both and forward them on the Begin and Cred steps.
 echo "==> Authenticating as admin via Kanidm REST API..."
 
 # Kanidm AuthStep enum uses #[serde(rename_all = "lowercase")] so all variant
 # names and inner enum values must be lowercase in the JSON body.
 
-# Step 1: Init auth session
-INIT_RESP=$(curl -sk -X POST "${KC_URL}/v1/auth" \
+# Step 1: Init auth session — save response cookies and headers
+INIT_RESP=$(curl -sk \
+    -c "${COOKIE_FILE}" \
+    -D "${HEADER_FILE}" \
+    -X POST "${KC_URL}/v1/auth" \
     -H "Content-Type: application/json" \
     -d '{"step":{"init2":{"username":"admin","issue":"token","privileged":false}}}')
 echo "    Init response: $INIT_RESP"
+
+# Extract HMAC-signed session token from response header (what the server
+# expects back) and raw UUID (for display / fallback).
+SESSION_HDR=$(grep -i 'X-KANIDM-AUTH-SESSION-ID' "${HEADER_FILE}" | \
+    awk '{print $2}' | tr -d '\r\n' || echo "")
 SESSION_ID=$(printf '%s' "$INIT_RESP" | \
     python3 -c "import sys,json; print(json.load(sys.stdin)['sessionid'])" 2>/dev/null || echo "")
+
+echo "    Session header: ${SESSION_HDR:-(not set)}"
+echo "    Session UUID:   ${SESSION_ID:-(not set)}"
 
 if [ -z "$SESSION_ID" ]; then
     echo "ERROR: Failed to init auth session."
     exit 1
 fi
 
-# Step 2: Select Password mechanism (session ID must be in body — header alone is ignored)
-curl -sk -X POST "${KC_URL}/v1/auth" \
-    -H "Content-Type: application/json" \
-    -H "X-KANIDM-AUTH-SESSION-ID: ${SESSION_ID}" \
-    -d "{\"sessionid\":\"${SESSION_ID}\",\"step\":{\"begin\":\"password\"}}" >/dev/null
+# Use HMAC-signed header value if the server returned one; otherwise fall back
+# to the raw UUID (works on some older Kanidm builds).
+SESSION_TOKEN="${SESSION_HDR:-$SESSION_ID}"
 
-# Step 3: Submit password credential → receive bearer token (session ID in body)
-CRED_RESP=$(curl -sk -X POST "${KC_URL}/v1/auth" \
+# Step 2: Select Password mechanism — forward cookies + HMAC-signed session header
+curl -sk \
+    -c "${COOKIE_FILE}" -b "${COOKIE_FILE}" \
+    -X POST "${KC_URL}/v1/auth" \
     -H "Content-Type: application/json" \
-    -H "X-KANIDM-AUTH-SESSION-ID: ${SESSION_ID}" \
-    -d "{\"sessionid\":\"${SESSION_ID}\",\"step\":{\"cred\":{\"password\":\"${ADMIN_PW}\"}}}")
+    -H "X-KANIDM-AUTH-SESSION-ID: ${SESSION_TOKEN}" \
+    -d '{"step":{"begin":"password"}}' >/dev/null
+
+# Step 3: Submit password credential → receive bearer token
+CRED_RESP=$(curl -sk \
+    -c "${COOKIE_FILE}" -b "${COOKIE_FILE}" \
+    -X POST "${KC_URL}/v1/auth" \
+    -H "Content-Type: application/json" \
+    -H "X-KANIDM-AUTH-SESSION-ID: ${SESSION_TOKEN}" \
+    -d "{\"step\":{\"cred\":{\"password\":\"${ADMIN_PW}\"}}}")
 echo "    Cred response: $(printf '%s' "$CRED_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print({k: v[:20]+'...' if isinstance(v,str) and len(v)>20 else v for k,v in d.items()})" 2>/dev/null || echo "$CRED_RESP")"
 
 ADMIN_TOKEN=$(printf '%s' "$CRED_RESP" | python3 -c "
