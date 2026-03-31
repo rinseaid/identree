@@ -1,16 +1,34 @@
 services:
-  # Generate a self-signed TLS certificate for Kanidm before it starts.
-  # Kanidm 1.9+ requires TLS; the cert is only for test environments.
+  # Generate a CA + server TLS certificate pair for Kanidm before it starts.
+  # Kanidm 1.9+ requires TLS; the certs are only for test environments.
+  #
+  # We generate a proper CA cert (CA:TRUE) and a leaf server cert (CA:FALSE)
+  # signed by that CA, so that rustls in kanidm/tools:latest accepts the
+  # server cert as a valid leaf cert (rustls rejects self-signed CA:TRUE certs
+  # presented as leaf certs with CaUsedAsEndEntity).
+  #
+  #   /certs/ca.crt    — CA cert; trust anchor for kanidm/tools client
+  #   /certs/server.crt — leaf server cert; presented by kanidmd
+  #   /certs/server.key — private key for server cert
   init-certs:
     image: alpine:3.19
     container_name: identree-kanidm-init-certs
     volumes:
       - kanidm-certs:/certs
-    # Use exec list form to avoid YAML folding/quoting issues with the shell string.
     command:
       - sh
       - -c
-      - "apk add -q --no-cache openssl && openssl req -x509 -newkey rsa:2048 -keyout /certs/server.key -out /certs/server.crt -days 3650 -nodes -subj /CN=kanidm"
+      - >-
+        apk add -q --no-cache openssl &&
+        openssl genrsa -out /certs/ca.key 2048 &&
+        openssl req -x509 -new -nodes -key /certs/ca.key -sha256 -days 3650
+          -out /certs/ca.crt -subj '/CN=kanidm-test-ca' &&
+        openssl genrsa -out /certs/server.key 2048 &&
+        openssl req -new -key /certs/server.key -out /certs/server.csr -subj '/CN=kanidm' &&
+        printf 'basicConstraints=critical,CA:FALSE\nsubjectAltName=DNS:kanidm,DNS:localhost\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n'
+          > /tmp/ext.cnf &&
+        openssl x509 -req -in /certs/server.csr -CA /certs/ca.crt -CAkey /certs/ca.key
+          -CAcreateserial -out /certs/server.crt -days 3650 -sha256 -extfile /tmp/ext.cnf
     restart: "no"
 
   kanidm:
