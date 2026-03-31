@@ -38,7 +38,7 @@ wait_for "${KC_URL}/status" "Kanidm"
 # kanidmd recover-account resets the account password and prints the new one.
 # It connects to the running server (not directly to the DB).
 echo "==> Recovering idm_admin account..."
-docker exec "${CONTAINER}" mkdir -p "${HOME_DIR}/.config"
+docker exec "${CONTAINER}" sh -c "mkdir -p '${HOME_DIR}/.config'"
 
 RECOVERY=$(docker exec "${CONTAINER}" \
     kanidmd recover-account idm_admin 2>&1 || true)

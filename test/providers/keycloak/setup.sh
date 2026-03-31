@@ -76,7 +76,7 @@ ldap_set_password() {
 
 # ── Wait for services ──────────────────────────────────────────────────────────
 wait_for "${LLDAP_URL}/healthz" "lldap"
-wait_for "${KC_URL}/health/ready" "Keycloak"
+wait_for "${KC_URL}/realms/master" "Keycloak"
 
 # ── lldap: POSIX attributes + users + groups ───────────────────────────────────
 echo "==> Setting up lldap..."
