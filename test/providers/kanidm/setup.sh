@@ -50,7 +50,6 @@ ke() {
         -v "${CERTS_VOLUME}:/certs:ro" \
         -e HOME="/kanidm-home" \
         -e KANIDM_CA_PATH="/certs/ca.crt" \
-        -e KANIDM_AUTH_TOKEN="${ADMIN_TOKEN}" \
         "${TOOLS_IMAGE}" \
         kanidm "$@" -H "https://kanidm:8443" 2>&1
 }
@@ -161,6 +160,20 @@ if [ -z "$ADMIN_TOKEN" ]; then
     exit 1
 fi
 echo "    admin authenticated."
+
+# Write the bearer token to the kanidm token cache so the CLI (kanidm/tools
+# image) can find it.  The CLI reads from ${HOME}/.cache/kanidm_tokens as a
+# JSON map of "spn -> token".  The domain is "localhost" (from server.toml),
+# so the admin SPN is admin@localhost.  KANIDM_HOME is volume-mounted as
+# /kanidm-home inside each ke() container.
+mkdir -p "${KANIDM_HOME}/.cache"
+python3 -c "
+import json, sys
+token = sys.argv[1]
+with open(sys.argv[2], 'w') as f:
+    json.dump({'admin@localhost': token}, f)
+" "${ADMIN_TOKEN}" "${KANIDM_HOME}/.cache/kanidm_tokens"
+echo "    token written to CLI cache."
 
 # ── Create groups with POSIX GIDs ─────────────────────────────────────────────
 echo "==> Creating groups..."
