@@ -164,7 +164,7 @@ echo "    idm_admin authenticated."
 # ── Diagnostics: check idm_admin group memberships ────────────────────────────
 echo "==> Checking idm_admin memberOf..."
 TOKEN="$IDM_TOKEN"
-kapi GET /v1/account/idm_admin | python3 -c "
+kapi GET /v1/service_account/idm_admin | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -182,12 +182,10 @@ except Exception as e:
 echo "==> Creating groups (as idm_admin)..."
 TOKEN="$IDM_TOKEN"
 echo "    developers:"
-kapi POST /v1/group \
-    -d '{"attrs":{"name":["developers"],"displayname":["developers"]}}'
+kapi POST /v1/group -d '{"attrs":{"name":["developers"]}}'
 echo
 echo "    admins:"
-kapi POST /v1/group \
-    -d '{"attrs":{"name":["admins"],"displayname":["admins"]}}'
+kapi POST /v1/group -d '{"attrs":{"name":["admins"]}}'
 echo
 
 echo "    posix gids (developers):"
