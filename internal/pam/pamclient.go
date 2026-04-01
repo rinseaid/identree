@@ -222,16 +222,22 @@ func (p *PAMClient) Authenticate(username string) error {
 		handleCacheInvalidation(p, challenge, username)
 
 		// Apply server-side client config overrides AFTER cache invalidation.
-		// client_config is not HMAC-protected, so a MITM could inject it —
-		// but only after the approval token is verified, limiting the window
-		// to authenticated (non-forged) responses.
+		// client_config is not HMAC-protected, so a MITM could inject values.
+		// Capture breakglass_enabled before applyClientConfig so an injected
+		// "breakglass_enabled: false" cannot suppress a server-requested rotation
+		// that was signalled via the HMAC-protected rotateBefore field.
+		origBreakglassEnabled := p.cfg.BreakglassEnabled
 		applyClientConfig(p, challenge)
 		if challenge.GraceRemaining > 0 {
 			fmt.Fprintf(MessageWriter, "  "+t("terminal_sudo_approved")+"\n", formatDuration(time.Duration(challenge.GraceRemaining)*time.Second))
 		} else {
 			fmt.Fprintf(MessageWriter, "  %s\n", t("terminal_sudo_approved_short"))
 		}
-		breakglass.MaybeRotateBreakglass(p.cfg, rotateBefore)
+		// Use the pre-client-config breakglass_enabled so a MITM-injected
+		// "breakglass_enabled: false" cannot block an HMAC-verified rotation.
+		cfgForRotate := *p.cfg
+		cfgForRotate.BreakglassEnabled = origBreakglassEnabled
+		breakglass.MaybeRotateBreakglass(&cfgForRotate, rotateBefore)
 		return nil
 	}
 

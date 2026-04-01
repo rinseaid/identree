@@ -120,11 +120,14 @@ func (s *Store) flush() error {
 			return fmt.Errorf("sudorules: mkdir %s: %w", dir, err)
 		}
 	}
-	tmp := s.path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	// Use CreateTemp so concurrent processes writing to the same directory
+	// each get a unique temp filename, preventing last-writer-wins corruption.
+	dir := filepath.Dir(s.path)
+	f, err := os.CreateTemp(dir, ".sudorules-tmp-*")
 	if err != nil {
-		return fmt.Errorf("sudorules: open %s: %w", tmp, err)
+		return fmt.Errorf("sudorules: create temp: %w", err)
 	}
+	tmp := f.Name()
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		os.Remove(tmp)

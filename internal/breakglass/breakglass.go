@@ -460,7 +460,7 @@ func AuthenticateBreakglass(username, hashFilePath string) error {
 		// The hash must be a valid bcrypt hash (bcrypt base64 uses ./A-Za-z0-9, not 0-9 alone)
 		// so that bcrypt actually performs key derivation work rather than failing immediately
 		// on parse. This hash was generated at cost 12 for the string "identree-dummy".
-		bcrypt.CompareHashAndPassword([]byte("$2a$12$LHqHFJKvAkGFhKHXAH5gZuZH3aJmVjX4TZzK8/GkGmFbDqEaFEQvK"), password)
+		bcrypt.CompareHashAndPassword([]byte("$2a$12$NkdPMzVsyJpJGV7qqBT9eeoCvllv8o2xyOZg9R0Ikle5/YzGcGKfm"), password)
 		recordBreakglassFailure()
 		fmt.Fprintf(tty, "  Authentication failed.\n\n")
 		return fmt.Errorf("break-glass authentication failed")

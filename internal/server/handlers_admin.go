@@ -701,7 +701,11 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 		s.cfg.ChallengeTTL = parseDur("IDENTREE_CHALLENGE_TTL", s.cfg.ChallengeTTL)
 	}
 	if !config.IsEnvSourced("IDENTREE_GRACE_PERIOD") {
-		s.cfg.GracePeriod = parseDur("IDENTREE_GRACE_PERIOD", s.cfg.GracePeriod)
+		d := parseDur("IDENTREE_GRACE_PERIOD", s.cfg.GracePeriod)
+		if d < 0 {
+			d = 0
+		}
+		s.cfg.GracePeriod = d
 	}
 	if !config.IsEnvSourced("IDENTREE_ONE_TAP_MAX_AGE") {
 		s.cfg.OneTapMaxAge = parseDur("IDENTREE_ONE_TAP_MAX_AGE", s.cfg.OneTapMaxAge)
@@ -723,7 +727,7 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 	// to change it without an OS-level restart would let any admin silently
 	// install persistence. Set via environment variable only.
 	if !config.IsEnvSourced("IDENTREE_NOTIFY_TIMEOUT") {
-		if d, err := time.ParseDuration(values["IDENTREE_NOTIFY_TIMEOUT"]); err == nil {
+		if d, err := time.ParseDuration(values["IDENTREE_NOTIFY_TIMEOUT"]); err == nil && d > 0 {
 			s.cfg.NotifyTimeout = d
 		}
 	}
