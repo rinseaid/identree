@@ -215,14 +215,17 @@ func (p *PAMClient) Authenticate(username string) error {
 			}
 		}
 
-		// Apply server-side client config overrides AFTER HMAC verification.
+		// Handle cache invalidation BEFORE applying client config overrides.
+		// applyClientConfig can set p.tokenCache = nil if the (unverified)
+		// client_config injects token_cache_enabled=false; doing so before
+		// handleCacheInvalidation would suppress a legitimate revocation signal.
+		handleCacheInvalidation(p, challenge, username)
+
+		// Apply server-side client config overrides AFTER cache invalidation.
 		// client_config is not HMAC-protected, so a MITM could inject it —
 		// but only after the approval token is verified, limiting the window
 		// to authenticated (non-forged) responses.
 		applyClientConfig(p, challenge)
-
-		// Handle cache invalidation signal after HMAC verification
-		handleCacheInvalidation(p, challenge, username)
 		if challenge.GraceRemaining > 0 {
 			fmt.Fprintf(MessageWriter, "  "+t("terminal_sudo_approved")+"\n", formatDuration(time.Duration(challenge.GraceRemaining)*time.Second))
 		} else {

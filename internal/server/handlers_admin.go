@@ -33,7 +33,11 @@ var liveUpdateKeys = map[string]bool{
 	"IDENTREE_ADMIN_APPROVAL_HOSTS":            true,
 	"IDENTREE_NOTIFY_BACKEND":                  true,
 	"IDENTREE_NOTIFY_URL":                      true,
-	"IDENTREE_NOTIFY_COMMAND":                  true,
+	// IDENTREE_NOTIFY_COMMAND is intentionally excluded from live-update keys.
+	// It executes arbitrary shell commands as the identree process user; allowing
+	// admins to change it without a process restart (and without OS-level access)
+	// would let any admin silently install persistence. Set via env var only,
+	// like IDENTREE_ESCROW_COMMAND.
 	"IDENTREE_NOTIFY_TIMEOUT":                  true,
 	"IDENTREE_ESCROW_BACKEND":                  true,
 	"IDENTREE_ESCROW_URL":                      true,

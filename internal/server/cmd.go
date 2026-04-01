@@ -29,7 +29,9 @@ var version = "dev"
 var commit = ""
 
 // safeUsername validates PAM_USER to prevent injection.
-var safeUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
+// Requires an alphanumeric first character to exclude ".", "..", and
+// leading-dot names that would traverse or alias the token cache directory.
+var safeUsername = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
 func Main() {
 	if len(os.Args) > 1 {

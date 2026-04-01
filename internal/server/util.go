@@ -22,7 +22,9 @@ type limitedWriter struct {
 
 func (lw *limitedWriter) Write(p []byte) (int, error) {
 	if lw.n <= 0 {
-		return 0, nil
+		// Claim all bytes consumed so the caller (io.Copy) does not treat this
+		// as a short-write error and spin. The data is silently discarded.
+		return len(p), nil
 	}
 	if int64(len(p)) > lw.n {
 		p = p[:lw.n]

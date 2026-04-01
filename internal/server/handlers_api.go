@@ -95,8 +95,13 @@ func (s *Server) verifyAPIKey(r *http.Request) bool {
 func (s *Server) authenticateChallenge(r *http.Request, hostname, username string) (bool, string) {
 	// Try global shared secret first
 	if s.verifySharedSecret(r) {
-		// Check user authorization if registry is enabled
-		if s.hostRegistry.IsEnabled() && hostname != "" {
+		// When the host registry is enabled, require a hostname and check
+		// per-user authorization. Without this, omitting hostname bypasses
+		// the per-user access list entirely.
+		if s.hostRegistry.IsEnabled() {
+			if hostname == "" {
+				return false, "hostname required when host registry is enabled"
+			}
 			if !s.hostRegistry.IsUserAuthorized(hostname, username) {
 				return false, "user not authorized on this host"
 			}

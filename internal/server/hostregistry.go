@@ -313,13 +313,10 @@ func (r *HostRegistry) RemoveUserFromAllHosts(username string) {
 }
 
 // subtleCompare does constant-time string comparison, preventing timing attacks.
-// Hashes both values before comparison to prevent length leakage.
+// Always hashes both values so the comparison is constant-time regardless of
+// whether lengths match, preventing byte-by-byte timing side-channels.
 func subtleCompare(a, b string) bool {
-	if len(a) != len(b) {
-		// Hash both to prevent length leakage
-		ha := sha256.Sum256([]byte(a))
-		hb := sha256.Sum256([]byte(b))
-		return subtle.ConstantTimeCompare(ha[:], hb[:]) == 1
-	}
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+	ha := sha256.Sum256([]byte(a))
+	hb := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(ha[:], hb[:]) == 1
 }
