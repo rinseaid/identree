@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -155,6 +156,7 @@ type EscrowRecord struct {
 type ChallengeStore struct {
 	mu                 sync.RWMutex
 	diskMu             sync.Mutex            // serialises writeStateToDisk calls
+	dirty              atomic.Bool           // true when actionLog has unflushed changes
 	challenges         map[string]*Challenge // keyed by ID
 	byCode             map[string]string     // user_code -> ID
 	pendingByUser      map[string]int        // username -> count of pending non-expired challenges
@@ -645,6 +647,7 @@ func (s *ChallengeStore) LogAction(username, action, hostname, code, actor strin
 }
 
 // LogActionAt records an action with an explicit timestamp (for seeding test data).
+// Disk writes are deferred to the 2-second flush timer rather than happening inline.
 func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor string, at time.Time) {
 	s.mu.Lock()
 	entry := ActionLogEntry{
@@ -657,9 +660,8 @@ func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor str
 		entry.Actor = actor
 	}
 	s.actionLog[username] = append(s.actionLog[username], entry)
-	data, rotate := s.marshalStateLocked()
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
+	s.dirty.Store(true)
 }
 
 // ActionHistory returns the action log entries for a user, most recent first.
@@ -1050,7 +1052,20 @@ func (s *ChallengeStore) RemoveUser(username string) {
 	s.writeStateToDisk(data, rotate)
 }
 
-// reapLoop removes expired challenges periodically.
+// flushDirty writes pending action-log changes to disk if the dirty flag is set.
+// Safe to call from any goroutine; serialised internally by diskMu.
+func (s *ChallengeStore) flushDirty() {
+	if !s.dirty.Swap(false) {
+		return
+	}
+	s.mu.Lock()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
+}
+
+// reapLoop removes expired challenges periodically and flushes dirty action-log
+// writes every 2 seconds.
 func (s *ChallengeStore) reapLoop() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1060,13 +1075,18 @@ func (s *ChallengeStore) reapLoop() {
 			go s.reapLoop()
 		}
 	}()
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	reapTicker := time.NewTicker(30 * time.Second)
+	flushTicker := time.NewTicker(2 * time.Second)
+	defer reapTicker.Stop()
+	defer flushTicker.Stop()
 	for {
 		select {
-		case <-ticker.C:
+		case <-reapTicker.C:
 			s.reap()
+		case <-flushTicker.C:
+			s.flushDirty()
 		case <-s.stopCh:
+			s.flushDirty() // flush on shutdown
 			return
 		}
 	}
