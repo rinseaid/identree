@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r identree && useradd -r -g identree -s /sbin/nologin identree && \
-    mkdir -p /data && chown identree:identree /data
+    mkdir -p /data /config && chown identree:identree /data /config
 
 # Install both arch binaries; symlink the native one as the runtime binary.
 COPY --from=builder /app/identree-linux-amd64 /usr/local/bin/identree-linux-amd64

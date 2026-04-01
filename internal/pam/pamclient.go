@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"errors"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -180,6 +181,18 @@ deviceFlow:
 		// hash file exists, fall back to local password authentication.
 		if p.cfg.BreakglassEnabled && breakglass.BreakglassFileExists(p.cfg.BreakglassFile) && breakglass.IsServerUnreachable(err) {
 			return breakglass.AuthenticateBreakglass(username, p.cfg.BreakglassFile)
+		}
+		// Map HTTP status codes to human-readable terminal messages.
+		var httpErr *serverHTTPError
+		if errors.As(err, &httpErr) {
+			switch {
+			case httpErr.StatusCode == http.StatusTooManyRequests:
+				return fmt.Errorf("too many pending requests — please wait before trying again")
+			case httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden:
+				return fmt.Errorf("authentication failed — check identree configuration")
+			case httpErr.StatusCode >= 500:
+				return fmt.Errorf("authentication server error — contact your admin")
+			}
 		}
 		return fmt.Errorf("creating challenge: %w", err)
 	}
@@ -364,7 +377,10 @@ func (p *PAMClient) queryGraceStatus(username string) graceStatusResult {
 	if p.cfg.ServerURL == "" {
 		return graceStatusResult{}
 	}
-	hostname, _ := os.Hostname()
+	hostname, hnErr := os.Hostname()
+	if hnErr != nil {
+		fmt.Fprintf(os.Stderr, "identree: os.Hostname() failed: %v\n", hnErr)
+	}
 	u := fmt.Sprintf("%s/api/grace-status", p.cfg.ServerURL)
 	params := "?username=" + neturl.QueryEscape(username) + "&hostname=" + neturl.QueryEscape(hostname)
 	url := u + params
@@ -480,7 +496,10 @@ func (p *PAMClient) verifyStatusToken(challengeID, username, status, token, rota
 }
 
 func (p *PAMClient) createChallenge(username string) (*challengeResponse, error) {
-	hostname, _ := os.Hostname()
+	hostname, hnErr := os.Hostname()
+	if hnErr != nil {
+		fmt.Fprintf(os.Stderr, "identree: os.Hostname() failed: %v\n", hnErr)
+	}
 	payload := map[string]string{"username": username}
 	if hostname != "" {
 		payload["hostname"] = hostname

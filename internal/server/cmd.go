@@ -161,6 +161,9 @@ func runServer() {
 	if cfg.APIKey == "" {
 		slog.Info("bridge mode rules loaded", "count", len(rulesStore.Rules()))
 	}
+	if len(cfg.AdminGroups) == 0 && !cfg.DevLoginEnabled {
+		slog.Warn("IDENTREE_ADMIN_GROUPS is empty — admin UI will be inaccessible without IDENTREE_DEV_LOGIN")
+	}
 	if cfg.SessionStateFile != "" {
 		slog.Info("session persistence enabled", "path", cfg.SessionStateFile)
 	} else {

@@ -145,7 +145,8 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		log.Printf("ERROR: sessions callback token exchange failed from %s", remoteAddr(r))
 		challengesDenied.WithLabelValues("oidc_error").Inc()
-		revokeErrorPage(w, r, http.StatusInternalServerError, "auth_failed", "token_exchange_failed")
+		loginURL := s.baseURL + "/sessions/login"
+		revokeErrorPageWithLink(w, r, http.StatusInternalServerError, "auth_failed", "token_exchange_failed", loginURL, "try_again")
 		return
 	}
 
