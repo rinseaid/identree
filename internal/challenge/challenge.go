@@ -666,8 +666,8 @@ func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor str
 		entry.Actor = actor
 	}
 	s.actionLog[username] = append(s.actionLog[username], entry)
-	s.mu.Unlock()
 	s.dirty.Store(true)
+	s.mu.Unlock()
 }
 
 // ActionHistory returns the action log entries for a user, most recent first.

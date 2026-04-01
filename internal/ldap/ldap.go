@@ -22,6 +22,15 @@ import (
 // sshKeyClaimRe matches sshPublicKey, sshPublicKey1, sshPublicKey2, etc.
 var sshKeyClaimRe = regexp.MustCompile(`^sshPublicKey\d*$`)
 
+// sshKeyPrefixRe matches valid SSH public key type prefixes.
+var sshKeyPrefixRe = regexp.MustCompile(`^(ssh-rsa|ssh-ed25519|ssh-dss|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) `)
+
+// isValidLDAPAttrValue returns false if the value contains null bytes or newlines,
+// which are invalid in LDAP attribute values and could corrupt directory entries.
+func isValidLDAPAttrValue(v string) bool {
+	return !strings.ContainsAny(v, "\x00\n\r")
+}
+
 // LDAPServer embeds an RFC 4519 LDAP server.
 //
 // Full mode (sudoRules == nil): serves a complete directory from PocketID.
@@ -290,11 +299,19 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			switch cl.Key {
 			case "loginShell":
 				if cl.Value != "" {
-					shell = cl.Value
+					if !isValidLDAPAttrValue(cl.Value) {
+						slog.Warn("ldap: ignoring loginShell claim with invalid characters", "user", u.Username)
+					} else {
+						shell = cl.Value
+					}
 				}
 			case "homeDirectory":
 				if cl.Value != "" {
-					home = cl.Value
+					if !isValidLDAPAttrValue(cl.Value) {
+						slog.Warn("ldap: ignoring homeDirectory claim with invalid characters", "user", u.Username)
+					} else {
+						home = cl.Value
+					}
 				}
 			}
 		}
@@ -303,6 +320,10 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 		var sshKeys []string
 		for _, cl := range u.CustomClaims {
 			if sshKeyClaimRe.MatchString(cl.Key) && cl.Value != "" {
+				if !isValidLDAPAttrValue(cl.Value) || !sshKeyPrefixRe.MatchString(cl.Value) {
+					slog.Warn("ldap: ignoring malformed SSH public key claim", "user", u.Username, "claim", cl.Key)
+					continue
+				}
 				sshKeys = append(sshKeys, cl.Value)
 			}
 		}

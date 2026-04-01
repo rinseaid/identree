@@ -141,8 +141,29 @@ func LoadTOMLConfig(path string) (map[string]string, error) {
 		}
 		key := strings.TrimSpace(line[:idx])
 		valRaw := strings.TrimSpace(line[idx+1:])
-		// Strip inline comment
-		if ci := strings.Index(valRaw, " #"); ci >= 0 {
+		// Strip inline comment, but only outside quoted strings.
+		// A ` #` inside a quoted value (e.g. a URL with a hash) must be preserved.
+		if len(valRaw) > 0 && valRaw[0] == '"' {
+			// Scan to the closing quote, skipping backslash-escaped characters.
+			closeIdx := -1
+			for i := 1; i < len(valRaw); i++ {
+				if valRaw[i] == '\\' {
+					i++ // skip the escaped character
+					continue
+				}
+				if valRaw[i] == '"' {
+					closeIdx = i
+					break
+				}
+			}
+			// If a closing quote was found, strip any trailing comment after it.
+			if closeIdx >= 0 {
+				after := valRaw[closeIdx+1:]
+				if ci := strings.Index(after, " #"); ci >= 0 {
+					valRaw = valRaw[:closeIdx+1]
+				}
+			}
+		} else if ci := strings.Index(valRaw, " #"); ci >= 0 {
 			valRaw = strings.TrimSpace(valRaw[:ci])
 		}
 

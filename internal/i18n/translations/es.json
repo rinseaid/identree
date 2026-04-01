@@ -373,5 +373,17 @@
   "cfg_session_state_file": "Session State File",
   "cfg_webhook_secret": "Webhook Secret",
   "cfg_dev_login": "Dev Login",
-  "n_keys": "%d keys"
+  "n_keys": "%d keys",
+  "hide": "Hide",
+  "breakglass_password": "Break-glass password",
+  "reveal_host_label": "Host",
+  "reveal_audit_notice": "This reveal has been logged to the audit trail.",
+  "reveal_rotation_notice": "A password rotation has been requested for this host.",
+  "history_from": "From",
+  "history_apply": "Apply",
+  "install_script": "Install script",
+  "manual_download": "Manual download",
+  "idp_user": "Identity provider user",
+  "pocketid_unavailable": "PocketID is currently unavailable — group permissions may be stale.",
+  "ldap_sync_error": "LDAP sync error"
 }

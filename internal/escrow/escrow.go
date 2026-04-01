@@ -501,7 +501,10 @@ func (b *hcVaultBackend) Retrieve(ctx context.Context, hostname, _, _ string) (s
 		return "", err
 	}
 	defer resp.Body.Close()
-	respData, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respData, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("vault: reading response: %w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("vault: HTTP %d: %s", resp.StatusCode, truncateOutput(string(respData)))
 	}
@@ -538,8 +541,11 @@ func (b *hcVaultBackend) writeSecret(ctx context.Context, kvPath, token string, 
 		if err != nil {
 			return err
 		}
-		respData, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		respData, rdErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
+		if rdErr != nil {
+			return fmt.Errorf("vault: reading response: %w", rdErr)
+		}
 		if resp.StatusCode < 400 {
 			return nil
 		}
@@ -721,7 +727,10 @@ func (b *bitwardenBackend) getToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	respData, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respData, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("reading token response: %w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("token request HTTP %d: %s", resp.StatusCode, truncateOutput(string(respData)))
 	}

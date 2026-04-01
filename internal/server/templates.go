@@ -789,13 +789,13 @@ const pendingBarHTML = `{{if .Pending}}
         <input type="hidden" name="username" value="{{.Username}}">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
-        <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('{{call .T "confirm_approve_all"}}')">{{call .T "approve_all"}}</button>
+        <button type="submit" class="btn btn-success btn-sm saction-confirm" data-confirm="{{call .T "confirm_approve_all"}}">{{call .T "approve_all"}}</button>
       </form>
       <form method="POST" action="/api/challenges/reject-all" style="display:inline">
         <input type="hidden" name="username" value="{{.Username}}">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
-        <button type="submit" class="btn btn-ghost btn-danger btn-sm" onclick="return confirm('{{call .T "confirm_reject_all"}}')">{{call .T "reject_all"}}</button>
+        <button type="submit" class="btn btn-ghost btn-danger btn-sm saction-confirm" data-confirm="{{call .T "confirm_reject_all"}}">{{call .T "reject_all"}}</button>
       </form>
       <button type="button" class="btn" onclick="document.getElementById('pending-modal').classList.remove('open')">{{call .T "close"}}</button>
     </div>
@@ -1062,7 +1062,7 @@ const dashboardHTML = `<!DOCTYPE html>
   </nav>
   <main class="main" id="main-content">
     <h1 class="sr-only">{{call .T "sessions"}} - {{call .T "app_name"}}</h1>
-    {{if .PocketIDUnavailable}}<div class="banner banner-warning">PocketID is currently unavailable — group permissions may be stale.</div>{{end}}
+    {{if .PocketIDUnavailable}}<div class="banner banner-warning">{{call .T "pocketid_unavailable"}}</div>{{end}}
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
 
@@ -1502,12 +1502,12 @@ const historyPageHTML = `<!DOCTYPE html>
       <input type="hidden" name="sort" value="{{.Sort}}">
       <input type="hidden" name="order" value="{{.Order}}">
       <input type="hidden" name="per_page" value="{{.PerPage}}">
-      <label for="history-from">From</label>
+      <label for="history-from">{{call .T "history_from"}}</label>
       <input type="datetime-local" id="history-from" name="from" value="{{.FilterFrom}}">
       <span class="time-range-sep">→</span>
       <label for="history-to">To</label>
       <input type="datetime-local" id="history-to" name="to" value="{{.FilterTo}}">
-      <button type="submit" class="time-range-apply">Apply</button>
+      <button type="submit" class="time-range-apply">{{call .T "history_apply"}}</button>
       <a href="/history?q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&sort={{.Sort}}&order={{.Order}}&per_page={{.PerPage}}" class="time-range-clear">Clear</a>
     </form>
     {{end}}
@@ -1973,7 +1973,7 @@ const adminPageHTML = `<!DOCTYPE html>
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
     {{if eq .AdminTab "info"}}
-    {{if .LDAPSyncError}}<div class="banner banner-warning">LDAP sync error: {{.LDAPSyncError}}</div>{{end}}
+    {{if .LDAPSyncError}}<div class="banner banner-warning">{{call .T "ldap_sync_error"}}: {{.LDAPSyncError}}</div>{{end}}
     <div class="info-gtable">
       <div class="info-gtable-header"><div>{{call .T "system_info"}}</div><div></div></div>
       <div class="info-gtable-row"><div class="info-gtable-label">{{call .T "version"}}</div><div>{{.Version}}{{if .Commit}} <span style="color:var(--text-3);font-size:0.8rem;cursor:help" title="{{.Commit}}">({{.CommitShort}})</span>{{end}}</div></div>
@@ -2700,11 +2700,11 @@ const adminPageHTML = `<!DOCTYPE html>
               pwEl.textContent=pw;
               pwEl.style.filter='blur(6px)';
               var toggle=modal.querySelector('#reveal-toggle');
-              toggle.textContent='Show';
+              toggle.textContent='{{call .T "show"}}';
               toggle.onclick=function(){
                 var hidden=pwEl.style.filter!=='none';
                 pwEl.style.filter=hidden?'none':'blur(6px)';
-                toggle.textContent=hidden?'Hide':'Show';
+                toggle.textContent=hidden?'{{call .T "hide"}}':'{{call .T "show"}}';
               };
               var copyBtn=modal.querySelector('#reveal-copy');
               var rotateNote=modal.querySelector('#reveal-modal-rotate-note');
@@ -2712,8 +2712,8 @@ const adminPageHTML = `<!DOCTYPE html>
               var rotated=false;
               copyBtn.onclick=function(){
                 navigator.clipboard&&navigator.clipboard.writeText(pw);
-                copyBtn.textContent='Copied!';
-                setTimeout(function(){copyBtn.textContent='Copy';},2000);
+                copyBtn.textContent='{{call .T "copied"}}';
+                setTimeout(function(){copyBtn.textContent='{{call .T "copy"}}';},2000);
                 if(!rotated){
                   rotated=true;
                   fetch('/api/hosts/rotate',{method:'POST',body:body,headers:{'Content-Type':'application/x-www-form-urlencoded'}})
@@ -2761,22 +2761,22 @@ const adminPageHTML = `<!DOCTYPE html>
       filterHosts();
     })();
     </script>
-    <div id="reveal-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.55);align-items:center;justify-content:center">
+    <div id="reveal-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.55);align-items:center;justify-content:center" role="dialog" aria-modal="true" aria-labelledby="reveal-modal-title">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px 28px 24px;max-width:520px;width:calc(100% - 40px);box-shadow:0 8px 32px rgba(0,0,0,0.25)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-          <span style="font-weight:600;font-size:1rem">Break-glass password</span>
-          <button id="reveal-modal-x" type="button" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:1.3rem;line-height:1;padding:2px 6px">&times;</button>
+          <span id="reveal-modal-title" style="font-weight:600;font-size:1rem">{{call .T "breakglass_password"}}</span>
+          <button id="reveal-modal-x" type="button" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:1.3rem;line-height:1;padding:2px 6px" aria-label="{{call .T "close"}}">&times;</button>
         </div>
-        <div style="font-size:0.85rem;color:var(--text-2);margin-bottom:14px">Host: <strong id="reveal-modal-host"></strong></div>
-        <div style="background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger);border-radius:8px;padding:10px 14px;font-size:0.8125rem;margin-bottom:8px">This reveal has been logged to the audit trail.</div>
-        <div id="reveal-modal-rotate-note" style="display:none;background:rgba(217,119,6,0.1);border:1px solid rgba(217,119,6,0.35);color:#d97706;border-radius:8px;padding:8px 14px;font-size:0.8125rem;margin-bottom:8px">A password rotation has been requested for this host.</div>
+        <div style="font-size:0.85rem;color:var(--text-2);margin-bottom:14px">{{call .T "reveal_host_label"}}: <strong id="reveal-modal-host"></strong></div>
+        <div style="background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger);border-radius:8px;padding:10px 14px;font-size:0.8125rem;margin-bottom:8px">{{call .T "reveal_audit_notice"}}</div>
+        <div id="reveal-modal-rotate-note" style="display:none;background:rgba(217,119,6,0.1);border:1px solid rgba(217,119,6,0.35);color:#d97706;border-radius:8px;padding:8px 14px;font-size:0.8125rem;margin-bottom:8px">{{call .T "reveal_rotation_notice"}}</div>
         <div style="margin-bottom:16px"></div>
         <div style="display:flex;align-items:center;gap:10px;background:var(--bg-alt,var(--bg));border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:monospace;font-size:0.95rem;margin-bottom:16px">
           <span id="reveal-modal-password" style="flex:1;word-break:break-all"></span>
-          <button id="reveal-toggle" type="button" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-size:0.8rem;cursor:pointer;white-space:nowrap;color:var(--text-2)">Show</button>
-          <button id="reveal-copy" type="button" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-size:0.8rem;cursor:pointer;white-space:nowrap;color:var(--text-2)">Copy</button>
+          <button id="reveal-toggle" type="button" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-size:0.8rem;cursor:pointer;white-space:nowrap;color:var(--text-2)">{{call .T "show"}}</button>
+          <button id="reveal-copy" type="button" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-size:0.8rem;cursor:pointer;white-space:nowrap;color:var(--text-2)">{{call .T "copy"}}</button>
         </div>
-        <div style="text-align:right"><button id="reveal-modal-close" type="button" style="background:none;border:1px solid var(--border);border-radius:8px;padding:7px 18px;cursor:pointer;font-size:0.875rem;color:var(--text)">Close</button></div>
+        <div style="text-align:right"><button id="reveal-modal-close" type="button" style="background:none;border:1px solid var(--border);border-radius:8px;padding:7px 18px;cursor:pointer;font-size:0.875rem;color:var(--text)">{{call .T "close"}}</button></div>
       </div>
     </div>
     {{else}}
@@ -2808,7 +2808,7 @@ const adminPageHTML = `<!DOCTYPE html>
               <input type="hidden" name="username" value="{{$.Username}}">
               <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
               <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-              <button type="submit" class="btn btn-danger" onclick="return confirm('{{printf (call $.T "sudo_rules_confirm_delete") .Group}}')">{{call $.T "delete"}}</button>
+              <button type="submit" class="btn btn-danger confirm-submit" data-confirm="{{printf (call $.T "sudo_rules_confirm_delete") .Group}}">{{call $.T "delete"}}</button>
             </form>
           </div>
         </div>
@@ -2908,6 +2908,9 @@ const adminPageHTML = `<!DOCTYPE html>
       document.getElementById('sudo-form-card').style.display = 'none';
       document.getElementById('sudo-add-btn').style.display = '';
     }
+    document.querySelectorAll('.confirm-submit').forEach(function(btn){
+      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+    });
     </script>
 
     {{end}}
@@ -3208,7 +3211,7 @@ const adminPageHTML = `<!DOCTYPE html>
       </div>
       <div class="script-preview" id="deploy-script-preview">
         <div class="script-preview-header" id="deploy-script-toggle">
-          <span class="script-preview-label"><span class="script-expand-chevron">&#9654;</span>Install script</span>
+          <span class="script-preview-label"><span class="script-expand-chevron">&#9654;</span>{{call .T "install_script"}}</span>
           <button type="button" class="btn btn-sm" id="deploy-script-copy-btn" data-cmd="curl -fsSL {{.InstallURL}}/install.sh | sudo bash"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>
         </div>
         <div class="script-preview-body">
@@ -3216,7 +3219,7 @@ const adminPageHTML = `<!DOCTYPE html>
         </div>
       </div>
       <div style="margin-bottom:14px">
-        <div style="font-size:0.75rem;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Manual download</div>
+        <div style="font-size:0.75rem;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">{{call .T "manual_download"}}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <a href="{{.InstallURL}}/download/identree-linux-amd64" download class="btn btn-sm"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>linux/amd64</a>
           <a href="{{.InstallURL}}/download/identree-linux-arm64" download class="btn btn-sm"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>linux/arm64</a>
@@ -3239,7 +3242,7 @@ const adminPageHTML = `<!DOCTYPE html>
             <input id="deploy-ssh-user" type="text" value="root" autocomplete="off" spellcheck="false">
           </div>
           <div class="modal-field">
-            <label for="deploy-pocketid-user">Identity provider user</label>
+            <label for="deploy-pocketid-user">{{call .T "idp_user"}}</label>
             <select id="deploy-pocketid-user">
               <option value="">{{call .T "deploy_user_loading"}}</option>
             </select>

@@ -646,6 +646,18 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 			return fmt.Errorf("invalid breakglass password type: %q", v)
 		}
 	}
+	if v := values["IDENTREE_LDAP_DEFAULT_HOME"]; v != "" {
+		stripped := strings.ReplaceAll(v, "%%", "")
+		if strings.Count(stripped, "%s") > 1 {
+			return fmt.Errorf("IDENTREE_LDAP_DEFAULT_HOME: pattern contains more than one %%s")
+		}
+		bad := regexp.MustCompile(`%[a-zA-Z]`).FindAllString(stripped, -1)
+		for _, b := range bad {
+			if b != "%s" {
+				return fmt.Errorf("IDENTREE_LDAP_DEFAULT_HOME: unsupported format verb %q (only %%s is allowed)", b)
+			}
+		}
+	}
 	return nil
 }
 
