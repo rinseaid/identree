@@ -458,6 +458,9 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 
 	// User Private Groups (one per user, GID == UID)
 	for _, u := range dir.Users {
+		if !isValidLDAPAttrValue(u.Username) {
+			continue // same guard as searchPeople; keeps UPG consistent
+		}
 		uid := s.uidmap.UID(u.ID)
 		if uid == -1 {
 			slog.Warn("ldap: skipping UPG — UID space exhausted", "user", u.Username)
@@ -921,7 +924,7 @@ func escapeDNValue(val string) string {
 	var b strings.Builder
 	for i, r := range val {
 		switch {
-		case r == ',' || r == '+' || r == '"' || r == '\\' || r == '<' || r == '>' || r == ';':
+		case r == ',' || r == '+' || r == '"' || r == '\\' || r == '<' || r == '>' || r == ';' || r == '=':
 			b.WriteByte('\\')
 			b.WriteRune(r)
 		case r == '#' && i == 0:
@@ -999,6 +1002,9 @@ func buildMemberUids(members []struct{ ID string `json:"id"` }, dir *pocketid.Us
 	var out []string
 	for _, m := range members {
 		if u, ok := dir.ByUserID[m.ID]; ok {
+			if !isValidLDAPAttrValue(u.Username) {
+				continue
+			}
 			out = append(out, u.Username)
 		}
 	}
@@ -1009,6 +1015,9 @@ func buildMemberDNs(members []struct{ ID string `json:"id"` }, dir *pocketid.Use
 	var out []string
 	for _, m := range members {
 		if u, ok := dir.ByUserID[m.ID]; ok {
+			if !isValidLDAPAttrValue(u.Username) {
+				continue
+			}
 			out = append(out, fmt.Sprintf("uid=%s,%s", escapeDNValue(u.Username), peopleDN))
 		}
 	}
@@ -1077,7 +1086,7 @@ func evalFilterStr(s string, attrs map[string][]string) (bool, string) {
 		}
 	}
 	if end < 0 {
-		return true, "" // malformed — pass through
+		return false, "" // malformed filter — fail closed rather than exposing all entries
 	}
 
 	inner := s[1:end]
@@ -1130,7 +1139,7 @@ func evalOr(s string, attrs map[string][]string) bool {
 func evalSimple(expr string, attrs map[string][]string) bool {
 	idx := strings.IndexByte(expr, '=')
 	if idx < 0 {
-		return true // unparseable — pass through
+		return false // unparseable — fail closed
 	}
 	name := strings.TrimSpace(strings.ToLower(expr[:idx]))
 	value := expr[idx+1:]

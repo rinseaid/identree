@@ -77,6 +77,20 @@ func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
 	if m.data.NextGID <= 0 || m.data.NextGID > maxGID {
 		m.data.NextGID = firstGID
 	}
+	// Validate and clamp existing map entries. A corrupted or hand-edited file
+	// could contain UID/GID <= 0 (including -1 which maps to nobody/root on
+	// POSIX clients) or values above maxUID. Remove invalid entries so they
+	// get re-assigned from the counter on the next Refresh.
+	for uuid, uid := range m.data.UIDs {
+		if uid <= 0 || uid > maxUID {
+			delete(m.data.UIDs, uuid)
+		}
+	}
+	for uuid, gid := range m.data.GIDs {
+		if gid <= 0 || gid > maxGID {
+			delete(m.data.GIDs, uuid)
+		}
+	}
 	return m, nil
 }
 

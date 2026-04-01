@@ -222,10 +222,16 @@ func (r *HostRegistry) load() {
 		slog.Warn("corrupt host registry, starting fresh", "path", r.filePath, "err", err)
 		return
 	}
-	// Filter out nil entries that could cause panics
+	// Filter out nil entries and entries with invalid hostname keys.
+	// An attacker who can write the registry file could inject an empty-string
+	// key or special-character key; the empty-string key would cause IsEnabled()
+	// to return true and ValidateAnyHost to accept an attacker-controlled secret.
 	for hostname, host := range hosts {
 		if host == nil {
 			slog.Warn("host registry contains nil entry, skipping", "hostname", hostname)
+			delete(hosts, hostname)
+		} else if !validHostname.MatchString(hostname) {
+			slog.Warn("host registry contains invalid hostname key, skipping", "hostname", hostname)
 			delete(hosts, hostname)
 		}
 	}
@@ -246,7 +252,9 @@ func (r *HostRegistry) saveLocked() {
 	lockPath := r.filePath + ".lock"
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err == nil {
-		syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX)
+		if flockErr := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); flockErr != nil {
+			slog.Warn("host registry: flock failed, proceeding without advisory lock", "err", flockErr)
+		}
 		defer func() {
 			syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 			lockFile.Close()

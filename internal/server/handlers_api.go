@@ -339,6 +339,18 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// When using per-host credentials, ensure the caller's secret matches the
+	// challenge's origin host. This prevents a compromised host B from polling
+	// host A's challenge and receiving host A's user OIDC ID token.
+	if s.hostRegistry.IsEnabled() && !s.verifySharedSecret(r) {
+		provided := r.Header.Get("X-Shared-Secret")
+		if !s.hostRegistry.ValidateHost(challenge.Hostname, provided) {
+			slog.Warn("AUTH_FAILURE poll credential does not match challenge hostname", "host", challenge.Hostname, "remote_addr", remoteAddr(r))
+			http.Error(w, "credential does not match challenge hostname", http.StatusForbidden)
+			return
+		}
+	}
+
 	resp := map[string]interface{}{
 		"status":     challenge.Status,
 		"expires_in": int(time.Until(challenge.ExpiresAt).Seconds()),
@@ -394,6 +406,16 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 	if hostname != "" && !validHostname.MatchString(hostname) {
 		http.Error(w, "invalid hostname", http.StatusBadRequest)
 		return
+	}
+	// When using per-host credentials, restrict the caller to its own hostname
+	// to prevent cross-host grace period and revocation-timestamp disclosure.
+	if s.hostRegistry.IsEnabled() && !s.verifySharedSecret(r) {
+		provided := r.Header.Get("X-Shared-Secret")
+		if !s.hostRegistry.ValidateHost(hostname, provided) {
+			slog.Warn("AUTH_FAILURE grace-status credential does not match hostname", "host", hostname, "remote_addr", remoteAddr(r))
+			http.Error(w, "credential does not match hostname", http.StatusForbidden)
+			return
+		}
 	}
 	remaining := s.store.GraceRemaining(username, hostname)
 	resp := map[string]interface{}{
@@ -534,23 +556,24 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	// When using a global SharedSecret: verify HMAC(shared_secret, "escrow:"+hostname).
 	// When using host registry (no global SharedSecret): re-validate that the
 	// caller's credential specifically matches req.Hostname, not just any host.
-	if s.cfg.SharedSecret != "" {
+	if s.hostRegistry.IsEnabled() {
+		// When the host registry is enabled (with or without a global SharedSecret),
+		// require that the caller's per-host credential specifically matches the
+		// target hostname. Using HMAC escrow tokens here would let any host holding
+		// the global SharedSecret plant a password for any other host.
+		provided := r.Header.Get("X-Shared-Secret")
+		if !s.hostRegistry.ValidateHost(req.Hostname, provided) {
+			slog.Warn("AUTH_FAILURE escrow credential does not match target hostname", "host", req.Hostname, "remote_addr", remoteAddr(r))
+			http.Error(w, "invalid credential for hostname", http.StatusForbidden)
+			return
+		}
+	} else if s.cfg.SharedSecret != "" {
+		// No host registry: use HMAC escrow token tied to the specific hostname.
 		expectedToken := breakglass.ComputeEscrowToken(s.cfg.SharedSecret, req.Hostname)
 		providedToken := r.Header.Get("X-Escrow-Token")
 		if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {
 			slog.Warn("AUTH_FAILURE invalid escrow token", "host", req.Hostname, "remote_addr", remoteAddr(r))
 			http.Error(w, "invalid escrow token for hostname", http.StatusForbidden)
-			return
-		}
-	} else if s.hostRegistry.IsEnabled() {
-		// Without a global SharedSecret, verifyAPISecret above only checked that
-		// the credential matches *some* host in the registry. Re-check here that
-		// it specifically matches the target hostname, so a host can only escrow
-		// for itself.
-		provided := r.Header.Get("X-Shared-Secret")
-		if !s.hostRegistry.ValidateHost(req.Hostname, provided) {
-			slog.Warn("AUTH_FAILURE escrow credential does not match target hostname", "host", req.Hostname, "remote_addr", remoteAddr(r))
-			http.Error(w, "invalid credential for hostname", http.StatusForbidden)
 			return
 		}
 	}
