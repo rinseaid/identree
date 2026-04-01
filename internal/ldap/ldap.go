@@ -273,14 +273,36 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 	userHosts := buildUserHostMap(dir.Groups, dir)
 
 	for _, u := range dir.Users {
+		// Validate core user fields before placing them in LDAP attributes.
+		// Null bytes and newlines would corrupt directory entries.
+		if !isValidLDAPAttrValue(u.Username) {
+			slog.Warn("ldap: skipping user with invalid characters in username", "user", u.Username)
+			continue
+		}
+		firstName := u.FirstName
+		if !isValidLDAPAttrValue(firstName) {
+			slog.Warn("ldap: stripping invalid characters from firstName", "user", u.Username)
+			firstName = ""
+		}
+		lastName := u.LastName
+		if !isValidLDAPAttrValue(lastName) {
+			slog.Warn("ldap: stripping invalid characters from lastName", "user", u.Username)
+			lastName = ""
+		}
+		email := u.Email
+		if !isValidLDAPAttrValue(email) {
+			slog.Warn("ldap: stripping invalid characters from email", "user", u.Username)
+			email = ""
+		}
+
 		uid := s.uidmap.UID(u.ID)
 		gid := uid // UPG: primary group GID == UID
 		dn := fmt.Sprintf("uid=%s,%s", escapeDNValue(u.Username), peopleDN)
-		fullName := strings.TrimSpace(u.FirstName + " " + u.LastName)
+		fullName := strings.TrimSpace(firstName + " " + lastName)
 		if fullName == "" {
 			fullName = u.Username
 		}
-		sn := u.LastName
+		sn := lastName
 		if sn == "" {
 			sn = u.Username
 		}
@@ -295,6 +317,10 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			homePattern = "/home/%s"
 		}
 		home := strings.Replace(homePattern, "%s", u.Username, 1)
+		if !isValidLDAPAttrValue(home) {
+			slog.Warn("ldap: constructed home path has invalid characters, using /tmp", "user", u.Username)
+			home = "/tmp"
+		}
 		for _, cl := range u.CustomClaims {
 			switch cl.Key {
 			case "loginShell":
@@ -338,8 +364,8 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			"uid":              {u.Username},
 			"cn":               {fullName},
 			"sn":               {sn},
-			"givenName":        {u.FirstName},
-			"mail":             {u.Email},
+			"givenName":        {firstName},
+			"mail":             {email},
 			"uidNumber":        {fmt.Sprintf("%d", uid)},
 			"gidNumber":        {fmt.Sprintf("%d", gid)},
 			"homeDirectory":    {home},

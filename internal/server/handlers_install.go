@@ -161,10 +161,8 @@ if [ -f "$CONFIG_FILE" ]; then
     # Overwrite if SHARED_SECRET provided and config differs
     NEW_SECRET="${SHARED_SECRET:-}"
     if [ -n "$NEW_SECRET" ] && { [ "$conf_url" != "$SERVER_URL" ] || [ "$conf_secret" != "$NEW_SECRET" ]; }; then
-        cat > "$CONFIG_FILE" <<EOF
-IDENTREE_SERVER_URL=$SERVER_URL
-IDENTREE_SHARED_SECRET=$NEW_SECRET
-EOF
+        printf 'IDENTREE_SERVER_URL=%s\nIDENTREE_SHARED_SECRET=%s\n' \
+            "$SERVER_URL" "$NEW_SECRET" > "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
         echo "  Updated $CONFIG_FILE with current values."
     else
@@ -191,10 +189,8 @@ else
         fi
     fi
     if [ -n "$SECRET" ]; then
-        cat > "$CONFIG_FILE" <<EOF
-IDENTREE_SERVER_URL=$SERVER_URL
-IDENTREE_SHARED_SECRET=$SECRET
-EOF
+        printf 'IDENTREE_SERVER_URL=%s\nIDENTREE_SHARED_SECRET=%s\n' \
+            "$SERVER_URL" "$SECRET" > "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
         echo "Created $CONFIG_FILE"
         CONFIG_WRITTEN=1

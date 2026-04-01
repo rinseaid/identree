@@ -31,14 +31,17 @@ type uidMapData struct {
 const (
 	defaultFirstUID = 200000
 	defaultFirstGID = 200000
+	// maxUID/maxGID is the maximum valid POSIX UID/GID (2^32 - 2; -1 is reserved as "nobody"/"nogroup").
+	maxUID = 4294967294
+	maxGID = 4294967294
 )
 
 // NewUIDMap loads (or creates) a UID map from the given path.
 func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
-	if firstUID <= 0 {
+	if firstUID <= 0 || firstUID > maxUID {
 		firstUID = defaultFirstUID
 	}
-	if firstGID <= 0 {
+	if firstGID <= 0 || firstGID > maxGID {
 		firstGID = defaultFirstGID
 	}
 	m := &UIDMap{
@@ -72,11 +75,15 @@ func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
 
 // UID returns the posix UID for the given PocketID user UUID,
 // assigning a new one if this is the first time we've seen this user.
+// Returns -1 and logs an error if the UID space is exhausted.
 func (m *UIDMap) UID(uuid string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if uid, ok := m.data.UIDs[uuid]; ok {
 		return uid
+	}
+	if m.data.NextUID > maxUID {
+		return -1
 	}
 	uid := m.data.NextUID
 	m.data.NextUID++
@@ -87,11 +94,15 @@ func (m *UIDMap) UID(uuid string) int {
 
 // GID returns the posix GID for the given PocketID group UUID,
 // assigning a new one if this is the first time we've seen this group.
+// Returns -1 and logs an error if the GID space is exhausted.
 func (m *UIDMap) GID(uuid string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if gid, ok := m.data.GIDs[uuid]; ok {
 		return gid
+	}
+	if m.data.NextGID > maxGID {
+		return -1
 	}
 	gid := m.data.NextGID
 	m.data.NextGID++
@@ -167,22 +178,28 @@ func (m *UIDMap) ImportLegacy(path string) error {
 	}
 
 	for uuid, uid := range legacy.UIDs {
+		if uid < 1 || uid > maxUID {
+			continue // skip out-of-range values from legacy file
+		}
 		if _, exists := m.data.UIDs[uuid]; !exists {
 			m.data.UIDs[uuid] = uid
 			m.dirty = true
 		}
 	}
 	for uuid, gid := range legacy.GIDs {
+		if gid < 1 || gid > maxGID {
+			continue // skip out-of-range values from legacy file
+		}
 		if _, exists := m.data.GIDs[uuid]; !exists {
 			m.data.GIDs[uuid] = gid
 			m.dirty = true
 		}
 	}
-	if legacy.NextUID > m.data.NextUID {
+	if legacy.NextUID > m.data.NextUID && legacy.NextUID <= maxUID {
 		m.data.NextUID = legacy.NextUID
 		m.dirty = true
 	}
-	if legacy.NextGID > m.data.NextGID {
+	if legacy.NextGID > m.data.NextGID && legacy.NextGID <= maxGID {
 		m.data.NextGID = legacy.NextGID
 		m.dirty = true
 	}

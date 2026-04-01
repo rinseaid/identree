@@ -78,7 +78,7 @@ func (tc *TokenCache) Check(username string) (time.Duration, error) {
 	// Parse cached token (limit read size to prevent abuse)
 	data := make([]byte, 16*1024) // id_tokens are typically 1-2KB
 	n, err := f.Read(data)
-	if err != nil && n == 0 {
+	if err != nil {
 		return 0, fmt.Errorf("reading cache file: %w", err)
 	}
 

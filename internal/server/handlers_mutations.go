@@ -243,6 +243,14 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ownership check: the one-tap link is a personal approval for the challenge
+	// owner. Any authenticated user who obtains the URL must not be able to
+	// approve a challenge that belongs to someone else.
+	if approver != challenge.Username && s.getSessionRole(r) != "admin" {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "admin_approval_required")
+		return
+	}
+
 	// OIDC is fresh — consume the single-use token and approve.
 	if err := s.store.ConsumeOneTap(challengeID); err != nil {
 		revokeErrorPage(w, r, http.StatusConflict, "challenge_expired_or_resolved", "challenge_expired_or_resolved")

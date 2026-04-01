@@ -74,20 +74,17 @@ ldap_schema = ${SSSD_SCHEMA}
 SSSD_BASE
 
 # Append optional objectClass / member-attribute overrides
-[ -n "$SSSD_USER_OBJECT_CLASS" ]  && echo "ldap_user_object_class  = ${SSSD_USER_OBJECT_CLASS}"  >> /etc/sssd/sssd.conf
-[ -n "$SSSD_GROUP_OBJECT_CLASS" ] && echo "ldap_group_object_class = ${SSSD_GROUP_OBJECT_CLASS}" >> /etc/sssd/sssd.conf
-[ -n "$SSSD_GROUP_MEMBER_ATTR" ]  && echo "ldap_group_member       = ${SSSD_GROUP_MEMBER_ATTR}"  >> /etc/sssd/sssd.conf
-[ -n "$SSSD_USER_NAME_ATTR" ]     && echo "ldap_user_name          = ${SSSD_USER_NAME_ATTR}"     >> /etc/sssd/sssd.conf
+[ -n "$SSSD_USER_OBJECT_CLASS" ]  && printf 'ldap_user_object_class  = %s\n' "$SSSD_USER_OBJECT_CLASS"  >> /etc/sssd/sssd.conf
+[ -n "$SSSD_GROUP_OBJECT_CLASS" ] && printf 'ldap_group_object_class = %s\n' "$SSSD_GROUP_OBJECT_CLASS" >> /etc/sssd/sssd.conf
+[ -n "$SSSD_GROUP_MEMBER_ATTR" ]  && printf 'ldap_group_member       = %s\n' "$SSSD_GROUP_MEMBER_ATTR"  >> /etc/sssd/sssd.conf
+[ -n "$SSSD_USER_NAME_ATTR" ]     && printf 'ldap_user_name          = %s\n' "$SSSD_USER_NAME_ATTR"     >> /etc/sssd/sssd.conf
 # SID-based ID mapping: required for AD schema (id_provider=ldap defaults to false)
 [ "$SSSD_ID_MAPPING" = "true" ]   && echo "ldap_id_mapping         = true"                       >> /etc/sssd/sssd.conf
 
 # Append bind credentials when a non-anonymous bind is required
 if [ -n "$LDAP_BIND_DN" ]; then
-    cat >> /etc/sssd/sssd.conf <<SSSD_BIND
-
-ldap_default_bind_dn      = ${LDAP_BIND_DN}
-ldap_default_authtok_type = password
-SSSD_BIND
+    printf '\nldap_default_bind_dn      = %s\n' "$LDAP_BIND_DN" >> /etc/sssd/sssd.conf
+    printf 'ldap_default_authtok_type = password\n' >> /etc/sssd/sssd.conf
     printf 'ldap_default_authtok = %s\n' "$LDAP_BIND_PW" >> /etc/sssd/sssd.conf
 fi
 
@@ -130,10 +127,8 @@ fi
 
 # ── Write identree client config ───────────────────────────────────────────────
 mkdir -p /etc/identree
-cat > /etc/identree/client.conf <<EOF
-IDENTREE_SERVER_URL=${IDENTREE_SERVER_URL}
-IDENTREE_SHARED_SECRET=${IDENTREE_SHARED_SECRET}
-EOF
+printf 'IDENTREE_SERVER_URL=%s\nIDENTREE_SHARED_SECRET=%s\n' \
+    "$IDENTREE_SERVER_URL" "$IDENTREE_SHARED_SECRET" > /etc/identree/client.conf
 chmod 600 /etc/identree/client.conf
 
 # Token cache directory for identree

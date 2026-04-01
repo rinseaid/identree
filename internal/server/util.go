@@ -21,16 +21,15 @@ type limitedWriter struct {
 }
 
 func (lw *limitedWriter) Write(p []byte) (int, error) {
-	total := len(p)
 	if lw.n <= 0 {
-		return total, nil
+		return 0, nil
 	}
 	if int64(len(p)) > lw.n {
 		p = p[:lw.n]
 	}
 	n, err := lw.w.Write(p)
 	lw.n -= int64(n)
-	return total, err
+	return n, err
 }
 
 // truncateOutput trims whitespace and caps output for log messages.
