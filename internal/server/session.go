@@ -50,8 +50,7 @@ func (s *Server) getSessionUser(r *http.Request) string {
 	if err != nil {
 		return ""
 	}
-	// Support new format: username:role:ts:sig (4 parts)
-	// and legacy format: username:ts:sig (3 parts)
+	// Only accept the 4-part format: username:role:ts:sig
 	parts := strings.SplitN(cookie.Value, ":", 4)
 	if len(parts) == 4 {
 		username, role, ts, sig := parts[0], parts[1], parts[2], parts[3]
@@ -70,27 +69,6 @@ func (s *Server) getSessionUser(r *http.Request) string {
 		}
 		mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
 		mac.Write([]byte("session:" + username + ":" + role + ":" + ts))
-		expected := hex.EncodeToString(mac.Sum(nil))
-		if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
-			return ""
-		}
-		return username
-	}
-	if len(parts) == 3 {
-		// Legacy format: username:ts:sig
-		username, ts, sig := parts[0], parts[1], parts[2]
-		if !validUsername.MatchString(username) {
-			return ""
-		}
-		tsInt, err := strconv.ParseInt(ts, 10, 64)
-		if err != nil {
-			return ""
-		}
-		if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > sessionCookieTTL {
-			return ""
-		}
-		mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-		mac.Write([]byte("session:" + username + ":" + ts))
 		expected := hex.EncodeToString(mac.Sum(nil))
 		if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
 			return ""
@@ -245,7 +223,8 @@ func (s *Server) verifyFormAuth(w http.ResponseWriter, r *http.Request) string {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_timestamp")
 		return ""
 	}
-	if time.Since(time.Unix(tsInt, 0)).Abs() > 5*time.Minute {
+	age := time.Since(time.Unix(tsInt, 0))
+	if age < 0 || age > 5*time.Minute {
 		revokeErrorPage(w, r, http.StatusForbidden, "form_expired", "form_expired_message")
 		return ""
 	}

@@ -50,7 +50,11 @@ type Server struct {
 	sessionNonceMu sync.Mutex
 
 	sseClients map[string][]chan string
-	sseMu      sync.Mutex
+	sseMu      sync.RWMutex
+
+	// ldapLastSync tracks the last successful LDAP refresh time for healthz.
+	ldapLastSync   time.Time
+	ldapLastSyncMu sync.RWMutex
 
 	pocketIDClient *pocketid.PocketIDClient
 
@@ -176,11 +180,29 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 
 	if cfg.WebhookSecret == "" {
-		slog.Warn("IDENTREE_WEBHOOK_SECRET is not set — incoming PocketID webhooks are unauthenticated; set this in production")
+		slog.Error("IDENTREE_WEBHOOK_SECRET is not set — incoming PocketID webhooks are unauthenticated; this is a DoS vector in production")
 	}
 
 	s.registerRoutes()
 	return s, nil
+}
+
+// removedUsersSnapshot returns a snapshot of recently-removed usernames for use
+// as an LDAP refresh exclusion list. Entries older than 1 hour are pruned.
+func (s *Server) removedUsersSnapshot() map[string]bool {
+	s.removedUsersMu.Lock()
+	defer s.removedUsersMu.Unlock()
+	cutoff := time.Now().Add(-time.Hour)
+	for u, t := range s.removedUsers {
+		if t.Before(cutoff) {
+			delete(s.removedUsers, u)
+		}
+	}
+	out := make(map[string]bool, len(s.removedUsers))
+	for u := range s.removedUsers {
+		out[u] = true
+	}
+	return out
 }
 
 func (s *Server) registerRoutes() {

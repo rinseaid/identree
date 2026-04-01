@@ -36,16 +36,21 @@ func (s *Server) unregisterSSE(username string, ch chan string) {
 
 // broadcastSSE sends an event to all SSE channels for username and to admin subscribers.
 func (s *Server) broadcastSSE(username, event string) {
+	// Copy channel slices under the lock (fast), then release before sending
+	// to avoid holding the mutex while blocked on channel sends.
 	s.sseMu.Lock()
-	defer s.sseMu.Unlock()
-	for _, ch := range s.sseClients[username] {
+	userChans := append([]chan string{}, s.sseClients[username]...)
+	adminChans := append([]chan string{}, s.sseClients[sseAdminKey]...)
+	s.sseMu.Unlock()
+
+	for _, ch := range userChans {
 		select {
 		case ch <- event:
 		default:
 			slog.Debug("SSE: event dropped, channel full", "username", username, "event", event)
 		}
 	}
-	for _, ch := range s.sseClients[sseAdminKey] {
+	for _, ch := range adminChans {
 		select {
 		case ch <- event:
 		default:

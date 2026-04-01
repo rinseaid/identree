@@ -43,8 +43,12 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSignOut clears the session cookie and redirects to OIDC login.
-// GET /signout
+// POST /signout
 func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
 	loginURL := s.baseURL + "/sessions/login"
 	http.Redirect(w, r, loginURL, http.StatusSeeOther)
@@ -278,9 +282,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch Pocket ID permissions for this user to build host-access view
 	var userPerms map[string][]pocketid.GroupInfo
+	pocketIDUnavailable := false
 	if s.pocketIDClient != nil {
 		if perms, err := s.pocketIDClient.GetUserPermissions(); err == nil {
 			userPerms = perms
+		} else {
+			pocketIDUnavailable = true
 		}
 	}
 
@@ -495,9 +502,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Languages":         supportedLanguages,
 		"IsAdmin":           isAdmin,
 		"AdminTab":          "",
-		"BridgeMode":        s.isBridgeMode(),
-		"DefaultPageSize":   s.cfg.DefaultPageSize,
-		"Durations":         elevateDurations,
+		"BridgeMode":          s.isBridgeMode(),
+		"DefaultPageSize":     s.cfg.DefaultPageSize,
+		"Durations":           elevateDurations,
+		"PocketIDUnavailable": pocketIDUnavailable,
 	}); err != nil {
 		log.Printf("ERROR: template execution: %v", err)
 	}

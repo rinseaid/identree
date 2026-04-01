@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"io"
 	"net/http"
@@ -104,19 +106,11 @@ func verifyWebhookSignature(r *http.Request, secret, sig string) bool {
 		return false
 	}
 	// Replace body so it can be read again downstream if needed
-	r.Body = io.NopCloser(strings.NewReader(string(body)))
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
 	expected := hex.EncodeToString(mac.Sum(nil))
 
-	// Constant-time comparison
-	if len(sig) != len(expected) {
-		return false
-	}
-	var diff byte
-	for i := range expected {
-		diff |= expected[i] ^ sig[i]
-	}
-	return diff == 0
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) == 1
 }

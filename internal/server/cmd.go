@@ -163,6 +163,8 @@ func runServer() {
 	}
 	if cfg.SessionStateFile != "" {
 		slog.Info("session persistence enabled", "path", cfg.SessionStateFile)
+	} else {
+		slog.Warn("IDENTREE_SESSION_STATE_FILE is not set — revokeTokensBefore and grace sessions will be lost on restart")
 	}
 	if cfg.HostRegistryFile != "" {
 		count := len(srv.hostRegistry.RegisteredHosts())
@@ -196,12 +198,23 @@ func runServer() {
 			if ferr != nil {
 				slog.Warn("ldap: initial directory fetch failed (will retry)", "err", ferr)
 			} else {
-				ldapSrv.Refresh(dir, "poll")
+				ldapSrv.Refresh(dir, "poll", srv.removedUsersSnapshot())
+				srv.ldapLastSyncMu.Lock()
+				srv.ldapLastSync = time.Now()
+				srv.ldapLastSyncMu.Unlock()
 			}
 		}
 
 		var ldapCtx context.Context
 		ldapCtx, ldapCancel = context.WithCancel(context.Background())
+
+		// In bridge mode (no APIKey), mark the LDAP server as started so /healthz
+		// reports healthy (bridge mode has no directory refresh cycle).
+		if cfg.APIKey == "" {
+			srv.ldapLastSyncMu.Lock()
+			srv.ldapLastSync = time.Now()
+			srv.ldapLastSyncMu.Unlock()
+		}
 
 		go func() {
 			if lerr := ldapSrv.Start(ldapCtx); lerr != nil {
@@ -224,14 +237,20 @@ func runServer() {
 							slog.Warn("ldap: directory refresh failed", "err", ferr)
 							continue
 						}
-						ldapSrv.Refresh(dir, "poll")
+						ldapSrv.Refresh(dir, "poll", srv.removedUsersSnapshot())
+						srv.ldapLastSyncMu.Lock()
+						srv.ldapLastSync = time.Now()
+						srv.ldapLastSyncMu.Unlock()
 					case <-srv.ldapRefreshCh:
 						dir, ferr := srv.pocketIDClient.FetchDirectory()
 						if ferr != nil {
 							slog.Warn("ldap: webhook-triggered refresh failed", "err", ferr)
 							continue
 						}
-						ldapSrv.Refresh(dir, "webhook")
+						ldapSrv.Refresh(dir, "webhook", srv.removedUsersSnapshot())
+						srv.ldapLastSyncMu.Lock()
+						srv.ldapLastSync = time.Now()
+						srv.ldapLastSyncMu.Unlock()
 					}
 				}
 			}()

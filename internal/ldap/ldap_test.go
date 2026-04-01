@@ -570,7 +570,7 @@ func TestRefresh(t *testing.T) {
 	_ = json.Unmarshal([]byte(`[{"id":"g1","name":"sysadmins","customClaims":[],"members":[{"id":"u1"}]}]`), &groups)
 	dir := pocketid.NewUserDirectory(users, groups)
 
-	srv.Refresh(dir, "")
+	srv.Refresh(dir, "", nil)
 
 	srv.mu.RLock()
 	got := srv.dir

@@ -734,7 +734,7 @@ const pendingBarHTML = `{{if .Pending}}
       <input type="hidden" name="username" value="{{$.Username}}">
       <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
       <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-      <button type="submit" class="btn btn-ghost btn-danger btn-sm">{{call $.T "reject"}}</button>
+      <button type="submit" class="btn btn-ghost btn-danger btn-sm saction-confirm" data-confirm="{{call $.T "confirm_reject_all"}}">{{call $.T "reject"}}</button>
     </form>
   </div>
   {{end}}{{else}}
@@ -802,6 +802,22 @@ const pendingBarHTML = `{{if .Pending}}
 </div>
 <script nonce="{{.CSPNonce}}">
 document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('pending-modal');if(m)m.classList.remove('open');}});
+(function(){
+  var pm=document.getElementById('pending-modal');
+  if(pm){
+    pm.addEventListener('keydown',function(e){
+      if(e.key!=='Tab')return;
+      var focusable=Array.from(pm.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
+      if(!focusable.length){e.preventDefault();return;}
+      var first=focusable[0],last=focusable[focusable.length-1];
+      if(e.shiftKey){if(document.activeElement===first){e.preventDefault();last.focus();}}
+      else{if(document.activeElement===last){e.preventDefault();first.focus();}}
+    });
+    document.querySelectorAll('.saction-confirm').forEach(function(btn){
+      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+    });
+  }
+})();
 </script>
 {{end}}
 {{end}}`
@@ -966,6 +982,10 @@ const dashboardHTML = `<!DOCTYPE html>
     if(tz){var d=new Date();d.setTime(d.getTime()+86400000);document.cookie='pam_tz='+tz+';path=/;expires='+d.toUTCString()+';SameSite=Lax';}
   }
   document.addEventListener('DOMContentLoaded',function(){
+    // Auto-dismiss success banners after 5 seconds
+    document.querySelectorAll('.banner-success').forEach(function(el){
+      setTimeout(function(){el.style.transition='opacity 0.4s';el.style.opacity='0';setTimeout(function(){el.style.display='none';},400);},5000);
+    });
     var tz=Intl.DateTimeFormat().resolvedOptions().timeZone;
     document.querySelectorAll('.tz-select,.lang-select').forEach(function(el){el.addEventListener('change',function(){this.form.submit();});});
     document.querySelectorAll('.tz-select').forEach(function(sel){
@@ -999,6 +1019,12 @@ const dashboardHTML = `<!DOCTYPE html>
   var es = new EventSource('/api/events');
   es.addEventListener('update', function(e) { location.reload(); });
   es.onerror = function() { setTimeout(function() { if (es.readyState === 2) location.reload(); }, 60000); };
+  document.querySelectorAll('.saction-btn[type=submit]').forEach(function(btn){
+    btn.closest('form').addEventListener('submit',function(){
+      btn.disabled=true;
+      btn.style.opacity='0.6';
+    });
+  });
   </script>
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
@@ -1028,7 +1054,7 @@ const dashboardHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
-          <a href="/signout" class="user-dropdown-item" style="color:var(--danger)" role="menuitem">{{call .T "sign_out"}}</a>
+          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px" role="menuitem">{{call .T "sign_out"}}</button></form>
         </div>
       </button>
     </div>
@@ -1086,6 +1112,9 @@ const dashboardHTML = `<!DOCTYPE html>
           </form>
         </div>
       </div>
+      {{end}}
+      {{if not .AllSessions}}
+      <div style="text-align:center;color:var(--text-2);font-size:0.875rem;padding:20px 0">{{call .T "no_sudo_session"}}</div>
       {{end}}
     </div>
     <div class="pagination-bar" id="sessions-admin-pagination"></div>
@@ -1435,7 +1464,7 @@ const historyPageHTML = `<!DOCTYPE html>
           <form method="GET" action="/history"><select name="lang" class="lang-select" aria-label="{{call .T "language"}}">{{range .Languages}}<option value="{{.Code}}" {{if eq .Code $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}</select></form>
           <div class="user-dropdown-divider"></div>
           <div class="user-dropdown-label">{{call .T "timezone"}}</div>
-          <form method="GET" action="/history"><select name="tz" class="tz-select" class="tz-select" aria-label="{{call .T "timezone"}}">` + tzOptionsHTML + `</select></form>
+          <form method="GET" action="/history"><select name="tz" class="tz-select" aria-label="{{call .T "timezone"}}">` + tzOptionsHTML + `</select></form>
           <div class="user-dropdown-divider"></div>
           <div class="user-dropdown-label">{{call .T "theme"}}</div>
           <div class="theme-opts">
@@ -1444,7 +1473,7 @@ const historyPageHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/history" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
-          <a href="/signout" class="user-dropdown-item" style="color:var(--danger)" role="menuitem">{{call .T "sign_out"}}</a>
+          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px" role="menuitem">{{call .T "sign_out"}}</button></form>
         </div>
       </button>
     </div>
@@ -1541,7 +1570,7 @@ const historyPageHTML = `<!DOCTYPE html>
 const adminPageHTML = `<!DOCTYPE html>
 <html lang="{{.Lang}}" class="{{if eq .Theme "dark"}}theme-dark{{else if eq .Theme "light"}}theme-light{{end}}">
 <head>
-  <title>{{call .T "admin"}} - {{call .T "app_name"}}</title>
+  <title>{{if .AdminTab}}{{.AdminTab}} - {{end}}{{call .T "admin"}} - {{call .T "app_name"}}</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="refresh" content="240">
@@ -1897,6 +1926,12 @@ const adminPageHTML = `<!DOCTYPE html>
     list.classList.toggle('visible',!open);
     chip.classList.toggle('open',!open);
   });
+  document.querySelectorAll('.saction-btn[type=submit]').forEach(function(btn){
+    btn.closest('form').addEventListener('submit',function(){
+      btn.disabled=true;
+      btn.style.opacity='0.6';
+    });
+  });
   </script>
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
@@ -1926,7 +1961,7 @@ const adminPageHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/admin" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
-          <a href="/signout" class="user-dropdown-item" style="color:var(--danger)" role="menuitem">{{call .T "sign_out"}}</a>
+          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px" role="menuitem">{{call .T "sign_out"}}</button></form>
         </div>
       </button>
     </div>
@@ -2601,7 +2636,7 @@ const adminPageHTML = `<!DOCTYPE html>
             <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
             <button type="submit" class="saction-btn saction-rotate" data-confirm="{{printf (call $.T "confirm_rotate_host") .Hostname}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>{{call $.T "rotate"}}</button>
           </form>
-          <button class="saction-btn saction-danger remove-host-btn" data-hostname="{{.Hostname}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>{{call $.T "remove_user"}}</button>
+          <button class="saction-btn saction-danger remove-host-btn" data-hostname="{{.Hostname}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>{{call $.T "remove_host"}}</button>
         </div>
       </div>
       {{end}}
@@ -3143,13 +3178,25 @@ const adminPageHTML = `<!DOCTYPE html>
       else{if(document.activeElement===last){e.preventDefault();first.focus();}}
     });
   }
+  // Focus trap for deploy modal (L9)
+  var deployModalEl=document.getElementById('deploy-modal');
+  if(deployModalEl){
+    deployModalEl.addEventListener('keydown',function(e){
+      if(e.key!=='Tab')return;
+      var focusable=Array.from(deployModalEl.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
+      if(!focusable.length){e.preventDefault();return;}
+      var first=focusable[0],last=focusable[focusable.length-1];
+      if(e.shiftKey){if(document.activeElement===first){e.preventDefault();last.focus();}}
+      else{if(document.activeElement===last){e.preventDefault();first.focus();}}
+    });
+  }
   })();
   </script>
 
   {{if .DeployEnabled}}
   <div id="deploy-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="deploy-modal-title">
     <div class="modal-box">
-      <h3 id="deploy-modal-title">Configure identree on host</h3>
+      <h3 id="deploy-modal-title">{{call .T "deploy_modal_title"}}</h3>
       <div class="deploy-warning-banner">
         <div class="deploy-warning-icon">⚠</div>
         <div class="deploy-warning-text">
@@ -3473,7 +3520,7 @@ const accessPageHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/access" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
-          <a href="/signout" class="user-dropdown-item" style="color:var(--danger)" role="menuitem">{{call .T "sign_out"}}</a>
+          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px" role="menuitem">{{call .T "sign_out"}}</button></form>
         </div>
       </button>
     </div>

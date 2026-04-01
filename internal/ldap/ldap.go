@@ -58,7 +58,21 @@ func NewLDAPServer(cfg *config.ServerConfig, um *uidmap.UIDMap, store *sudorules
 // Refresh replaces the cached directory snapshot atomically.
 // It eagerly assigns UIDs/GIDs for all entries so the map stays current.
 // trigger, if non-empty, is used to label the ldap_refresh_total metric (e.g. "poll", "webhook").
-func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory, trigger string) {
+// Refresh updates the in-memory directory snapshot. excludeUsers is an optional
+// set of usernames to filter out — used to ensure recently-deleted users do not
+// reappear in the LDAP directory until the next full PocketID sync clears them.
+func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory, trigger string, excludeUsers map[string]bool) {
+	// Filter excluded users from the directory snapshot before serving.
+	if len(excludeUsers) > 0 {
+		filtered := make([]pocketid.PocketIDAdminUser, 0, len(dir.Users))
+		for _, u := range dir.Users {
+			if !excludeUsers[u.Username] {
+				filtered = append(filtered, u)
+			}
+		}
+		dir = pocketid.NewUserDirectory(filtered, dir.Groups)
+	}
+
 	for _, u := range dir.Users {
 		s.uidmap.UID(u.ID)
 	}
@@ -271,7 +285,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 		if homePattern == "" {
 			homePattern = "/home/%s"
 		}
-		home := fmt.Sprintf(homePattern, u.Username)
+		home := strings.Replace(homePattern, "%s", u.Username, 1)
 		for _, cl := range u.CustomClaims {
 			switch cl.Key {
 			case "loginShell":
@@ -682,7 +696,7 @@ func isValidGroupName(name string) bool {
 // ── Sudo claim security validation ───────────────────────────────────────────
 
 // validSudoHostOrUser matches safe values for sudoHost, sudoRunAsUser, sudoRunAsGroup.
-var validSudoHostOrUser = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+var validSudoHostOrUser = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,253}$`)
 
 // validHostname matches safe hostnames for accessHosts.
 var validHostname = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)

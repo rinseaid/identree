@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -75,14 +76,20 @@ func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 	s.sessionNonceMu.Unlock()
 
 	state := "sessions:" + nonce
-	url := s.oidcConfig.AuthCodeURL(state, oidc.Nonce(nonce))
+	authURL := s.oidcConfig.AuthCodeURL(state, oidc.Nonce(nonce))
 	// When IssuerPublicURL is set (e.g. split internal/external routing in dev),
 	// rewrite the auth URL so the browser follows the public hostname while
 	// token exchange and discovery continue to use the internal IssuerURL.
 	if s.cfg.IssuerPublicURL != "" {
-		url = strings.Replace(url, s.cfg.IssuerURL, s.cfg.IssuerPublicURL, 1)
+		if parsed, perr := url.Parse(authURL); perr == nil {
+			if pub, perr2 := url.Parse(s.cfg.IssuerPublicURL); perr2 == nil {
+				parsed.Scheme = pub.Scheme
+				parsed.Host = pub.Host
+				authURL = parsed.String()
+			}
+		}
 	}
-	http.Redirect(w, r, url, http.StatusFound)
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 // handleSessionsCallback processes the OIDC callback for the sessions management page.

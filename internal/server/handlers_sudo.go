@@ -142,6 +142,7 @@ func (s *Server) handleSudoRuleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.store.LogAction(adminUser, "sudo_rule_modified", rule.Group, "", adminUser)
 	log.Printf("SUDO_RULE_ADDED: admin %q added rule for group %q from %s", adminUser, rule.Group, remoteAddr(r))
 	setFlashCookie(w, "sudo_added:"+rule.Group)
 	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
@@ -190,6 +191,7 @@ func (s *Server) handleSudoRuleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.store.LogAction(adminUser, "sudo_rule_modified", rule.Group, "", adminUser)
 	log.Printf("SUDO_RULE_UPDATED: admin %q updated rule for group %q from %s", adminUser, rule.Group, remoteAddr(r))
 	setFlashCookie(w, "sudo_updated:"+rule.Group)
 	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
@@ -230,6 +232,7 @@ func (s *Server) handleSudoRuleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.store.LogAction(adminUser, "sudo_rule_modified", group, "", adminUser)
 	log.Printf("SUDO_RULE_DELETED: admin %q deleted rule for group %q from %s", adminUser, group, remoteAddr(r))
 	setFlashCookie(w, "sudo_deleted:"+group)
 	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)

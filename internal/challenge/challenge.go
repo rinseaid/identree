@@ -20,6 +20,22 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+const (
+	ActionApproved           = "approved"
+	ActionDenied             = "denied"
+	ActionAutoApproved       = "auto_approved"
+	ActionRevoked            = "revoked"
+	ActionExtended           = "extended"
+	ActionElevated           = "elevated"
+	ActionRotatedBreakglass  = "rotated_breakglass"
+	ActionRevealedBreakglass = "revealed_breakglass"
+	ActionRemovedHost        = "removed_host"
+	ActionRemovedUser        = "user_removed"
+	ActionRotationRequested  = "rotation_requested"
+	ActionDeployed           = "deployed"
+	ActionConfigChanged      = "config_changed"
+)
+
 var (
 	challengesExpired = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "identree",
@@ -44,8 +60,9 @@ var (
 // Sentinel errors for rate limiting. Checked via errors.Is in server.go
 // instead of fragile string matching.
 var (
-	ErrTooManyChallenges = errors.New("too many active challenges")
-	ErrTooManyPerUser    = errors.New("too many pending challenges for user")
+	ErrTooManyChallenges           = errors.New("too many active challenges")
+	ErrTooManyPerUser              = errors.New("too many pending challenges for user")
+	ErrSessionSufficientlyExtended = errors.New("session already has sufficient remaining time")
 )
 
 // ChallengeStatus represents the state of a sudo challenge.
@@ -349,6 +366,11 @@ func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 	}
 	if c.Status != StatusPending {
 		return fmt.Errorf("challenge already resolved")
+	}
+	// If the user's session was revoked after this challenge was created,
+	// treat the challenge as expired to prevent approval of a stale challenge.
+	if revokeTs, ok := s.revokeTokensBefore[c.Username]; ok && revokeTs.After(c.CreatedAt) {
+		return fmt.Errorf("challenge superseded by session revocation")
 	}
 	c.Status = StatusApproved
 	c.ApprovedBy = approvedBy
@@ -710,13 +732,13 @@ func (s *ChallengeStore) ActiveSessionsForHost(hostname string) []GraceSession {
 }
 
 // KnownHosts returns unique hostnames from the action log for a given user, sorted alphabetically.
-// Entries with action "removed_host" are excluded so removed hosts do not reappear.
+// Entries with action ActionRemovedHost are excluded so removed hosts do not reappear.
 func (s *ChallengeStore) KnownHosts(username string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	seen := make(map[string]bool)
 	for _, entry := range s.actionLog[username] {
-		if entry.Hostname != "" && entry.Hostname != "(unknown)" && entry.Action != "removed_host" {
+		if entry.Hostname != "" && entry.Hostname != "(unknown)" && entry.Action != ActionRemovedHost {
 			seen[entry.Hostname] = true
 		}
 	}
@@ -729,14 +751,14 @@ func (s *ChallengeStore) KnownHosts(username string) []string {
 }
 
 // AllKnownHosts returns unique hostnames from the action log across all users, sorted alphabetically.
-// Entries with action "removed_host" are excluded so removed hosts do not reappear.
+// Entries with action ActionRemovedHost are excluded so removed hosts do not reappear.
 func (s *ChallengeStore) AllKnownHosts() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	seen := make(map[string]bool)
 	for _, entries := range s.actionLog {
 		for _, entry := range entries {
-			if entry.Hostname != "" && entry.Hostname != "(unknown)" && entry.Action != "removed_host" {
+			if entry.Hostname != "" && entry.Hostname != "(unknown)" && entry.Action != ActionRemovedHost {
 				seen[entry.Hostname] = true
 			}
 		}
@@ -827,24 +849,26 @@ func (s *ChallengeStore) SetAllHostsRotateBefore(hostnames []string) {
 // Returns the new remaining duration, or 0 if no session exists.
 // Extension is skipped if more than 75% of the grace period remains, preventing
 // repeated extension abuse (e.g. clicking extend every day to extend indefinitely).
-func (s *ChallengeStore) ExtendGraceSession(username, hostname string) time.Duration {
+// Returns ErrSessionSufficientlyExtended when the guard fires so callers can
+// distinguish "already extended" from a real failure.
+func (s *ChallengeStore) ExtendGraceSession(username, hostname string) (time.Duration, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := graceKey(username, hostname)
 	expiry, ok := s.lastApproval[key]
 	if !ok {
-		return 0
+		return 0, nil
 	}
 	remaining := time.Until(expiry)
 	// Don't extend if more than 75% of grace period remains
 	if remaining > s.gracePeriod*3/4 {
-		return remaining
+		return remaining, ErrSessionSufficientlyExtended
 	}
 	newExpiry := time.Now().Add(s.gracePeriod)
 	s.lastApproval[key] = newExpiry
 	graceSessions.Set(float64(len(s.lastApproval)))
 	s.saveStateLocked()
-	return s.gracePeriod
+	return s.gracePeriod, nil
 }
 
 // ForceExtendGraceSession extends a grace session to the full grace period

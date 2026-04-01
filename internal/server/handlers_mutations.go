@@ -86,16 +86,13 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleOneTap processes a one-tap approval link from a notification.
-// GET /api/onetap/{token}
+// GET /api/onetap/{token}  — renders a confirmation page showing username/hostname.
+// POST /api/onetap/{token} — performs the actual approval (submitted from the confirmation form).
 //
-// NOTE: One-tap URLs are GET requests that approve challenges. Link previewers
-// (Slack, Discord, iMessage) may fetch these URLs automatically. When OIDC is
-// fresh (within OneTapMaxAge), this results in auto-approval without user
-// interaction. Operators should ensure notification channels are trusted and
-// consider reducing OneTapMaxAge to minimize the window. A POST-based
-// confirmation step would eliminate this risk but degrade the one-tap UX.
+// The two-step flow eliminates the risk of link previewers (Slack, Discord, iMessage)
+// auto-approving challenges by fetching the URL in the background.
 func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -178,6 +175,74 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hostname := challenge.Hostname
+	if hostname == "" {
+		hostname = "(unknown)"
+	}
+
+	if r.Method == http.MethodGet {
+		// Render a confirmation page so the user explicitly clicks Approve.
+		// This prevents link previewers from auto-approving the challenge.
+		username := s.getSessionUser(r)
+		csrfTs := fmt.Sprintf("%d", time.Now().Unix())
+		csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+
+		w.Header().Set("Content-Type", "text/html")
+		lang := detectLanguage(r)
+		t := T(lang)
+		theme := getTheme(r)
+		themeClass := ""
+		if theme == "dark" {
+			themeClass = ` class="theme-dark"`
+		} else if theme == "light" {
+			themeClass = ` class="theme-light"`
+		}
+		actionURL := s.baseURL + "/api/onetap/" + template.HTMLEscapeString(token)
+		fmt.Fprintf(w, `<!DOCTYPE html>
+<html lang="%s"%s>
+<head>
+  <title>%s</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>%s
+    .icon-pending { background: var(--warn-bg,#fff8e1); border: 2px solid var(--warn-border,#f9a825); color: var(--warn,#f57f17); }
+    h2 { color: var(--text); }
+    .btn-approve { display:inline-block; margin-top:20px; padding:10px 28px; background:var(--success,#2e7d32); color:#fff; border:none; border-radius:6px; font-size:1rem; font-weight:600; cursor:pointer; }
+    .btn-approve:hover { opacity:0.88; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon icon-pending" aria-hidden="true">&#x3f;</div>
+    <h2>Approve sudo access for %s on %s?</h2>
+    <form method="POST" action="%s">
+      <input type="hidden" name="username" value="%s">
+      <input type="hidden" name="csrf_token" value="%s">
+      <input type="hidden" name="csrf_ts" value="%s">
+      <input type="hidden" name="token" value="%s">
+      <button type="submit" class="btn-approve">%s</button>
+    </form>
+    <p style="margin-top:16px"><a href="/" style="color:var(--primary);text-decoration:underline">%s</a></p>
+  </div>
+</body>
+</html>`, lang, themeClass, t("terminal_approved"), sharedCSS,
+			template.HTMLEscapeString(challenge.Username), template.HTMLEscapeString(hostname),
+			actionURL,
+			template.HTMLEscapeString(username),
+			template.HTMLEscapeString(csrfToken),
+			template.HTMLEscapeString(csrfTs),
+			template.HTMLEscapeString(token),
+			t("approve"),
+			t("back_to_dashboard"))
+		return
+	}
+
+	// POST — verify form auth and perform the approval.
+	approver := s.verifyFormAuth(w, r)
+	if approver == "" {
+		return
+	}
+
 	// OIDC is fresh — consume the single-use token and approve.
 	if err := s.store.ConsumeOneTap(challengeID); err != nil {
 		revokeErrorPage(w, r, http.StatusConflict, "challenge_expired_or_resolved", "challenge_expired_or_resolved")
@@ -193,10 +258,6 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	challengesApproved.Inc()
 	challpkg.ActiveChallenges.Dec()
 	challengeDuration.Observe(time.Since(challenge.CreatedAt).Seconds())
-	hostname := challenge.Hostname
-	if hostname == "" {
-		hostname = "(unknown)"
-	}
 	s.store.LogAction(challenge.Username, "approved", hostname, challenge.UserCode, challenge.Username)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
 	log.Printf("ONETAP_APPROVED: sudo for user %q on host %q (challenge %s) from %s", challenge.Username, hostname, challengeID[:8], remoteAddr(r))
@@ -326,6 +387,10 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastSSE(username, "challenge_resolved")
+	if count == 0 {
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
+		return
+	}
 	setFlashCookie(w, fmt.Sprintf("approved_all:%d", count))
 	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
@@ -379,11 +444,15 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 			notified[sessUser] = true
 		}
 	}
-	setFlashCookie(w, fmt.Sprintf("revoked_all:%d", count))
 	dest := r.FormValue("from")
 	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
 	}
+	if count == 0 {
+		http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
+		return
+	}
+	setFlashCookie(w, fmt.Sprintf("revoked_all:%d", count))
 	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
@@ -579,6 +648,10 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastSSE(username, "challenge_resolved")
+	if count == 0 {
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
+		return
+	}
 	setFlashCookie(w, fmt.Sprintf("rejected_all:%d", count))
 	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }

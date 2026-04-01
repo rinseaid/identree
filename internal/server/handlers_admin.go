@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/pocketid"
 )
@@ -177,9 +178,23 @@ func deriveEscrowLink(backend, escrowURL, escrowPath, itemID, vaultID, webURL, h
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "application/json")
+	if s.cfg.LDAPEnabled {
+		interval := s.cfg.LDAPRefreshInterval
+		if interval <= 0 {
+			interval = 5 * time.Minute
+		}
+		s.ldapLastSyncMu.RLock()
+		last := s.ldapLastSync
+		s.ldapLastSyncMu.RUnlock()
+		if !last.IsZero() && time.Since(last) > 2*interval {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"status":"degraded","checks":{"ldap":"down"}}`))
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
 
@@ -207,8 +222,9 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	s.setSessionCookie(w, username, s.getSessionRole(r))
-	if s.getSessionRole(r) != "admin" {
+	role := s.getSessionRole(r)
+	s.setSessionCookie(w, username, role)
+	if role != "admin" {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
@@ -281,11 +297,12 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	if s.getSessionRole(r) != "admin" {
+	role := s.getSessionRole(r)
+	if role != "admin" {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	s.setSessionCookie(w, username, s.getSessionRole(r))
+	s.setSessionCookie(w, username, role)
 
 	if r.Method == http.MethodPost {
 		// Custom form auth with 64 KB body limit (config form exceeds default 8 KB).
@@ -360,6 +377,8 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Apply live-safe changes.
 		s.applyLiveConfigUpdates(values)
+
+		s.store.LogAction(username, challpkg.ActionConfigChanged, "", "", username)
 
 		if len(restartSections) > 0 {
 			setFlashCookie(w, "config_saved_restart:"+strings.Join(restartSections, "|"))
@@ -494,7 +513,6 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_HOST_REGISTRY_FILE":              cfg.HostRegistryFile,
 		"IDENTREE_PAGE_SIZE":                       strconv.Itoa(cfg.DefaultPageSize),
 		"IDENTREE_SESSION_STATE_FILE":              cfg.SessionStateFile,
-		"IDENTREE_DEV_LOGIN":                       boolToString(cfg.DevLoginEnabled),
 	}
 }
 
@@ -755,9 +773,10 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	s.setSessionCookie(w, username, s.getSessionRole(r))
+	role := s.getSessionRole(r)
+	s.setSessionCookie(w, username, role)
 
-	if s.getSessionRole(r) != "admin" {
+	if role != "admin" {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
@@ -1008,8 +1027,9 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	s.setSessionCookie(w, username, s.getSessionRole(r))
-	if s.getSessionRole(r) != "admin" {
+	role := s.getSessionRole(r)
+	s.setSessionCookie(w, username, role)
+	if role != "admin" {
 		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
 		return
 	}
@@ -1196,13 +1216,13 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	s.setSessionCookie(w, username, s.getSessionRole(r))
+	role := s.getSessionRole(r)
+	s.setSessionCookie(w, username, role)
 
-	if s.getSessionRole(r) != "admin" {
+	if role != "admin" {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-
 	// Resolve timezone for flash time formatting
 	flashTZ := "UTC"
 	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
@@ -1259,22 +1279,18 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var hosts []string
-	if s.getSessionRole(r) == "admin" {
-		if s.hostRegistry.IsEnabled() {
-			// When the registry is enabled, it is the authoritative list of managed hosts.
-			// Removing a host from the registry should immediately remove it from this page.
-			hosts = s.hostRegistry.RegisteredHosts()
-		} else {
-			hosts = s.store.AllKnownHosts()
-		}
+	if s.hostRegistry.IsEnabled() {
+		// When the registry is enabled, it is the authoritative list of managed hosts.
+		// Removing a host from the registry should immediately remove it from this page.
+		hosts = s.hostRegistry.RegisteredHosts()
 	} else {
-		hosts = s.store.KnownHosts(username)
+		hosts = s.store.AllKnownHosts()
 	}
 	escrowed := s.store.EscrowedHosts()
 
 	// Merge escrowed hosts into the known hosts list
 	escrowedSet := make(map[string]bool)
-	isAdmin := s.getSessionRole(r) == "admin"
+	isAdmin := true
 	for h := range escrowed {
 		if !isAdmin && s.hostRegistry.IsEnabled() && !s.hostRegistry.IsUserAuthorized(h, username) {
 			continue
@@ -1661,6 +1677,7 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.pocketIDClient.InvalidateCache()
+	s.store.LogAction(adminUser, "claims_updated", current.Name, "", adminUser)
 	log.Printf("CLAIMS_UPDATED: admin %q updated group claims for group ID %s from %s", adminUser, groupID, remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
 		w.Header().Set("Content-Type", "application/json")
@@ -1744,6 +1761,7 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.pocketIDClient.InvalidateCache()
+	s.store.LogAction(adminUser, "claims_updated", current.Username, "", adminUser)
 	log.Printf("CLAIMS_UPDATED: admin %q updated claims for user ID %s from %s", adminUser, userID, remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
 		w.Header().Set("Content-Type", "application/json")
@@ -1815,6 +1833,7 @@ func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	s.store.LogAction(username, "server_restarted", "", "", username)
 	slog.Info("server restart requested via admin UI", "user", username)
 	w.WriteHeader(http.StatusNoContent)
 	go func() {

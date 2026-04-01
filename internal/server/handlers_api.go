@@ -62,17 +62,25 @@ func (s *Server) verifyAPISecret(r *http.Request) bool {
 
 // verifyAPIKey checks the Authorization: Bearer header against configured API keys.
 // Returns true only when at least one key is configured and the token matches.
+// Both sides are HMAC-SHA256 hashed before comparison so that
+// subtle.ConstantTimeCompare always operates on equal-length inputs, preventing
+// the length-mismatch early-exit timing leak present in a bare byte comparison.
 func (s *Server) verifyAPIKey(r *http.Request) bool {
 	if len(s.cfg.APIKeys) == 0 {
 		return false
 	}
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if token == "" {
 		return false
 	}
-	token := strings.TrimPrefix(auth, "Bearer ")
+	tokenHash := hmac.New(sha256.New, []byte("api-key-verification"))
+	tokenHash.Write([]byte(token))
+	hashedToken := tokenHash.Sum(nil)
+
 	for _, key := range s.cfg.APIKeys {
-		if subtle.ConstantTimeCompare([]byte(key), []byte(token)) == 1 {
+		h := hmac.New(sha256.New, []byte("api-key-verification"))
+		h.Write([]byte(key))
+		if subtle.ConstantTimeCompare(hashedToken, h.Sum(nil)) == 1 {
 			return true
 		}
 	}
@@ -700,6 +708,13 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	// Also log against the actor themselves so it always appears in their history.
 	s.store.LogAction(actor, "revealed_breakglass", hostname, "", actor)
 	log.Printf("BREAKGLASS: password revealed for host %q by admin %q from %s", hostname, actor, remoteAddr(r))
+
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "revealed_breakglass",
+		Username:  actor,
+		Hostname:  hostname,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{

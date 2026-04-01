@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"net"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -244,7 +244,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		IssuerPublicURL:        get("IDENTREE_OIDC_ISSUER_PUBLIC_URL"),
 		ClientID:               get("IDENTREE_OIDC_CLIENT_ID"),
 		ClientSecret:           get("IDENTREE_OIDC_CLIENT_SECRET"),
-		OIDCInsecureSkipVerify: get("IDENTREE_OIDC_INSECURE_SKIP_VERIFY") == "true",
+		OIDCInsecureSkipVerify: getBool("IDENTREE_OIDC_INSECURE_SKIP_VERIFY", false),
 		APIKey:       get("IDENTREE_POCKETID_API_KEY"),
 		APIURL:       get("IDENTREE_POCKETID_API_URL"),
 
@@ -266,8 +266,8 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/config/uidmap.json"),
 		LDAPSudoNoAuthenticate: stringDefault(get("IDENTREE_SUDO_NO_AUTHENTICATE"), "false"),
 		SudoRulesFile:          stringDefault(get("IDENTREE_SUDO_RULES_FILE"), "/config/sudorules.json"),
-		LDAPUIDBase:            getInt("IDENTREE_LDAP_UID_BASE", 0),
-		LDAPGIDBase:            getInt("IDENTREE_LDAP_GID_BASE", 0),
+		LDAPUIDBase:            getInt("IDENTREE_LDAP_UID_BASE", 200000),
+		LDAPGIDBase:            getInt("IDENTREE_LDAP_GID_BASE", 200000),
 		LDAPDefaultShell:       get("IDENTREE_LDAP_DEFAULT_SHELL"),
 		LDAPDefaultHome:        get("IDENTREE_LDAP_DEFAULT_HOME"),
 
@@ -293,7 +293,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		EscrowEncryptionKey:  get("IDENTREE_ESCROW_ENCRYPTION_KEY"),
 
 		HostRegistryFile:       stringDefault(get("IDENTREE_HOST_REGISTRY_FILE"), "/config/hosts.json"),
-		DefaultPageSize: getInt("IDENTREE_PAGE_SIZE", 15),
+		DefaultPageSize: getInt("IDENTREE_HISTORY_PAGE_SIZE", 15),
 		SessionStateFile:       stringDefault(get("IDENTREE_SESSION_STATE_FILE"), "/config/sessions.json"),
 
 		ClientPollInterval:           getDuration("IDENTREE_CLIENT_POLL_INTERVAL", 0),
@@ -303,6 +303,11 @@ func LoadServerConfig() (*ServerConfig, error) {
 
 		WebhookSecret:   get("IDENTREE_WEBHOOK_SECRET"),
 		DevLoginEnabled: getBool("IDENTREE_DEV_LOGIN", false),
+	}
+
+	// Warn if SessionStateFile is unset — grace sessions, revocations, and audit log will not persist.
+	if cfg.SessionStateFile == "" {
+		slog.Warn("IDENTREE_SESSION_STATE_FILE is not set — grace sessions, revocations, and audit log will be lost on restart")
 	}
 
 	// APIURL defaults to IssuerURL
@@ -497,21 +502,6 @@ func loadConfigFile(path string) (map[string]string, error) {
 	return m, scanner.Err()
 }
 
-// parseCIDRs parses a comma-separated list of CIDR strings.
-func parseCIDRs(s string) []*net.IPNet {
-	var out []*net.IPNet
-	for _, cidr := range strings.Split(s, ",") {
-		cidr = strings.TrimSpace(cidr)
-		if cidr == "" {
-			continue
-		}
-		_, network, err := net.ParseCIDR(cidr)
-		if err == nil {
-			out = append(out, network)
-		}
-	}
-	return out
-}
 
 func stringDefault(s, def string) string {
 	if s == "" {
