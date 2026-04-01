@@ -111,6 +111,7 @@ func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.CreateGraceSession(req.Username, req.Hostname, s.cfg.GracePeriod)
+	s.store.LogAction(req.Username, "approved", req.Hostname, "", "")
 	w.WriteHeader(http.StatusCreated)
 }
 
