@@ -14,6 +14,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
+	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/randutil"
 )
 
@@ -441,7 +442,7 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 	adminUser := s.getSessionUser(r)
 	s.store.RemoveHost(req.Hostname)
 	_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
-	s.store.LogAction(adminUser, "removed_host", req.Hostname, "", "")
+	s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
 	slog.Info("HOST_REMOVED", "admin", adminUser, "host", req.Hostname, "client_ip", clientIP(r))
 
 	w.Header().Set("Content-Type", "application/json")
@@ -539,7 +540,7 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		if !job.failed {
 			s.store.RemoveHost(req.Hostname)
 			_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
-			s.store.LogAction(adminUser, "removed_host", req.Hostname, "", "")
+			s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
 		}
 	}()
 
@@ -641,7 +642,7 @@ func (s *Server) runDeployJob(job *deployJob, hostname string, port int, sshUser
 				}
 			}
 			job.mu.Unlock()
-			s.store.LogAction(job.initiator, "deployed", logHost, "", "")
+			s.store.LogAction(job.initiator, challpkg.ActionDeployed, logHost, "", "")
 		}
 	case <-timer.C:
 		sess.Signal(gossh.SIGKILL)

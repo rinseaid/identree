@@ -61,6 +61,7 @@ domains = LDAP
 [domain/LDAP]
 id_provider     = ldap
 auth_provider   = none
+access_provider = ldap
 sudo_provider   = ${SSSD_SUDO_PROVIDER}
 
 ldap_uri               = ${LDAP_URI}
@@ -86,8 +87,8 @@ if [ -n "$LDAP_BIND_DN" ]; then
 
 ldap_default_bind_dn      = ${LDAP_BIND_DN}
 ldap_default_authtok_type = password
-ldap_default_authtok      = ${LDAP_BIND_PW}
 SSSD_BIND
+    printf 'ldap_default_authtok = %s\n' "$LDAP_BIND_PW" >> /etc/sssd/sssd.conf
 fi
 
 cat >> /etc/sssd/sssd.conf <<SSSD_REST

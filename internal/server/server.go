@@ -396,7 +396,7 @@ func (s *Server) handlePocketIDWebhook(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.WebhookSecret != "" {
 		sig := r.Header.Get("X-Webhook-Signature")
 		if !verifyWebhookSignature(r, s.cfg.WebhookSecret, sig) {
-			http.Error(w, "invalid signature", http.StatusUnauthorized)
+			http.Error(w, "invalid signature", http.StatusForbidden)
 			return
 		}
 	}

@@ -190,6 +190,7 @@ type persistedState struct {
 	EscrowedHosts          map[string]EscrowRecord      `json:"escrowed_hosts,omitempty"`
 	EscrowedCiphertexts    map[string]string            `json:"escrowed_ciphertexts,omitempty"`
 	LastOIDCAuth           map[string]time.Time         `json:"last_oidc_auth,omitempty"`
+	OneTapUsed             map[string]bool              `json:"one_tap_used,omitempty"`
 }
 
 // NewChallengeStore creates a new store with the given challenge TTL, grace period,
@@ -1248,6 +1249,11 @@ func (s *ChallengeStore) loadState() {
 	for user, ts := range state.LastOIDCAuth {
 		s.lastOIDCAuth[user] = ts
 	}
+	if state.OneTapUsed != nil {
+		for id, v := range state.OneTapUsed {
+			s.oneTapUsed[id] = v
+		}
+	}
 	log.Printf("Loaded %d grace sessions, %d revocation entries, %d escrowed hosts from %s", len(s.lastApproval), len(s.revokeTokensBefore), len(s.escrowedHosts), s.persistPath)
 	graceSessions.Set(float64(len(s.lastApproval)))
 }
@@ -1303,6 +1309,12 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 		state.LastOIDCAuth = make(map[string]time.Time, len(s.lastOIDCAuth))
 		for user, ts := range s.lastOIDCAuth {
 			state.LastOIDCAuth[user] = ts
+		}
+	}
+	if len(s.oneTapUsed) > 0 {
+		state.OneTapUsed = make(map[string]bool, len(s.oneTapUsed))
+		for id, v := range s.oneTapUsed {
+			state.OneTapUsed[id] = v
 		}
 	}
 	d, err := json.Marshal(state)

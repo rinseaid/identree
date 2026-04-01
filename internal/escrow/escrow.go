@@ -64,7 +64,7 @@ type EscrowStorer interface {
 
 // DeriveEscrowKey derives a 32-byte AES key from rawKey using HKDF-SHA256.
 func DeriveEscrowKey(rawKey string) ([]byte, error) {
-	h := hkdf.New(sha256.New, []byte(rawKey), nil, []byte("identree-breakglass-v1"))
+	h := hkdf.New(sha256.New, []byte(rawKey), []byte("identree-escrow-salt-v1"), []byte("identree-breakglass-v1"))
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(h, key); err != nil {
 		return nil, err

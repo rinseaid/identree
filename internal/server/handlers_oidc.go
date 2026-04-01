@@ -196,6 +196,10 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	// Determine role based on group membership
 	role := "user"
 	if len(s.cfg.AdminGroups) > 0 {
+		if len(claims.Groups) == 0 {
+			slog.Warn("OIDC groups claim is empty — user will be assigned role=user; check IdP group scope configuration",
+				"user", username)
+		}
 		for _, userGroup := range claims.Groups {
 			for _, adminGroup := range s.cfg.AdminGroups {
 				if userGroup == adminGroup {

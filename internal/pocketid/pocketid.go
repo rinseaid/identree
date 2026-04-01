@@ -207,18 +207,21 @@ func (c *PocketIDClient) fetchGroupData() (*pocketIDData, error) {
 	// Step 2: Fetch each group's details (members + custom claims)
 	userGroups := make(map[string][]GroupInfo)
 	var groups []pocketIDGroup
+	var failed []string
 
 	for _, g := range allGroups {
 		url := fmt.Sprintf("%s/api/user-groups/%s", c.baseURL, g.ID)
 		resp, err := c.apiGet(url)
 		if err != nil {
 			slog.Warn("fetching group %q: %v", g.Name, err)
+			failed = append(failed, g.Name)
 			continue
 		}
 
 		var group pocketIDGroup
 		if err := json.Unmarshal(resp, &group); err != nil {
 			slog.Warn("parsing group %q: %v", g.Name, err)
+			failed = append(failed, g.Name)
 			continue
 		}
 
@@ -244,6 +247,10 @@ func (c *PocketIDClient) fetchGroupData() (*pocketIDData, error) {
 		groups = append(groups, group)
 	}
 
+	if len(failed) > 0 {
+		return &pocketIDData{Groups: groups, UserGroups: userGroups},
+			fmt.Errorf("pocketid: %d group(s) failed to fetch: %v", len(failed), failed)
+	}
 	return &pocketIDData{Groups: groups, UserGroups: userGroups}, nil
 }
 
@@ -432,8 +439,10 @@ func (c *PocketIDClient) AllAdminGroups() ([]PocketIDAdminGroup, error) {
 	}
 
 	// Phase 2: fetch each group individually for members and custom claims.
-	// Skip groups that fail (e.g., deleted between phases, transient errors).
+	// Track groups that fail (e.g., transient errors) and return an error if any do,
+	// so callers can skip the LDAP refresh rather than accepting partial data.
 	var all []PocketIDAdminGroup
+	var failed []string
 	for _, meta := range phase1 {
 		if !validAdminIDPattern.MatchString(meta.ID) {
 			slog.Warn("pocketid: skipping group with invalid ID format", "name", meta.Name, "id", meta.ID)
@@ -442,12 +451,14 @@ func (c *PocketIDClient) AllAdminGroups() ([]PocketIDAdminGroup, error) {
 		groupURL := fmt.Sprintf("%s/api/user-groups/%s", c.baseURL, meta.ID)
 		body, err := c.apiGet(groupURL)
 		if err != nil {
-			slog.Warn("pocketid: skipping group", "name", meta.Name, "err", err)
+			slog.Warn("pocketid: failed to fetch group", "name", meta.Name, "err", err)
+			failed = append(failed, meta.Name)
 			continue
 		}
 		var g pocketIDGroup
 		if err := json.Unmarshal(body, &g); err != nil {
-			slog.Warn("pocketid: skipping group (parse error)", "name", meta.Name, "err", err)
+			slog.Warn("pocketid: failed to parse group", "name", meta.Name, "err", err)
+			failed = append(failed, meta.Name)
 			continue
 		}
 		var members []struct {
@@ -465,6 +476,9 @@ func (c *PocketIDClient) AllAdminGroups() ([]PocketIDAdminGroup, error) {
 			CustomClaims: g.CustomClaims,
 			Members:      members,
 		})
+	}
+	if len(failed) > 0 {
+		return all, fmt.Errorf("pocketid: %d group(s) failed to fetch: %v", len(failed), failed)
 	}
 	return all, nil
 }
