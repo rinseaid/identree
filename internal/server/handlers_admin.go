@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -178,6 +179,8 @@ func deriveEscrowLink(backend, escrowURL, escrowPath, itemID, vaultID, webURL, h
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	var failing []string
+
 	if s.cfg.LDAPEnabled {
 		interval := s.cfg.LDAPRefreshInterval
 		if interval <= 0 {
@@ -187,10 +190,25 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		last := s.ldapLastSync
 		s.ldapLastSyncMu.RUnlock()
 		if !last.IsZero() && time.Since(last) > 2*interval {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"status":"degraded","checks":{"ldap":"down"}}`))
-			return
+			failing = append(failing, `"ldap":"stale"`)
 		}
+	}
+
+	if path := s.cfg.SessionStateFile; path != "" {
+		dir := filepath.Dir(path)
+		tmp, err := os.CreateTemp(dir, ".healthz-*")
+		if err != nil {
+			failing = append(failing, `"state_file":"not_writable"`)
+		} else {
+			tmp.Close()
+			os.Remove(tmp.Name())
+		}
+	}
+
+	if len(failing) > 0 {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"degraded","checks":{` + strings.Join(failing, ",") + `}}`))
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
