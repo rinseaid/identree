@@ -98,6 +98,7 @@ jobs:
       - name: Commit screenshots to repo
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SCREENSHOTS_PAT: ${{ secrets.SCREENSHOTS_PAT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -116,7 +117,9 @@ jobs:
             exit 0
           fi
           git commit -m "Update UI screenshots (from ${{ github.sha }})"
-          # Force-push to replace any previous orphan history on screenshots branch.
+          # Push via PAT so GitHub fires a pull_request:synchronize event on PR #1,
+          # which triggers the CI workflow — GITHUB_TOKEN pushes are silently suppressed.
+          git remote set-url origin "https://x-access-token:${SCREENSHOTS_PAT}@github.com/${{ github.repository }}"
           git push origin screenshots --force
           # Open a PR screenshots → dev if one doesn't exist yet; enable auto-merge
           # so it lands as soon as the required status checks pass on the PR.
