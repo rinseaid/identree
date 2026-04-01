@@ -12,6 +12,9 @@ permissions:
 jobs:
   screenshots:
     runs-on: ubuntu-latest
+    # Skip when the triggering commit is itself a screenshots update to break
+    # the push-merge-push loop.
+    if: "!startsWith(github.event.head_commit.message, 'Update UI screenshots')"
 
     steps:
       - uses: actions/checkout@v4
