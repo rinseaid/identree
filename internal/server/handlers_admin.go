@@ -272,6 +272,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"Goroutines":          runtime.NumGoroutine(),
 		"MemUsage":            fmt.Sprintf("%.1f MB alloc / %.1f MB sys", float64(memStats.Alloc)/1024/1024, float64(memStats.Sys)/1024/1024),
 		"ActiveSessionsCount": len(s.store.AllActiveSessions()),
+		"LDAPSyncError":       s.ldapSyncError(),
 	}); err != nil {
 		slog.Error("template execution", "err", err)
 	}

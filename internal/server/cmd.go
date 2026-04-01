@@ -238,22 +238,36 @@ func runServer() {
 						dir, ferr := srv.pocketIDClient.FetchDirectory()
 						if ferr != nil {
 							slog.Warn("ldap: directory refresh failed", "err", ferr)
+							srv.ldapLastErrorMu.Lock()
+							srv.ldapLastError = ferr
+							srv.ldapLastErrorAt = time.Now()
+							srv.ldapLastErrorMu.Unlock()
 							continue
 						}
 						ldapSrv.Refresh(dir, "poll", srv.removedUsersSnapshot())
 						srv.ldapLastSyncMu.Lock()
 						srv.ldapLastSync = time.Now()
 						srv.ldapLastSyncMu.Unlock()
+						srv.ldapLastErrorMu.Lock()
+						srv.ldapLastError = nil
+						srv.ldapLastErrorMu.Unlock()
 					case <-srv.ldapRefreshCh:
 						dir, ferr := srv.pocketIDClient.FetchDirectory()
 						if ferr != nil {
 							slog.Warn("ldap: webhook-triggered refresh failed", "err", ferr)
+							srv.ldapLastErrorMu.Lock()
+							srv.ldapLastError = ferr
+							srv.ldapLastErrorAt = time.Now()
+							srv.ldapLastErrorMu.Unlock()
 							continue
 						}
 						ldapSrv.Refresh(dir, "webhook", srv.removedUsersSnapshot())
 						srv.ldapLastSyncMu.Lock()
 						srv.ldapLastSync = time.Now()
 						srv.ldapLastSyncMu.Unlock()
+						srv.ldapLastErrorMu.Lock()
+						srv.ldapLastError = nil
+						srv.ldapLastErrorMu.Unlock()
 					}
 				}
 			}()

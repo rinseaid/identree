@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
-	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/i18n"
+	"github.com/rinseaid/identree/internal/sanitize"
 )
 
 // MessageWriter is where PAM messages are written. pam_exec sends stdout to
@@ -149,30 +149,30 @@ func (p *PAMClient) Authenticate(username string) error {
 			// If the server reports a revocation that postdates our cache, invalidate it.
 			// Fail-closed: if we can't read the mtime OR if the mtime is before
 			// revocation time, treat as revoked (delete cache and re-authenticate).
+			skipCache := false
 			if graceStatus.revoked {
 				mtime, err := p.tokenCache.ModTime(username)
 				if err != nil || mtime.Before(graceStatus.revokeTime) {
 					p.tokenCache.Delete(username)
-					// Fall through to device flow
-					goto deviceFlow
+					skipCache = true
 				}
 			}
 
-			// Show the effective remaining time (max of token and grace)
-			effective := tokenRemaining
-			if graceStatus.graceRemaining > effective {
-				effective = graceStatus.graceRemaining
+			if !skipCache {
+				// Show the effective remaining time (max of token and grace)
+				effective := tokenRemaining
+				if graceStatus.graceRemaining > effective {
+					effective = graceStatus.graceRemaining
+				}
+				fmt.Fprintf(MessageWriter, "  "+t("terminal_sudo_approved")+"\n", formatDuration(effective))
+				// Still run break-glass age-based rotation check (no server signal
+				// available since we didn't contact the server, so rotateBefore is zero).
+				breakglass.MaybeRotateBreakglass(p.cfg, time.Time{})
+				return nil
 			}
-			fmt.Fprintf(MessageWriter, "  "+t("terminal_sudo_approved")+"\n", formatDuration(effective))
-			// Still run break-glass age-based rotation check (no server signal
-			// available since we didn't contact the server, so rotateBefore is zero).
-			breakglass.MaybeRotateBreakglass(p.cfg, time.Time{})
-			return nil
 		}
-		// Cache miss or invalid — fall through to device flow
+		// Cache miss, invalid, or revoked — fall through to device flow
 	}
-
-deviceFlow:
 
 	// 1. Create challenge
 	challenge, err := p.createChallenge(username)
@@ -237,9 +237,9 @@ deviceFlow:
 	// ANSI escape injection from a compromised server.
 	fmt.Fprintf(MessageWriter, "  %s\n", t("terminal_requires_approval"))
 	if challenge.VerificationURL != "" {
-		fmt.Fprintf(MessageWriter, "  %s %s\n", t("terminal_approve_at"), sanitizeForTerminal(challenge.VerificationURL))
+		fmt.Fprintf(MessageWriter, "  %s %s\n", t("terminal_approve_at"), sanitize.ForTerminal(challenge.VerificationURL))
 	}
-	fmt.Fprintf(MessageWriter, "  %s %s", t("terminal_code"), sanitizeForTerminal(challenge.UserCode))
+	fmt.Fprintf(MessageWriter, "  %s %s", t("terminal_code"), sanitize.ForTerminal(challenge.UserCode))
 	if challenge.NotificationSent {
 		fmt.Fprintf(MessageWriter, " %s", t("terminal_notification_sent"))
 	}
@@ -339,7 +339,7 @@ deviceFlow:
 		case challpkg.StatusPending:
 			// Poll again after interval
 		default:
-			return fmt.Errorf("unexpected status: %s", sanitizeForTerminal(status.Status))
+			return fmt.Errorf("unexpected status: %s", sanitize.ForTerminal(status.Status))
 		}
 
 		if err := sleepWithContext(ctx, p.cfg.PollInterval); err != nil {
@@ -523,7 +523,7 @@ func (p *PAMClient) createChallenge(username string) (*challengeResponse, error)
 	if resp.StatusCode != http.StatusOK {
 		// Limit how much of the error response we read and sanitize for terminal safety
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		safe := sanitizeForTerminal(string(b))
+		safe := sanitize.ForTerminal(string(b))
 		return nil, &serverHTTPError{StatusCode: resp.StatusCode, Body: safe}
 	}
 
@@ -594,37 +594,4 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm", m)
 	}
 	return fmt.Sprintf("%ds", int(d.Seconds()))
-}
-
-// sanitizeForTerminal removes control characters (ANSI escapes, null bytes, etc.)
-// from a string before displaying it on a terminal.
-// Also strips C1 control characters (U+0080-U+009F) which some terminals
-// interpret as escape sequences (e.g., U+009B is CSI, equivalent to ESC[),
-// and Unicode bidirectional override characters that could visually reorder text.
-func sanitizeForTerminal(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == '\t' {
-			return ' '
-		}
-		if r < 32 || r == 127 {
-			return -1
-		}
-		// C1 control characters (U+0080-U+009F): some terminals interpret
-		// U+009B as CSI (equivalent to ESC[), enabling escape injection
-		if r >= 0x80 && r <= 0x9F {
-			return -1
-		}
-		// Unicode bidirectional overrides and zero-width characters
-		// that could visually disguise URLs or text
-		if r >= 0x202A && r <= 0x202E { // LRE, RLE, PDF, LRO, RLO
-			return -1
-		}
-		if r >= 0x2066 && r <= 0x2069 { // LRI, RLI, FSI, PDI
-			return -1
-		}
-		if r == 0x200B || r == 0x200C || r == 0x200D || r == 0xFEFF { // zero-width chars, BOM
-			return -1
-		}
-		return r
-	}, s)
 }

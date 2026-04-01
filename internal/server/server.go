@@ -85,6 +85,11 @@ type Server struct {
 	// webhookClient is the hardened HTTP client for outbound notifications.
 	// Initialised in NewServer with the configured NotifyTimeout.
 	webhookClient *http.Client
+
+	// ldapLastError records the most recent LDAP refresh failure for /admin/info.
+	ldapLastError   error
+	ldapLastErrorAt time.Time
+	ldapLastErrorMu sync.Mutex
 }
 
 var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
@@ -185,6 +190,17 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 
 	s.registerRoutes()
 	return s, nil
+}
+
+// ldapSyncError returns a non-empty error string if the last LDAP refresh
+// failed, formatted with timestamp. Returns "" when LDAP is healthy.
+func (s *Server) ldapSyncError() string {
+	s.ldapLastErrorMu.Lock()
+	defer s.ldapLastErrorMu.Unlock()
+	if s.ldapLastError == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s (at %s)", s.ldapLastError.Error(), s.ldapLastErrorAt.Format("15:04:05"))
 }
 
 // removedUsersSnapshot returns a snapshot of recently-removed usernames for use
