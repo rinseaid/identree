@@ -154,6 +154,7 @@ type EscrowRecord struct {
 // ChallengeStore manages in-memory sudo challenges with TTL expiration.
 type ChallengeStore struct {
 	mu                 sync.RWMutex
+	diskMu             sync.Mutex            // serialises writeStateToDisk calls
 	challenges         map[string]*Challenge // keyed by ID
 	byCode             map[string]string     // user_code -> ID
 	pendingByUser      map[string]int        // username -> count of pending non-expired challenges
@@ -357,20 +358,23 @@ func (s *ChallengeStore) SetRequestedGrace(id string, d time.Duration) {
 // Approve marks a challenge as approved by the given identity.
 func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	c, ok := s.challenges[id]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("challenge not found")
 	}
 	if time.Now().After(c.ExpiresAt) {
+		s.mu.Unlock()
 		return fmt.Errorf("challenge expired")
 	}
 	if c.Status != StatusPending {
+		s.mu.Unlock()
 		return fmt.Errorf("challenge already resolved")
 	}
 	// If the user's session was revoked after this challenge was created,
 	// treat the challenge as expired to prevent approval of a stale challenge.
 	if revokeTs, ok := s.revokeTokensBefore[c.Username]; ok && revokeTs.After(c.CreatedAt) {
+		s.mu.Unlock()
 		return fmt.Errorf("challenge superseded by session revocation")
 	}
 	c.Status = StatusApproved
@@ -386,7 +390,9 @@ func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 	}
 	graceSessions.Set(float64(len(s.lastApproval)))
 	s.decPending(c.Username)
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 	return nil
 }
 
@@ -631,7 +637,7 @@ func (s *ChallengeStore) AllActionHistoryWithUsers() []ActionLogEntryWithUser {
 }
 
 // LogAction records an action in the per-user action log.
-// The log grows unbounded; pruning happens during file rotation in saveStateLocked
+// The log grows unbounded; pruning happens during file rotation in marshalStateLocked
 // when the serialized state exceeds 1 MB.
 // actor is who performed the action; if empty or equal to username (self-action), Actor is not stored.
 func (s *ChallengeStore) LogAction(username, action, hostname, code, actor string) {
@@ -641,7 +647,6 @@ func (s *ChallengeStore) LogAction(username, action, hostname, code, actor strin
 // LogActionAt records an action with an explicit timestamp (for seeding test data).
 func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor string, at time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	entry := ActionLogEntry{
 		Timestamp: at,
 		Action:    action,
@@ -652,7 +657,9 @@ func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor str
 		entry.Actor = actor
 	}
 	s.actionLog[username] = append(s.actionLog[username], entry)
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // ActionHistory returns the action log entries for a user, most recent first.
@@ -696,7 +703,6 @@ func (s *ChallengeStore) UsersWithHostActivity(hostname string) []string {
 // and grace sessions.
 func (s *ChallengeStore) RemoveHost(hostname string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for user, entries := range s.actionLog {
 		var kept []ActionLogEntry
 		for _, e := range entries {
@@ -713,7 +719,9 @@ func (s *ChallengeStore) RemoveHost(hostname string) {
 			delete(s.lastApproval, key)
 		}
 	}
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // ActiveSessionsForHost returns all users with active grace sessions on a host.
@@ -781,28 +789,31 @@ func (s *ChallengeStore) AllKnownHosts() []string {
 // Used for manual elevation from the hosts page.
 func (s *ChallengeStore) CreateGraceSession(username, hostname string, duration time.Duration) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	key := graceKey(username, hostname)
 	s.lastApproval[key] = time.Now().Add(duration)
 	graceSessions.Set(float64(len(s.lastApproval)))
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // RecordEscrow records that a host has escrowed a break-glass password.
 func (s *ChallengeStore) RecordEscrow(hostname, itemID, vaultID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.escrowedHosts[hostname] = EscrowRecord{Timestamp: time.Now(), ItemID: itemID, VaultID: vaultID}
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // StoreEscrowCiphertext stores an encrypted break-glass password for the local escrow backend.
 // Implements escrow.EscrowStorer. Must NOT be called while holding the write lock.
 func (s *ChallengeStore) StoreEscrowCiphertext(hostname, ciphertext string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.escrowedCiphertexts[hostname] = ciphertext
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // GetEscrowCiphertext returns the encrypted ciphertext for a host, if any.
@@ -828,9 +839,10 @@ func (s *ChallengeStore) EscrowedHosts() map[string]EscrowRecord {
 // SetHostRotateBefore sets the per-host rotate-before timestamp to now and saves state.
 func (s *ChallengeStore) SetHostRotateBefore(hostname string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.rotateBreakglassBefore[hostname] = time.Now()
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // HostRotateBefore returns the per-host rotate-before time, or zero if not set.
@@ -843,12 +855,13 @@ func (s *ChallengeStore) HostRotateBefore(hostname string) time.Time {
 // SetAllHostsRotateBefore sets the rotate-before timestamp to now for all given hostnames.
 func (s *ChallengeStore) SetAllHostsRotateBefore(hostnames []string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	now := time.Now()
 	for _, h := range hostnames {
 		s.rotateBreakglassBefore[h] = now
 	}
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // ExtendGraceSession extends a grace session to the maximum allowed duration.
@@ -859,21 +872,24 @@ func (s *ChallengeStore) SetAllHostsRotateBefore(hostnames []string) {
 // distinguish "already extended" from a real failure.
 func (s *ChallengeStore) ExtendGraceSession(username, hostname string) (time.Duration, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	key := graceKey(username, hostname)
 	expiry, ok := s.lastApproval[key]
 	if !ok {
+		s.mu.Unlock()
 		return 0, nil
 	}
 	remaining := time.Until(expiry)
 	// Don't extend if more than 75% of grace period remains
 	if remaining > s.gracePeriod*3/4 {
+		s.mu.Unlock()
 		return remaining, ErrSessionSufficientlyExtended
 	}
 	newExpiry := time.Now().Add(s.gracePeriod)
 	s.lastApproval[key] = newExpiry
 	graceSessions.Set(float64(len(s.lastApproval)))
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 	return s.gracePeriod, nil
 }
 
@@ -881,18 +897,21 @@ func (s *ChallengeStore) ExtendGraceSession(username, hostname string) (time.Dur
 // unconditionally, bypassing the 75% guard. Used for admin-initiated extends.
 func (s *ChallengeStore) ForceExtendGraceSession(username, hostname string) time.Duration {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.gracePeriod <= 0 {
+		s.mu.Unlock()
 		return 0 // grace period disabled; extending would set expiry to "now"
 	}
 	key := graceKey(username, hostname)
 	if _, ok := s.lastApproval[key]; !ok {
+		s.mu.Unlock()
 		return 0
 	}
 	newExpiry := time.Now().Add(s.gracePeriod)
 	s.lastApproval[key] = newExpiry
 	graceSessions.Set(float64(len(s.lastApproval)))
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 	return s.gracePeriod
 }
 
@@ -900,12 +919,13 @@ func (s *ChallengeStore) ForceExtendGraceSession(username, hostname string) time
 // capped at the configured grace period. Returns the new remaining duration, or 0 if no session exists.
 func (s *ChallengeStore) ExtendGraceSessionFor(username, hostname string, dur time.Duration) time.Duration {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.gracePeriod <= 0 {
+		s.mu.Unlock()
 		return 0
 	}
 	key := graceKey(username, hostname)
 	if _, ok := s.lastApproval[key]; !ok {
+		s.mu.Unlock()
 		return 0
 	}
 	if dur > s.gracePeriod {
@@ -914,7 +934,9 @@ func (s *ChallengeStore) ExtendGraceSessionFor(username, hostname string, dur ti
 	newExpiry := time.Now().Add(dur)
 	s.lastApproval[key] = newExpiry
 	graceSessions.Set(float64(len(s.lastApproval)))
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 	return dur
 }
 
@@ -922,12 +944,13 @@ func (s *ChallengeStore) ExtendGraceSessionFor(username, hostname string, dur ti
 // and sets the revocation timestamp so that token caches are invalidated.
 func (s *ChallengeStore) RevokeSession(username, hostname string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	key := graceKey(username, hostname)
 	delete(s.lastApproval, key)
 	graceSessions.Set(float64(len(s.lastApproval)))
 	s.revokeTokensBefore[username] = time.Now()
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // RevokeTokensBefore returns the revocation timestamp for a user, if any.
@@ -996,7 +1019,6 @@ func (s *ChallengeStore) AllUsers() []string {
 // and any pending challenges (cancelling them to free pending counters and byCode entries).
 func (s *ChallengeStore) RemoveUser(username string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	// Cancel pending challenges and clean up all challenge data for this user
 	for id, c := range s.challenges {
 		if c.Username == username {
@@ -1023,7 +1045,9 @@ func (s *ChallengeStore) RemoveUser(username string) {
 	// Clear OIDC auth record
 	delete(s.lastOIDCAuth, username)
 	graceSessions.Set(float64(len(s.lastApproval)))
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // reapLoop removes expired challenges periodically.
@@ -1051,7 +1075,6 @@ func (s *ChallengeStore) reapLoop() {
 func (s *ChallengeStore) reap() {
 	now := time.Now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for id, c := range s.challenges {
 		if now.After(c.ExpiresAt.Add(30 * time.Second)) {
 			// If the challenge was still pending when reaped, decrement the counter
@@ -1103,10 +1126,17 @@ func (s *ChallengeStore) reap() {
 			pruned = true
 		}
 	}
+	var data []byte
+	var rotate bool
 	if pruned {
-		s.saveStateLocked()
+		data, rotate = s.marshalStateLocked()
 	}
-	graceSessions.Set(float64(len(s.lastApproval)))
+	graceCount := len(s.lastApproval)
+	s.mu.Unlock()
+	if data != nil {
+		s.writeStateToDisk(data, rotate)
+	}
+	graceSessions.Set(float64(graceCount))
 }
 
 // loadState reads persisted grace sessions and revocation timestamps from the JSON file.
@@ -1197,14 +1227,16 @@ func (s *ChallengeStore) loadState() {
 	graceSessions.Set(float64(len(s.lastApproval)))
 }
 
-// saveStateLocked writes the current grace sessions and revocation timestamps to the
-// persist file using atomic temp+rename. Must be called while holding the write lock
-// (or from a context where the data is consistent). No-op if persistPath is empty.
-func (s *ChallengeStore) saveStateLocked() {
+// marshalStateLocked serialises the current in-memory state to JSON.
+// Must be called while holding the write lock (s.mu).
+// If the marshaled payload exceeds 1 MB the in-memory action logs are pruned
+// in-place and the state is re-marshalled; the returned needsRotation flag
+// tells writeStateToDisk to rotate archive files before writing the new file.
+// Returns (nil, false) when persistPath is empty.
+func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) {
 	if s.persistPath == "" {
-		return
+		return nil, false
 	}
-	// Build state from current in-memory maps, pruning expired entries.
 	now := time.Now()
 	state := persistedState{
 		GraceSessions:      make(map[string]time.Time),
@@ -1248,36 +1280,51 @@ func (s *ChallengeStore) saveStateLocked() {
 			state.LastOIDCAuth[user] = ts
 		}
 	}
-	data, err := json.Marshal(state)
+	d, err := json.Marshal(state)
 	if err != nil {
 		log.Printf("ERROR: marshaling session state: %v", err)
-		return
+		return nil, false
 	}
 
-	// If the serialized state exceeds 1 MB, rotate archive files and prune
-	// in-memory action logs so the fresh file starts small.
-	if len(data) > 1_000_000 {
-		s.rotateStateFiles()
+	// If the serialised state exceeds 1 MB, prune in-memory action logs so
+	// the fresh file starts small.  The caller (writeStateToDisk) will rotate
+	// archive files before writing the new data.
+	if len(d) > 1_000_000 {
 		for user, entries := range s.actionLog {
 			if len(entries) > maxActionLogPrune {
 				s.actionLog[user] = entries[len(entries)-maxActionLogPrune:]
 			}
 		}
-		// Rebuild state with pruned logs and re-marshal.
 		state.ActionLog = make(map[string][]ActionLogEntry)
 		for user, entries := range s.actionLog {
 			if len(entries) > 0 {
 				state.ActionLog[user] = entries
 			}
 		}
-		data, err = json.Marshal(state)
+		d, err = json.Marshal(state)
 		if err != nil {
-			// Rotation already happened but re-marshal failed.
-			// Restore the live file from the .1 archive to prevent data loss.
-			os.Rename(s.persistPath+".1", s.persistPath)
-			log.Printf("ERROR: re-marshaling session state after prune: %v (restored from archive)", err)
-			return
+			log.Printf("ERROR: re-marshaling session state after prune: %v", err)
+			return nil, false
 		}
+		return d, true
+	}
+	return d, false
+}
+
+// writeStateToDisk atomically writes data to the persist file.
+// If needsRotation is true the current file is archived (sessions.json →
+// sessions.json.1 etc.) before the new file is written.
+// No-op when data is nil (persistPath was empty or marshal failed).
+// Serialises concurrent writers via s.diskMu.
+func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) {
+	if data == nil {
+		return
+	}
+	s.diskMu.Lock()
+	defer s.diskMu.Unlock()
+
+	if needsRotation {
+		s.rotateStateFiles()
 	}
 
 	// Atomic write: temp file + rename (same pattern as writeBreakglassFile).
@@ -1338,8 +1385,9 @@ func (s *ChallengeStore) SaveState() {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.saveStateLocked()
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	s.writeStateToDisk(data, rotate)
 }
 
 // generateUserCode creates a human-friendly code like "ABCDEF-123456".
