@@ -70,6 +70,13 @@ func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
 	if m.data.GIDs == nil {
 		m.data.GIDs = make(map[string]int)
 	}
+	// Clamp counters loaded from disk to the valid range.
+	if m.data.NextUID <= 0 || m.data.NextUID > maxUID {
+		m.data.NextUID = firstUID
+	}
+	if m.data.NextGID <= 0 || m.data.NextGID > maxGID {
+		m.data.NextGID = firstGID
+	}
 	return m, nil
 }
 

@@ -296,6 +296,10 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 		}
 
 		uid := s.uidmap.UID(u.ID)
+		if uid == -1 {
+			slog.Warn("ldap: skipping user — UID space exhausted", "user", u.Username)
+			continue
+		}
 		gid := uid // UPG: primary group GID == UID
 		dn := fmt.Sprintf("uid=%s,%s", escapeDNValue(u.Username), peopleDN)
 		fullName := strings.TrimSpace(firstName + " " + lastName)
@@ -412,7 +416,15 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 
 	// PocketID groups
 	for _, g := range dir.Groups {
+		if !isValidGroupName(g.Name) {
+			slog.Warn("ldap: skipping group with invalid name", "group", g.Name)
+			continue
+		}
 		gid := s.uidmap.GID(g.ID)
+		if gid == -1 {
+			slog.Warn("ldap: skipping group — GID space exhausted", "group", g.Name)
+			continue
+		}
 		dn := fmt.Sprintf("cn=%s,%s", escapeDNValue(g.Name), groupsDN)
 
 		memberUids := buildMemberUids(g.Members, dir)
@@ -420,6 +432,10 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 
 		name := g.FriendlyName
 		if name == "" {
+			name = g.Name
+		}
+		if !isValidLDAPAttrValue(name) {
+			slog.Warn("ldap: stripping invalid characters from group FriendlyName", "group", g.Name)
 			name = g.Name
 		}
 
@@ -443,6 +459,10 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 	// User Private Groups (one per user, GID == UID)
 	for _, u := range dir.Users {
 		uid := s.uidmap.UID(u.ID)
+		if uid == -1 {
+			slog.Warn("ldap: skipping UPG — UID space exhausted", "user", u.Username)
+			continue
+		}
 		dn := fmt.Sprintf("cn=%s,%s", escapeDNValue(u.Username), groupsDN)
 		attrs := map[string][]string{
 			"objectClass": {"top", "posixGroup"},

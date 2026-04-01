@@ -1256,11 +1256,11 @@ func (s *ChallengeStore) loadState() {
 	for user, ts := range state.LastOIDCAuth {
 		s.lastOIDCAuth[user] = ts
 	}
-	if state.OneTapUsed != nil {
-		for id, v := range state.OneTapUsed {
-			s.oneTapUsed[id] = v
-		}
-	}
+	// oneTapUsed is intentionally NOT loaded from persisted state.
+	// Challenges are in-memory only and do not survive restarts, so any persisted
+	// oneTapUsed IDs have no corresponding challenge and accumulate unboundedly.
+	// Dropping them on restart is safe: a challenge that was pending before restart
+	// will have expired, and the one-tap token is tied to the challenge ID.
 	log.Printf("Loaded %d grace sessions, %d revocation entries, %d escrowed hosts from %s", len(s.lastApproval), len(s.revokeTokensBefore), len(s.escrowedHosts), s.persistPath)
 	graceSessions.Set(float64(len(s.lastApproval)))
 }
@@ -1318,12 +1318,8 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 			state.LastOIDCAuth[user] = ts
 		}
 	}
-	if len(s.oneTapUsed) > 0 {
-		state.OneTapUsed = make(map[string]bool, len(s.oneTapUsed))
-		for id, v := range s.oneTapUsed {
-			state.OneTapUsed[id] = v
-		}
-	}
+	// oneTapUsed is not persisted: challenges are in-memory only and
+	// do not survive restarts, so persisting these IDs would accumulate orphans.
 	d, err := json.Marshal(state)
 	if err != nil {
 		log.Printf("ERROR: marshaling session state: %v", err)

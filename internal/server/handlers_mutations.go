@@ -157,7 +157,14 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	// Check OIDC freshness. If the user's last OIDC login is too old (or never
 	// recorded), redirect to OIDC login and carry the token in a short-lived
 	// cookie so we can resume here after authentication.
-	lastAuth := s.store.LastOIDCAuth(challenge.Username)
+	// Use the session user's freshness when an admin (different from the challenge
+	// owner) is visiting, so we check whether the admin themselves authenticated
+	// recently, not the challenge owner.
+	freshnessUser := challenge.Username
+	if sessionUser := s.getSessionUser(r); sessionUser != "" && sessionUser != challenge.Username {
+		freshnessUser = sessionUser
+	}
+	lastAuth := s.store.LastOIDCAuth(freshnessUser)
 	oidcFresh := !lastAuth.IsZero() && time.Since(lastAuth) < s.cfg.OneTapMaxAge
 	if !oidcFresh {
 		secure := strings.HasPrefix(s.cfg.ExternalURL, "https://")

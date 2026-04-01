@@ -131,8 +131,16 @@ func LoadTOMLConfig(path string) (map[string]string, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			currentSection = strings.TrimSpace(line[1 : len(line)-1])
+		if strings.HasPrefix(line, "[") {
+			// Strip trailing inline comment before checking for ']'.
+			// e.g. "[ldap] # LDAP settings" → "[ldap]"
+			sectionLine := line
+			if ci := strings.Index(sectionLine, " #"); ci >= 0 {
+				sectionLine = strings.TrimSpace(sectionLine[:ci])
+			}
+			if strings.HasSuffix(sectionLine, "]") {
+				currentSection = strings.TrimSpace(sectionLine[1 : len(sectionLine)-1])
+			}
 			continue
 		}
 		idx := strings.IndexByte(line, '=')
@@ -228,6 +236,7 @@ func parseTOMLValue(raw string, isList bool) string {
 		s = strings.ReplaceAll(s, `\\`, `\`)
 		s = strings.ReplaceAll(s, `\"`, `"`)
 		s = strings.ReplaceAll(s, `\n`, "\n")
+		s = strings.ReplaceAll(s, `\r`, "\r")
 		s = strings.ReplaceAll(s, `\t`, "\t")
 		return s
 	}

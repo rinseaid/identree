@@ -541,7 +541,8 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer func() { <-deploySemaphore }()
 		s.runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, uninstallScript)
-		if !job.failed {
+		_, _, jobFailed, _ := job.snapshot()
+		if !jobFailed {
 			s.store.RemoveHost(req.Hostname)
 			_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
 			s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
