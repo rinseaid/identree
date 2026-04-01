@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -188,7 +188,7 @@ func (s *Server) handleDeployUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := s.pocketIDClient.UsersWithSSHKeys()
 	if err != nil {
-		log.Printf("deploy/users: %v", err)
+		slog.Error("deploy/users fetch failed", "err", err)
 		http.Error(w, "failed to fetch users", http.StatusInternalServerError)
 		return
 	}
@@ -286,7 +286,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	adminUser := s.getSessionUser(r)
-	log.Printf("DEPLOY: admin %q starting deploy to %s:%d as %s from %s (job %s)", adminUser, req.Hostname, req.Port, req.SSHUser, clientIP(r), jobID)
+	slog.Info("DEPLOY starting", "admin", adminUser, "host", req.Hostname, "port", req.Port, "ssh_user", req.SSHUser, "client_ip", clientIP(r), "job", jobID)
 
 	job := newDeployJob(jobID, req.Hostname, req.SSHUser, adminUser)
 	s.deployMu.Lock()
@@ -440,7 +440,7 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 	s.store.RemoveHost(req.Hostname)
 	_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
 	s.store.LogAction(adminUser, "removed_host", req.Hostname, "", "")
-	log.Printf("HOST_REMOVED: admin %q removed host %q from %s", adminUser, req.Hostname, clientIP(r))
+	slog.Info("HOST_REMOVED", "admin", adminUser, "host", req.Hostname, "client_ip", clientIP(r))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -541,7 +541,7 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	log.Printf("REMOVE: admin %q starting removal of %s:%d as %s (job %s)", adminUser, req.Hostname, req.Port, req.SSHUser, jobID)
+	slog.Info("REMOVE starting", "admin", adminUser, "host", req.Hostname, "port", req.Port, "ssh_user", req.SSHUser, "job", jobID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"id": jobID})

@@ -3529,6 +3529,36 @@ const accessPageHTML = `<!DOCTYPE html>
     <h1 class="sr-only">{{call .T "access"}} - {{call .T "app_name"}}</h1>
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
+    {{if and .IsAdmin .AllPendingQueue}}
+    <div class="pending-table pending-table--admin" style="margin-bottom:20px">
+      <div class="pending-table-header"><div>{{call .T "user"}}</div><div>{{call .T "host"}}</div><div>{{call .T "code"}}</div><div>{{call .T "expires_in"}}</div><div style="text-align:right">{{call .T "action"}}</div></div>
+      {{range .AllPendingQueue}}
+      <div class="pending-table-row">
+        <div><span class="pill user">{{.Username}}</span></div>
+        <div><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
+        <div><span class="code">{{.Code}}</span></div>
+        <div>{{.ExpiresIn}}</div>
+        <div style="text-align:right;display:flex;gap:6px;justify-content:flex-end">
+          <form method="POST" action="/api/challenges/approve" class="saction-form">
+            <input type="hidden" name="username" value="{{$.Username}}">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+            <input type="hidden" name="challenge_id" value="{{.ID}}">
+            <button type="submit" class="saction-btn saction-btn--approve">{{call $.T "approve"}}</button>
+          </form>
+          <form method="POST" action="/api/challenges/reject" class="saction-form saction-confirm" data-confirm="{{call $.T "confirm_reject_all"}}">
+            <input type="hidden" name="username" value="{{$.Username}}">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+            <input type="hidden" name="challenge_id" value="{{.ID}}">
+            <button type="submit" class="saction-btn saction-btn--deny">{{call $.T "reject"}}</button>
+          </form>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+
     {{if .IsAdmin}}
     <div class="access-table access-table--admin" id="access-table" data-prefilter-user="{{.FilterUser}}">
       <div class="access-table-header">

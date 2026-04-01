@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -135,6 +135,32 @@ type pendingView struct {
 func (s *Server) buildPendingViews(username, lang string) []pendingView {
 	t := T(lang)
 	pending := s.store.PendingChallenges(username)
+	sort.Slice(pending, func(i, j int) bool {
+		return pending[i].ExpiresAt.Before(pending[j].ExpiresAt)
+	})
+	var views []pendingView
+	for _, c := range pending {
+		hostname := c.Hostname
+		if hostname == "" {
+			hostname = t("unknown_host")
+		}
+		views = append(views, pendingView{
+			ID:            c.ID,
+			Username:      c.Username,
+			Hostname:      hostname,
+			Code:          c.UserCode,
+			ExpiresIn:     formatDuration(time.Until(c.ExpiresAt)),
+			AdminRequired: s.requiresAdminApproval(c.Hostname),
+		})
+	}
+	return views
+}
+
+// buildAllPendingViews returns pending challenges across all users for the
+// admin queue panel. Sorted by expiry (most urgent first).
+func (s *Server) buildAllPendingViews(lang string) []pendingView {
+	t := T(lang)
+	pending := s.store.AllPendingChallenges()
 	sort.Slice(pending, func(i, j int) bool {
 		return pending[i].ExpiresAt.Before(pending[j].ExpiresAt)
 	})
@@ -507,7 +533,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Durations":           elevateDurations,
 		"PocketIDUnavailable": pocketIDUnavailable,
 	}); err != nil {
-		log.Printf("ERROR: template execution: %v", err)
+		slog.Error("template execution", "err", err)
 	}
 }
 
@@ -854,7 +880,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		"FilterUser":      accessFilterUser,
 		"Pending":         s.buildPendingViews(username, lang),
 	}); err != nil {
-		log.Printf("ERROR: template execution: %v", err)
+		slog.Error("template execution", "err", err)
 	}
 }
 
@@ -879,7 +905,7 @@ func (s *Server) handleApprovalPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("ACCESS: GET /approve/ from %s (code=%s...)", remoteAddr(r), code[:6])
+	slog.Info("ACCESS", "path", "/approve/", "remote_addr", remoteAddr(r), "code_prefix", code[:6])
 
 	challenge, ok := s.store.GetByCode(code)
 	if !ok {
@@ -891,7 +917,7 @@ func (s *Server) handleApprovalPage(w http.ResponseWriter, r *http.Request) {
 			"Lang":  lang,
 			"T":     T(lang),
 		}); err != nil {
-			log.Printf("ERROR: template execution: %v", err)
+			slog.Error("template execution", "err", err)
 		}
 		return
 	}
@@ -906,7 +932,7 @@ func (s *Server) handleApprovalPage(w http.ResponseWriter, r *http.Request) {
 			"Lang":   lang,
 			"T":      t,
 		}); err != nil {
-			log.Printf("ERROR: template execution: %v", err)
+			slog.Error("template execution", "err", err)
 		}
 		return
 	}
@@ -1436,7 +1462,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"CSRFTs":          historyCSRFTs,
 		"Pending":         s.buildPendingViews(username, lang),
 	}); err != nil {
-		log.Printf("ERROR: template execution: %v", err)
+		slog.Error("template execution", "err", err)
 	}
 }
 

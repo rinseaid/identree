@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -172,7 +172,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	authorized, errMsg := s.authenticateChallenge(r, req.Hostname, req.Username)
 	if !authorized {
 		authFailures.Inc()
-		log.Printf("AUTH_FAILURE: %s from %s on POST /api/challenge (host=%q, user=%q)", errMsg, remoteAddr(r), req.Hostname, req.Username)
+		slog.Warn("AUTH_FAILURE", "reason", errMsg, "remote_addr", remoteAddr(r), "host", req.Hostname, "user", req.Username)
 		if errMsg == "user not authorized on this host" {
 			http.Error(w, errMsg, http.StatusForbidden)
 		} else {
@@ -194,18 +194,18 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		// Rate limit errors are returned by the store when too many challenges exist
 		if errors.Is(err, challpkg.ErrTooManyChallenges) || errors.Is(err, challpkg.ErrTooManyPerUser) {
 			rateLimitRejections.Inc()
-			log.Printf("RATE_LIMIT: user %q from %s (host %q)", req.Username, remoteAddr(r), req.Hostname)
+			slog.Warn("RATE_LIMIT", "user", req.Username, "remote_addr", remoteAddr(r), "host", req.Hostname)
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
-		log.Printf("ERROR creating challenge: %v", err)
+		slog.Error("creating challenge", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	challengesCreated.Inc()
 	challpkg.ActiveChallenges.Inc()
-	log.Printf("CHALLENGE: created %s for user %q from %s (host %q)", challenge.ID[:8], req.Username, remoteAddr(r), req.Hostname)
+	slog.Info("CHALLENGE created", "challenge", challenge.ID[:8], "user", req.Username, "remote_addr", remoteAddr(r), "host", req.Hostname)
 	s.broadcastSSE(req.Username, "challenge_created")
 
 	// Build client_config if any server-side client overrides are set
@@ -221,7 +221,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		challengesAutoApproved.Inc()
 		challpkg.ActiveChallenges.Dec()
 		challengeDuration.Observe(0)
-		log.Printf("GRACE: auto-approved sudo for user %q (challenge %s) — recent authentication within grace period", req.Username, challenge.ID[:8])
+		slog.Info("GRACE auto-approved", "user", req.Username, "challenge", challenge.ID[:8])
 		hostname := req.Hostname
 		if hostname == "" {
 			hostname = "(unknown)"
@@ -256,7 +256,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 			resp["client_config"] = clientCfg
 		}
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			log.Printf("ERROR: writing JSON response: %v", err)
+			slog.Error("writing JSON response", "err", err)
 		}
 		return
 	}
@@ -292,7 +292,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		resp["client_config"] = clientCfg
 	}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("ERROR: writing JSON response: %v", err)
+		slog.Error("writing JSON response", "err", err)
 	}
 }
 
@@ -306,7 +306,7 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 
 	if !s.verifyAPISecret(r) {
 		authFailures.Inc()
-		log.Printf("AUTH_FAILURE: invalid shared secret from %s on GET /api/challenge/", remoteAddr(r))
+		slog.Warn("AUTH_FAILURE invalid shared secret", "path", "GET /api/challenge/", "remote_addr", remoteAddr(r))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -328,7 +328,7 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		if err := json.NewEncoder(w).Encode(map[string]string{"status": string(challpkg.StatusExpired)}); err != nil {
-			log.Printf("ERROR: writing JSON response: %v", err)
+			slog.Error("writing JSON response", "err", err)
 		}
 		return
 	}
@@ -359,7 +359,7 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("ERROR: writing JSON response: %v", err)
+		slog.Error("writing JSON response", "err", err)
 	}
 }
 
@@ -398,7 +398,7 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("ERROR: writing JSON response: %v", err)
+		slog.Error("writing JSON response", "err", err)
 	}
 }
 
@@ -485,7 +485,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 
 	if !s.verifyAPISecret(r) {
 		authFailures.Inc()
-		log.Printf("AUTH_FAILURE: invalid shared secret from %s on POST /api/breakglass/escrow", remoteAddr(r))
+		slog.Warn("AUTH_FAILURE invalid shared secret", "path", "POST /api/breakglass/escrow", "remote_addr", remoteAddr(r))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -530,7 +530,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		expectedToken := breakglass.ComputeEscrowToken(s.cfg.SharedSecret, req.Hostname)
 		providedToken := r.Header.Get("X-Escrow-Token")
 		if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {
-			log.Printf("AUTH_FAILURE: invalid escrow token for host %q from %s", req.Hostname, remoteAddr(r))
+			slog.Warn("AUTH_FAILURE invalid escrow token", "host", req.Hostname, "remote_addr", remoteAddr(r))
 			http.Error(w, "invalid escrow token for hostname", http.StatusForbidden)
 			return
 		}
@@ -538,7 +538,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 
 	hasNativeEscrow := s.cfg.EscrowBackend != ""
 	if s.cfg.EscrowCommand == "" && !hasNativeEscrow {
-		log.Printf("BREAKGLASS: escrow received from host %q but no escrow configured — password discarded", req.Hostname)
+		slog.Warn("BREAKGLASS escrow received but not configured, password discarded", "host", req.Hostname)
 		http.Error(w, "escrow not configured on server", http.StatusNotImplemented)
 		return
 	}
@@ -569,7 +569,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		itemID, vaultID, err = backend.Store(ctx, req.Hostname, req.Password, vault)
 		if err != nil {
 			breakglassEscrowTotal.WithLabelValues("failure").Inc()
-			log.Printf("BREAKGLASS: %s escrow failed for host %q: %v", s.cfg.EscrowBackend, req.Hostname, err)
+			slog.Error("BREAKGLASS escrow failed", "backend", s.cfg.EscrowBackend, "host", req.Hostname, "err", err)
 			http.Error(w, "escrow failed", http.StatusInternalServerError)
 			return
 		}
@@ -615,7 +615,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		if err := cmd.Run(); err != nil {
 			breakglassEscrowTotal.WithLabelValues("failure").Inc()
 			combined := truncateOutput(stdoutBuf.String() + stderrBuf.String())
-			log.Printf("BREAKGLASS: escrow command failed for host %q: %v (output: %s)", req.Hostname, err, combined)
+			slog.Error("BREAKGLASS escrow command failed", "host", req.Hostname, "err", err, "output", combined)
 			http.Error(w, "escrow command failed", http.StatusInternalServerError)
 			return
 		}
@@ -638,10 +638,10 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	for _, user := range s.store.UsersWithHostActivity(req.Hostname) {
 		s.store.LogAction(user, "rotated_breakglass", req.Hostname, "", "")
 	}
-	log.Printf("BREAKGLASS: password escrowed for host %q", req.Hostname)
+	slog.Info("BREAKGLASS password escrowed", "host", req.Hostname)
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		log.Printf("ERROR: writing JSON response: %v", err)
+		slog.Error("writing JSON response", "err", err)
 	}
 }
 
@@ -695,7 +695,7 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 
 	password, err := backend.Retrieve(ctx, hostname, record.ItemID, record.VaultID)
 	if err != nil {
-		log.Printf("BREAKGLASS: reveal failed for host %q by admin %q: %v", hostname, actor, err)
+		slog.Error("BREAKGLASS reveal failed", "host", hostname, "admin", actor, "err", err)
 		http.Error(w, "failed to retrieve password", http.StatusInternalServerError)
 		return
 	}
@@ -707,7 +707,7 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	}
 	// Also log against the actor themselves so it always appears in their history.
 	s.store.LogAction(actor, "revealed_breakglass", hostname, "", actor)
-	log.Printf("BREAKGLASS: password revealed for host %q by admin %q from %s", hostname, actor, remoteAddr(r))
+	slog.Info("BREAKGLASS password revealed", "host", hostname, "admin", actor, "remote_addr", remoteAddr(r))
 
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "revealed_breakglass",
@@ -721,6 +721,6 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 		"password":    password,
 		"escrowed_at": record.Timestamp.UTC().Format(time.RFC3339),
 	}); err != nil {
-		log.Printf("ERROR: writing reveal JSON response: %v", err)
+		slog.Error("writing reveal JSON response", "err", err)
 	}
 }

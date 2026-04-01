@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -213,26 +213,26 @@ func (r *HostRegistry) load() {
 	data, err := os.ReadFile(r.filePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("WARNING: cannot read host registry %s: %v", r.filePath, err)
+			slog.Warn("cannot read host registry", "path", r.filePath, "err", err)
 		}
 		return
 	}
 	var hosts map[string]*RegisteredHost
 	if err := json.Unmarshal(data, &hosts); err != nil {
-		log.Printf("WARNING: corrupt host registry %s: %v — starting fresh", r.filePath, err)
+		slog.Warn("corrupt host registry, starting fresh", "path", r.filePath, "err", err)
 		return
 	}
 	// Filter out nil entries that could cause panics
 	for hostname, host := range hosts {
 		if host == nil {
-			log.Printf("WARNING: host registry contains nil entry for %q — skipping", hostname)
+			slog.Warn("host registry contains nil entry, skipping", "hostname", hostname)
 			delete(hosts, hostname)
 		}
 	}
 	if hosts != nil {
 		r.hosts = hosts
 	}
-	log.Printf("Loaded %d registered hosts from %s", len(hosts), r.filePath)
+	slog.Info("loaded registered hosts", "count", len(hosts), "path", r.filePath)
 	registeredHosts.Set(float64(len(r.hosts)))
 }
 
@@ -254,7 +254,7 @@ func (r *HostRegistry) saveLocked() {
 	}
 	data, err := json.MarshalIndent(r.hosts, "", "  ")
 	if err != nil {
-		log.Printf("ERROR: marshaling host registry: %v", err)
+		slog.Error("marshaling host registry", "err", err)
 		return
 	}
 	// Atomic write: temp file + fsync + rename
@@ -264,35 +264,35 @@ func (r *HostRegistry) saveLocked() {
 	}
 	tmp, err := os.CreateTemp(dir, ".hosts-tmp-*")
 	if err != nil {
-		log.Printf("ERROR: creating temp host registry file: %v", err)
+		slog.Error("creating temp host registry file", "err", err)
 		return
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		log.Printf("ERROR: writing host registry: %v", err)
+		slog.Error("writing host registry", "err", err)
 		return
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		log.Printf("ERROR: syncing host registry: %v", err)
+		slog.Error("syncing host registry", "err", err)
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
-		log.Printf("ERROR: closing host registry temp file: %v", err)
+		slog.Error("closing host registry temp file", "err", err)
 		return
 	}
 	if err := os.Chmod(tmpName, 0600); err != nil {
 		os.Remove(tmpName)
-		log.Printf("ERROR: setting host registry permissions: %v", err)
+		slog.Error("setting host registry permissions", "err", err)
 		return
 	}
 	if err := os.Rename(tmpName, r.filePath); err != nil {
 		os.Remove(tmpName)
-		log.Printf("ERROR: renaming host registry: %v", err)
+		slog.Error("renaming host registry", "err", err)
 	}
 }
 

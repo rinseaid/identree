@@ -3,13 +3,14 @@ package server
 import (
 	"context"
 	"crypto/subtle"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/rinseaid/identree/internal/sanitize"
 	"golang.org/x/oauth2"
 )
 
@@ -33,7 +34,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("SECURITY: callback with unexpected state format from %s", remoteAddr(r))
+	slog.Warn("SECURITY callback with unexpected state format", "remote_addr", remoteAddr(r))
 	revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "auth_state_unrecognized")
 }
 
@@ -100,7 +101,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 
 	// Validate nonce format
 	if len(stateNonce) != 32 || !isHex(stateNonce) {
-		log.Printf("SECURITY: malformed sessions state from %s", remoteAddr(r))
+		slog.Warn("SECURITY malformed sessions state", "remote_addr", remoteAddr(r))
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "auth_state_malformed")
 		return
 	}
@@ -115,14 +116,14 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	s.sessionNonceMu.Unlock()
 
 	if !nonceValid {
-		log.Printf("SECURITY: unknown or expired sessions nonce from %s", remoteAddr(r))
+		slog.Warn("SECURITY unknown or expired sessions nonce", "remote_addr", remoteAddr(r))
 		revokeErrorPage(w, r, http.StatusBadRequest, "session_expired", "login_session_expired")
 		return
 	}
 
 	// Check for IdP error
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
-		log.Printf("OIDC error during sessions login from %s: %s", remoteAddr(r), sanitizeForTerminal(errParam))
+		slog.Warn("OIDC error during sessions login", "remote_addr", remoteAddr(r), "error", sanitize.ForTerminal(errParam))
 		loginURL := s.baseURL + "/sessions/login"
 		revokeErrorPageWithLink(w, r, http.StatusForbidden, "auth_failed", "idp_auth_incomplete", loginURL, "try_again")
 		return
@@ -143,7 +144,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	token, err := s.oidcConfig.Exchange(exchangeCtx, code)
 	oidcExchangeDuration.Observe(time.Since(exchangeStart).Seconds())
 	if err != nil {
-		log.Printf("ERROR: sessions callback token exchange failed from %s", remoteAddr(r))
+		slog.Error("sessions callback token exchange failed", "remote_addr", remoteAddr(r))
 		challengesDenied.WithLabelValues("oidc_error").Inc()
 		loginURL := s.baseURL + "/sessions/login"
 		revokeErrorPageWithLink(w, r, http.StatusInternalServerError, "auth_failed", "token_exchange_failed", loginURL, "try_again")
@@ -152,21 +153,21 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
-		log.Printf("ERROR: sessions callback no id_token from %s", remoteAddr(r))
+		slog.Error("sessions callback no id_token", "remote_addr", remoteAddr(r))
 		revokeErrorPage(w, r, http.StatusInternalServerError, "auth_failed", "no_id_token")
 		return
 	}
 
 	idToken, err := s.verifier.Verify(exchangeCtx, rawIDToken)
 	if err != nil {
-		log.Printf("ERROR: sessions callback token verification failed from %s", remoteAddr(r))
+		slog.Error("sessions callback token verification failed", "remote_addr", remoteAddr(r))
 		revokeErrorPage(w, r, http.StatusInternalServerError, "auth_failed", "token_verify_failed")
 		return
 	}
 
 	// Verify OIDC nonce
 	if subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(stateNonce)) != 1 {
-		log.Printf("SECURITY: sessions callback nonce mismatch from %s", remoteAddr(r))
+		slog.Warn("SECURITY sessions callback nonce mismatch", "remote_addr", remoteAddr(r))
 		challengesDenied.WithLabelValues("nonce_mismatch").Inc()
 		revokeErrorPage(w, r, http.StatusBadRequest, "auth_failed", "nonce_mismatch")
 		return
@@ -178,14 +179,14 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		Groups            []string `json:"groups"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
-		log.Printf("ERROR: sessions callback claims parsing failed from %s", remoteAddr(r))
+		slog.Error("sessions callback claims parsing failed", "remote_addr", remoteAddr(r))
 		revokeErrorPage(w, r, http.StatusInternalServerError, "auth_failed", "claims_parse_failed")
 		return
 	}
 
 	username := claims.PreferredUsername
 	if username == "" || !validUsername.MatchString(username) {
-		log.Printf("SECURITY: sessions callback invalid username from %s", remoteAddr(r))
+		slog.Warn("SECURITY sessions callback invalid username", "remote_addr", remoteAddr(r))
 		challengesDenied.WithLabelValues("identity_mismatch").Inc()
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_identity", "invalid_idp_username")
 		return
@@ -207,7 +208,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	log.Printf("SESSIONS: user %q (role=%s) viewed sessions from %s", username, role, remoteAddr(r))
+	slog.Info("SESSIONS", "user", username, "role", role, "remote_addr", remoteAddr(r))
 
 	// Record OIDC authentication time for one-tap freshness checks.
 	s.store.RecordOIDCAuth(username)

@@ -65,32 +65,6 @@ func randomHex(n int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// sanitizeForTerminal removes control characters (ANSI escapes, null bytes, etc.)
-// from a string before displaying it on a terminal.
-func sanitizeForTerminal(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == '\t' {
-			return ' '
-		}
-		if r < 32 || r == 127 {
-			return -1
-		}
-		if r >= 0x80 && r <= 0x9F {
-			return -1
-		}
-		if r >= 0x202A && r <= 0x202E {
-			return -1
-		}
-		if r >= 0x2066 && r <= 0x2069 {
-			return -1
-		}
-		if r == 0x200B || r == 0x200C || r == 0x200D || r == 0xFEFF {
-			return -1
-		}
-		return r
-	}, s)
-}
-
 // verifyWebhookSignature validates HMAC-SHA256 webhook signatures from PocketID.
 // Expected header format: "sha256=<hex>"
 func verifyWebhookSignature(r *http.Request, secret, sig string) bool {

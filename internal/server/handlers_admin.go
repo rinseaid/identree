@@ -4,7 +4,6 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -263,6 +262,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"CSRFToken":           infoCSRFToken,
 		"CSRFTs":              infoCSRFTs,
 		"Pending":             s.buildPendingViews(username, lang),
+		"AllPendingQueue":     s.buildAllPendingViews(lang),
 		"Version":             version,
 		"CommitShort":         commitShort(commit),
 		"Commit":              commit,
@@ -273,7 +273,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"MemUsage":            fmt.Sprintf("%.1f MB alloc / %.1f MB sys", float64(memStats.Alloc)/1024/1024, float64(memStats.Sys)/1024/1024),
 		"ActiveSessionsCount": len(s.store.AllActiveSessions()),
 	}); err != nil {
-		log.Printf("ERROR: template execution: %v", err)
+		slog.Error("template execution", "err", err)
 	}
 }
 
@@ -450,12 +450,13 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		"CSRFToken":     csrfToken,
 		"CSRFTs":        csrfTs,
 		"Pending":       s.buildPendingViews(username, lang),
+		"AllPendingQueue": s.buildAllPendingViews(lang),
 		"ConfigValues":  configToValues(s.cfg),
 		"ConfigLocked":  configLockedKeys(),
 		"ConfigSecrets": configSecretStatus(s.cfg),
 		"APIKeyCount":   apiKeyStr,
 	}); err != nil {
-		log.Printf("ERROR: template execution: %v", err)
+		slog.Error("template execution", "err", err)
 	}
 }
 
@@ -802,7 +803,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if s.pocketIDClient != nil {
 		perms, err := s.pocketIDClient.GetUserPermissions()
 		if err != nil {
-			log.Printf("WARNING: fetching Pocket ID permissions: %v", err)
+			slog.Warn("fetching Pocket ID permissions", "err", err)
 		} else {
 			userPerms = perms
 		}
@@ -867,7 +868,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		// shows the live state from PocketID, not a potentially stale snapshot.
 		adminUsers, err := s.pocketIDClient.AllAdminUsers()
 		if err != nil {
-			log.Printf("WARNING: fetching admin users for claims: %v", err)
+			slog.Warn("fetching admin users for claims", "err", err)
 		} else {
 			pidUsers = make(map[string]pidUserInfo, len(adminUsers))
 			for _, au := range adminUsers {
@@ -1002,9 +1003,10 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		"CSRFToken":     csrfToken,
 		"CSRFTs":        csrfTs,
 		"Pending":       s.buildPendingViews(username, lang),
+		"AllPendingQueue": s.buildAllPendingViews(lang),
 		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
-		log.Printf("ERROR: template execution: %v", err)
+		slog.Error("template execution", "err", err)
 	}
 }
 
@@ -1057,7 +1059,7 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 
 	allGroups, err := s.pocketIDClient.GetGroups()
 	if err != nil {
-		log.Printf("ERROR: fetching groups: %v", err)
+		slog.Error("fetching groups", "err", err)
 	}
 
 	var groups []groupView
@@ -1189,9 +1191,10 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		"Languages":     supportedLanguages,
 		"IsAdmin":       true,
 		"Pending":       s.buildPendingViews(username, lang),
+		"AllPendingQueue": s.buildAllPendingViews(lang),
 		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
-		log.Printf("ERROR: template execution: %v", err)
+		slog.Error("template execution", "err", err)
 	}
 }
 
@@ -1393,7 +1396,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	if s.pocketIDClient != nil {
 		perms, err := s.pocketIDClient.GetUserPermissions()
 		if err != nil {
-			log.Printf("WARNING: fetching Pocket ID permissions for hosts: %v", err)
+			slog.Warn("fetching Pocket ID permissions for hosts", "err", err)
 		} else {
 			userPerms = perms
 		}
@@ -1567,6 +1570,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"Languages":        supportedLanguages,
 		"IsAdmin":          true,
 		"Pending":          s.buildPendingViews(username, lang),
+		"AllPendingQueue":  s.buildAllPendingViews(lang),
 		"HasEscrowedHosts": hasEscrowed,
 		"AllGroups":        allGroups,
 		"GroupFilter":      groupFilter,
@@ -1575,7 +1579,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"InstallURL":       s.baseURL + "/install.sh",
 		"DeployEnabled":    true,
 	}); err != nil {
-		log.Printf("ERROR: template execution: %v", err)
+		slog.Error("template execution", "err", err)
 	}
 }
 
@@ -1613,7 +1617,7 @@ func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 	s.removedUsersMu.Lock()
 	s.removedUsers[targetUser] = time.Now()
 	s.removedUsersMu.Unlock()
-	log.Printf("USER_REMOVED: admin %q removed user %q from %s", adminUser, targetUser, remoteAddr(r))
+	slog.Info("USER_REMOVED", "admin", adminUser, "user", targetUser, "remote_addr", remoteAddr(r))
 
 	setFlashCookie(w, "removed_user:"+targetUser)
 	http.Redirect(w, r, s.baseURL+"/admin/users", http.StatusSeeOther)
@@ -1649,7 +1653,7 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 	// Read current group to preserve non-editable claims.
 	current, err := s.pocketIDClient.GetAdminGroupByID(groupID)
 	if err != nil {
-		log.Printf("ERROR: get group %s for claims update: %v", groupID, err)
+		slog.Error("get group for claims update", "group_id", groupID, "err", err)
 		http.Error(w, "failed to fetch group", http.StatusInternalServerError)
 		return
 	}
@@ -1671,14 +1675,14 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := s.pocketIDClient.PutGroupClaims(groupID, claims); err != nil {
-		log.Printf("ERROR: put group claims %s: %v", groupID, err)
+		slog.Error("put group claims", "group_id", groupID, "err", err)
 		http.Error(w, "failed to update claims", http.StatusInternalServerError)
 		return
 	}
 
 	s.pocketIDClient.InvalidateCache()
 	s.store.LogAction(adminUser, "claims_updated", current.Name, "", adminUser)
-	log.Printf("CLAIMS_UPDATED: admin %q updated group claims for group ID %s from %s", adminUser, groupID, remoteAddr(r))
+	slog.Info("CLAIMS_UPDATED", "admin", adminUser, "group_id", groupID, "remote_addr", remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"ok":true}`))
@@ -1716,7 +1720,7 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 	// Read current user to preserve non-SSH claims.
 	current, err := s.pocketIDClient.GetAdminUserByID(userID)
 	if err != nil {
-		log.Printf("ERROR: get user %s for claims update: %v", userID, err)
+		slog.Error("get user for claims update", "user_id", userID, "err", err)
 		http.Error(w, "failed to fetch user", http.StatusInternalServerError)
 		return
 	}
@@ -1755,14 +1759,14 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := s.pocketIDClient.PutUserClaims(userID, claims); err != nil {
-		log.Printf("ERROR: put user claims %s: %v", userID, err)
+		slog.Error("put user claims", "user_id", userID, "err", err)
 		http.Error(w, "failed to update claims", http.StatusInternalServerError)
 		return
 	}
 
 	s.pocketIDClient.InvalidateCache()
 	s.store.LogAction(adminUser, "claims_updated", current.Username, "", adminUser)
-	log.Printf("CLAIMS_UPDATED: admin %q updated claims for user ID %s from %s", adminUser, userID, remoteAddr(r))
+	slog.Info("CLAIMS_UPDATED", "admin", adminUser, "user_id", userID, "remote_addr", remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"ok":true}`))
@@ -1795,7 +1799,7 @@ func (s *Server) handleGetUserClaims(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.pocketIDClient.GetAdminUserByID(userID)
 	if err != nil {
-		log.Printf("ERROR: get user claims %s: %v", userID, err)
+		slog.Error("get user claims", "user_id", userID, "err", err)
 		http.Error(w, "failed to fetch user", http.StatusInternalServerError)
 		return
 	}

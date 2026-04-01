@@ -2,7 +2,7 @@ package server
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -95,7 +95,7 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 		"CSRFToken":  csrfToken,
 		"CSRFTs":     csrfTs,
 	}); err != nil {
-		log.Printf("ERROR: template execution: %v", err)
+		slog.Error("template execution", "err", err)
 	}
 }
 
@@ -143,7 +143,7 @@ func (s *Server) handleSudoRuleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.store.LogAction(adminUser, "sudo_rule_modified", rule.Group, "", adminUser)
-	log.Printf("SUDO_RULE_ADDED: admin %q added rule for group %q from %s", adminUser, rule.Group, remoteAddr(r))
+	slog.Info("SUDO_RULE_ADDED", "admin", adminUser, "group", rule.Group, "remote_addr", remoteAddr(r))
 	setFlashCookie(w, "sudo_added:"+rule.Group)
 	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
 }
@@ -192,7 +192,7 @@ func (s *Server) handleSudoRuleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.store.LogAction(adminUser, "sudo_rule_modified", rule.Group, "", adminUser)
-	log.Printf("SUDO_RULE_UPDATED: admin %q updated rule for group %q from %s", adminUser, rule.Group, remoteAddr(r))
+	slog.Info("SUDO_RULE_UPDATED", "admin", adminUser, "group", rule.Group, "remote_addr", remoteAddr(r))
 	setFlashCookie(w, "sudo_updated:"+rule.Group)
 	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
 }
@@ -233,7 +233,7 @@ func (s *Server) handleSudoRuleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.store.LogAction(adminUser, "sudo_rule_modified", group, "", adminUser)
-	log.Printf("SUDO_RULE_DELETED: admin %q deleted rule for group %q from %s", adminUser, group, remoteAddr(r))
+	slog.Info("SUDO_RULE_DELETED", "admin", adminUser, "group", group, "remote_addr", remoteAddr(r))
 	setFlashCookie(w, "sudo_deleted:"+group)
 	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
 }

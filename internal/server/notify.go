@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -59,7 +59,7 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 		defer s.notifyWg.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("NOTIFY: panic (recovered): %v", r)
+				slog.Error("NOTIFY panic recovered", "panic", r)
 			}
 		}()
 
@@ -68,7 +68,7 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 			defer func() { <-notifySemaphore }()
 		default:
 			notify.NotificationsTotal.WithLabelValues("skipped").Inc()
-			log.Printf("NOTIFY: skipped for user %q — too many concurrent notifications", d.Username)
+			slog.Warn("NOTIFY skipped", "reason", "too many concurrent notifications", "user", d.Username)
 			return
 		}
 
@@ -86,11 +86,11 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 
 		if err != nil {
 			notify.NotificationsTotal.WithLabelValues("failed").Inc()
-			log.Printf("NOTIFY: failed for user %q on host %q: %v", d.Username, d.Hostname, err)
+			slog.Error("NOTIFY failed", "user", d.Username, "host", d.Hostname, "err", err)
 			return
 		}
 		notify.NotificationsTotal.WithLabelValues("sent").Inc()
-		log.Printf("NOTIFY: sent for user %q on host %q", d.Username, d.Hostname)
+		slog.Info("NOTIFY sent", "user", d.Username, "host", d.Hostname)
 	}()
 }
 
@@ -113,7 +113,7 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 		defer s.notifyWg.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("NOTIFY: panic (recovered): %v", r)
+				slog.Error("NOTIFY panic recovered", "panic", r)
 			}
 		}()
 
@@ -132,7 +132,7 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 
 		if err := s.postNotifyWebhook(nd, timeout); err != nil {
 			notify.NotificationsTotal.WithLabelValues("failed").Inc()
-			log.Printf("NOTIFY: event %q failed for user %q: %v", nd.Event, nd.Username, err)
+			slog.Error("NOTIFY event failed", "event", nd.Event, "user", nd.Username, "err", err)
 			return
 		}
 		notify.NotificationsTotal.WithLabelValues("sent").Inc()
@@ -241,6 +241,6 @@ func (s *Server) WaitForNotifications(timeout time.Duration) {
 	select {
 	case <-done:
 	case <-time.After(timeout):
-		log.Printf("NOTIFY: timed out waiting for %s — some notifications may not have completed", timeout)
+		slog.Warn("NOTIFY timed out waiting for notifications", "timeout", timeout)
 	}
 }
