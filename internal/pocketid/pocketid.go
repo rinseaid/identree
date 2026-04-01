@@ -218,14 +218,14 @@ func (c *PocketIDClient) fetchGroupData() (*pocketIDData, error) {
 		url := fmt.Sprintf("%s/api/user-groups/%s", c.baseURL, g.ID)
 		resp, err := c.apiGet(url)
 		if err != nil {
-			slog.Warn("fetching group %q: %v", g.Name, err)
+			slog.Warn("pocketid: fetching group details failed", "group", g.Name, "err", err)
 			failed = append(failed, g.Name)
 			continue
 		}
 
 		var group pocketIDGroup
 		if err := json.Unmarshal(resp, &group); err != nil {
-			slog.Warn("parsing group %q: %v", g.Name, err)
+			slog.Warn("pocketid: parsing group details failed", "group", g.Name, "err", err)
 			failed = append(failed, g.Name)
 			continue
 		}

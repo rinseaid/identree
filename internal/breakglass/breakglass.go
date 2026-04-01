@@ -201,13 +201,16 @@ func hashBreakglassPassword(password string) (string, error) {
 // Uses temp file + rename to prevent partial reads.
 // A metadata comment header is written before the hash for provenance tracking.
 func writeBreakglassFile(path, hash, hostname, passwordType string) error {
-	// Write to temp file in the same directory (ensures same filesystem for rename)
+	// Write to temp file in the same directory (ensures same filesystem for rename).
+	// Use O_CREATE|O_EXCL with mode 0600 directly so the file is never readable
+	// by other users — even briefly. os.CreateTemp would create with umask-modified
+	// permissions before we could Chmod, creating a TOCTOU window.
 	dir := filepath.Dir(path) + "/"
-	tmp, err := os.CreateTemp(dir, ".breakglass-tmp-*")
+	tmpName := dir + fmt.Sprintf(".breakglass-tmp-%d", time.Now().UnixNano())
+	tmp, err := os.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
-	tmpName := tmp.Name()
 
 	// Write metadata comment header
 	header := fmt.Sprintf("# identree breakglass host=%s type=%s created=%s\n",
@@ -227,12 +230,6 @@ func writeBreakglassFile(path, hash, hostname, passwordType string) error {
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		return fmt.Errorf("closing temp file: %w", err)
-	}
-
-	// Set permissions before rename (root-owned, 0600)
-	if err := os.Chmod(tmpName, 0600); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("setting permissions: %w", err)
 	}
 
 	// Atomic rename
@@ -378,20 +375,32 @@ func checkBreakglassRateLimit() error {
 // recordBreakglassFailure increments the failure counter.
 // The file is created root-owned with 0600 permissions.
 // Uses O_NOFOLLOW to prevent symlink attacks on the rate-limit counter file.
+// Uses flock to serialize concurrent PAM helper processes so each failure
+// is counted exactly once (avoids last-writer-wins race on the counter).
 func recordBreakglassFailure() {
-	count, _ := readFailureCounter()
-	count++
-	content := []byte(fmt.Sprintf("%d %d", count, time.Now().Unix()))
-	// Use O_NOFOLLOW to prevent symlink attacks
-	f, err := os.OpenFile(breakglassFailurePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0600)
+	// Open (or create) the counter file for read-write so we can flock it.
+	f, err := os.OpenFile(breakglassFailurePath, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
-		return // can't write counter — fail open (rate limiting unavailable)
+		return // can't open counter — fail open (rate limiting unavailable)
 	}
-	if _, err := f.Write(content); err != nil {
-		f.Close()
+	defer f.Close()
+	// Acquire exclusive lock before read-modify-write to prevent races between
+	// concurrent PAM helper processes each recording a failure simultaneously.
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return // can't lock — fail open
+	}
+	// Re-read under lock, increment, truncate, and rewrite.
+	data, _ := io.ReadAll(f)
+	var count int64
+	fmt.Sscanf(string(data), "%d", &count)
+	count++
+	if err := f.Truncate(0); err != nil {
 		return
 	}
-	f.Close()
+	if _, err := f.Seek(0, 0); err != nil {
+		return
+	}
+	fmt.Fprintf(f, "%d %d", count, time.Now().Unix())
 }
 
 // clearBreakglassFailures resets the counter on successful authentication.
@@ -444,7 +453,10 @@ func AuthenticateBreakglass(username, hashFilePath string) error {
 		fmt.Fprintf(os.Stderr, "identree: BREAKGLASS: hash file error for user %q: %v\n", username, err)
 		// Run a dummy bcrypt comparison to equalize timing with the wrong-password path,
 		// preventing a timing oracle that distinguishes "file error" from "wrong password".
-		bcrypt.CompareHashAndPassword([]byte("$2a$12$00000000000000000000000000000000000000000000000000000"), password)
+		// The hash must be a valid bcrypt hash (bcrypt base64 uses ./A-Za-z0-9, not 0-9 alone)
+		// so that bcrypt actually performs key derivation work rather than failing immediately
+		// on parse. This hash was generated at cost 12 for the string "identree-dummy".
+		bcrypt.CompareHashAndPassword([]byte("$2a$12$LHqHFJKvAkGFhKHXAH5gZuZH3aJmVjX4TZzK8/GkGmFbDqEaFEQvK"), password)
 		recordBreakglassFailure()
 		fmt.Fprintf(tty, "  Authentication failed.\n\n")
 		return fmt.Errorf("break-glass authentication failed")
