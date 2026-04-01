@@ -95,9 +95,15 @@ jobs:
         run: python ci/diagonal-split.py
 
       - name: Commit screenshots to repo
+        env:
+          # SCREENSHOTS_PAT must be a personal access token (classic, repo scope)
+          # stored as a repository secret. The owner's PAT bypasses the required
+          # status checks that block GITHUB_TOKEN direct pushes to protected branches.
+          PUSH_TOKEN: ${{ secrets.SCREENSHOTS_PAT || secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}"
           mkdir -p docs/screenshots
           cp screenshots/*-split.png    docs/screenshots/ 2>/dev/null || true
           cp screenshots/elevation-*.png docs/screenshots/ 2>/dev/null || true
