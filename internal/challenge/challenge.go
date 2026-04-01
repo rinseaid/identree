@@ -2,7 +2,6 @@ package challenge
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,11 +19,14 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/rinseaid/identree/internal/randutil"
 )
 
 const (
 	ActionApproved           = "approved"
 	ActionDenied             = "denied"
+	ActionRejected           = "rejected"
 	ActionAutoApproved       = "auto_approved"
 	ActionRevoked            = "revoked"
 	ActionExtended           = "extended"
@@ -236,7 +238,7 @@ func graceKey(username, hostname string) string {
 // Create generates a new challenge for the given username, optional hostname,
 // and optional BreakglassRotateBefore snapshot (set before insertion to avoid data races).
 func (s *ChallengeStore) Create(username, hostname, breakglassRotateBefore string) (*Challenge, error) {
-	id, err := randomHex(16)
+	id, err := randutil.Hex(16)
 	if err != nil {
 		return nil, fmt.Errorf("generating challenge ID: %w", err)
 	}
@@ -1439,10 +1441,3 @@ func generateUserCode() (string, error) {
 	return string(code), nil
 }
 
-func randomHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}

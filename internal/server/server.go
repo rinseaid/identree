@@ -20,6 +20,7 @@ import (
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/escrow"
 	"github.com/rinseaid/identree/internal/pocketid"
+	"github.com/rinseaid/identree/internal/randutil"
 	"github.com/rinseaid/identree/internal/sudorules"
 )
 
@@ -346,7 +347,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	nonce, err := randomHex(16)
+	nonce, err := randutil.Hex(16)
 	if err != nil {
 		slog.Error("CSP nonce generation failed", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

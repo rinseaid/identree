@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,19 @@ const DefaultConfigPath = "/etc/identree/identree.conf"
 
 // DefaultClientConfigPath is the client-side config file location.
 const DefaultClientConfigPath = "/etc/identree/client.conf"
+
+// SudoNoAuthenticate controls whether the !authenticate sudoOption is added to
+// generated sudoRole LDAP entries.
+type SudoNoAuthenticate string
+
+const (
+	// SudoNoAuthFalse (default): !authenticate is never added; sudo invokes PAM.
+	SudoNoAuthFalse SudoNoAuthenticate = "false"
+	// SudoNoAuthTrue: !authenticate is added to all sudo rules; PAM is never invoked.
+	SudoNoAuthTrue SudoNoAuthenticate = "true"
+	// SudoNoAuthClaims: per-group; IdP admins set sudoOptions=!authenticate on specific groups.
+	SudoNoAuthClaims SudoNoAuthenticate = "claims"
+)
 
 // EscrowBackend names the native escrow integration to use.
 type EscrowBackend string
@@ -70,7 +84,7 @@ type ServerConfig struct {
 	//   "false"  (default) — !authenticate never added; sudo invokes PAM (passkey auth via pam-pocketid).
 	//   "true"   — !authenticate added to all sudo rules; PAM is never invoked.
 	//   "claims" — per-group: IDP admins set sudoOptions=!authenticate on specific groups.
-	LDAPSudoNoAuthenticate string
+	LDAPSudoNoAuthenticate SudoNoAuthenticate
 
 	// SudoRulesFile is the path to the JSON sudo rules store (bridge mode only).
 	// In bridge mode (APIKey == ""), the LDAP server serves ou=sudoers from this file.
@@ -264,7 +278,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPBindPassword:       get("IDENTREE_LDAP_BIND_PASSWORD"),
 		LDAPRefreshInterval:    getDuration("IDENTREE_LDAP_REFRESH_INTERVAL", 300*time.Second),
 		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/config/uidmap.json"),
-		LDAPSudoNoAuthenticate: stringDefault(get("IDENTREE_SUDO_NO_AUTHENTICATE"), "false"),
+		LDAPSudoNoAuthenticate: SudoNoAuthenticate(stringDefault(get("IDENTREE_SUDO_NO_AUTHENTICATE"), "false")),
 		SudoRulesFile:          stringDefault(get("IDENTREE_SUDO_RULES_FILE"), "/config/sudorules.json"),
 		LDAPUIDBase:            getInt("IDENTREE_LDAP_UID_BASE", 200000),
 		LDAPGIDBase:            getInt("IDENTREE_LDAP_GID_BASE", 200000),
@@ -379,10 +393,35 @@ func LoadServerConfig() (*ServerConfig, error) {
 
 	// Validate LDAPSudoNoAuthenticate
 	switch cfg.LDAPSudoNoAuthenticate {
-	case "true", "false", "claims":
+	case SudoNoAuthTrue, SudoNoAuthFalse, SudoNoAuthClaims:
 		// valid
 	default:
-		cfg.LDAPSudoNoAuthenticate = "false"
+		cfg.LDAPSudoNoAuthenticate = SudoNoAuthFalse
+	}
+
+	// Validate LDAPDefaultHome format pattern: at most one %s, no other printf verbs.
+	// %% is a literal percent sign and is always allowed.
+	if cfg.LDAPDefaultHome != "" {
+		// Strip all %% sequences before checking, so they don't count as verbs.
+		stripped := strings.ReplaceAll(cfg.LDAPDefaultHome, "%%", "")
+		percentS := strings.Count(stripped, "%s")
+		if percentS > 1 {
+			return nil, fmt.Errorf("IDENTREE_LDAP_DEFAULT_HOME: pattern contains more than one %%s")
+		}
+		// Any remaining %<letter> that is not %s is invalid.
+		if regexp.MustCompile(`%[a-zA-Z]`).ReplaceAllLiteralString(stripped, "%s") != stripped {
+			// There is at least one %<letter> that is not %s — find it for a useful error.
+			bad := regexp.MustCompile(`%[a-zA-Z]`).FindAllString(stripped, -1)
+			var nonS []string
+			for _, v := range bad {
+				if v != "%s" {
+					nonS = append(nonS, v)
+				}
+			}
+			if len(nonS) > 0 {
+				return nil, fmt.Errorf("IDENTREE_LDAP_DEFAULT_HOME: unsupported format verb(s) %v (only %%s is allowed)", nonS)
+			}
+		}
 	}
 
 	return cfg, nil

@@ -397,6 +397,7 @@ const sharedCSS = `
     }
     .banner-success { background: var(--success-bg); border: 1px solid var(--success-border); color: var(--success); }
     .banner-error { background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger); }
+    .banner-warning { background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning); }
     /* Buttons */
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -1061,6 +1062,7 @@ const dashboardHTML = `<!DOCTYPE html>
   </nav>
   <main class="main" id="main-content">
     <h1 class="sr-only">{{call .T "sessions"}} - {{call .T "app_name"}}</h1>
+    {{if .PocketIDUnavailable}}<div class="banner banner-warning">PocketID is currently unavailable — group permissions may be stale.</div>{{end}}
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
 
@@ -1971,6 +1973,7 @@ const adminPageHTML = `<!DOCTYPE html>
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
     {{if eq .AdminTab "info"}}
+    {{if .LDAPSyncError}}<div class="banner banner-warning">LDAP sync error: {{.LDAPSyncError}}</div>{{end}}
     <div class="info-gtable">
       <div class="info-gtable-header"><div>{{call .T "system_info"}}</div><div></div></div>
       <div class="info-gtable-row"><div class="info-gtable-label">{{call .T "version"}}</div><div>{{.Version}}{{if .Commit}} <span style="color:var(--text-3);font-size:0.8rem;cursor:help" title="{{.Commit}}">({{.CommitShort}})</span>{{end}}</div></div>

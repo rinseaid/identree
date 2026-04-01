@@ -69,7 +69,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	if hostname == "" {
 		hostname = "(unknown)"
 	}
-	s.store.LogAction(challenge.Username, "approved", hostname, challenge.UserCode, username)
+	s.store.LogAction(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, username)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "challenge_approved",
@@ -258,7 +258,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	challengesApproved.Inc()
 	challpkg.ActiveChallenges.Dec()
 	challengeDuration.Observe(time.Since(challenge.CreatedAt).Seconds())
-	s.store.LogAction(challenge.Username, "approved", hostname, challenge.UserCode, challenge.Username)
+	s.store.LogAction(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, challenge.Username)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
 	slog.Info("ONETAP_APPROVED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
 
@@ -338,7 +338,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	slog.Info("SESSION_REVOKED", "user", sessionOwner, "host", hostname, "remote_addr", remoteAddr(r))
 
 	// Log the action
-	s.store.LogAction(sessionOwner, "revoked", displayHostname, "", actor)
+	s.store.LogAction(sessionOwner, challpkg.ActionRevoked, displayHostname, "", actor)
 	s.broadcastSSE(sessionOwner, "session_changed")
 
 	// Redirect back to the referring page with flash cookie
@@ -380,7 +380,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 			if hostname == "" {
 				hostname = "(unknown)"
 			}
-			s.store.LogAction(username, "approved", hostname, c.UserCode, username)
+			s.store.LogAction(username, challpkg.ActionApproved, hostname, c.UserCode, username)
 			count++
 			slog.Info("BULK_APPROVE_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
 		}
@@ -436,7 +436,7 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 			hostname = ""
 		}
 		s.store.RevokeSession(sessUser, hostname)
-		s.store.LogAction(sessUser, "revoked", sess.Hostname, "", username)
+		s.store.LogAction(sessUser, challpkg.ActionRevoked, sess.Hostname, "", username)
 		slog.Info("BULK_REVOKE_ALL", "user", sessUser, "host", sess.Hostname, "remote_addr", remoteAddr(r))
 		count++
 		if !notified[sessUser] {
@@ -504,7 +504,7 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 	if displayHostname == "" {
 		displayHostname = "(unknown)"
 	}
-	s.store.LogAction(username, "extended", displayHostname, "", actor)
+	s.store.LogAction(username, challpkg.ActionExtended, displayHostname, "", actor)
 	slog.Info("EXTENDED", "user", username, "host", displayHostname, "remaining", remaining, "remote_addr", remoteAddr(r))
 	s.broadcastSSE(username, "session_changed")
 
@@ -542,7 +542,7 @@ func (s *Server) handleExtendAll(w http.ResponseWriter, r *http.Request) {
 			hostname = ""
 		}
 		if s.store.ForceExtendGraceSession(targetUser, hostname) > 0 {
-			s.store.LogAction(targetUser, "extended", sess.Hostname, "", username)
+			s.store.LogAction(targetUser, challpkg.ActionExtended, sess.Hostname, "", username)
 			count++
 		}
 	}
@@ -602,7 +602,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 		hostname = "(unknown)"
 	}
 	slog.Info("REJECTED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
-	s.store.LogAction(challenge.Username, "rejected", hostname, challenge.UserCode, username)
+	s.store.LogAction(challenge.Username, challpkg.ActionRejected, hostname, challenge.UserCode, username)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "challenge_rejected",
@@ -641,7 +641,7 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 			if hostname == "" {
 				hostname = "(unknown)"
 			}
-			s.store.LogAction(username, "rejected", hostname, c.UserCode, username)
+			s.store.LogAction(username, challpkg.ActionRejected, hostname, c.UserCode, username)
 			count++
 			slog.Info("BULK_REJECT_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
 		}
@@ -721,7 +721,7 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.store.CreateGraceSession(targetUser, hostname, duration)
-	s.store.LogAction(targetUser, "elevated", hostname, "", username)
+	s.store.LogAction(targetUser, challpkg.ActionElevated, hostname, "", username)
 	slog.Info("ELEVATED", "user", targetUser, "host", hostname, "duration", duration, "by", username, "remote_addr", remoteAddr(r))
 	s.broadcastSSE(targetUser, "session_changed")
 
@@ -759,7 +759,7 @@ func (s *Server) handleRotateHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.SetHostRotateBefore(hostname)
-	s.store.LogAction(username, "rotation_requested", hostname, "", username)
+	s.store.LogAction(username, challpkg.ActionRotationRequested, hostname, "", username)
 	slog.Info("ROTATE_BREAKGLASS", "user", username, "host", hostname, "remote_addr", remoteAddr(r))
 	s.broadcastSSE(username, "host_changed")
 	setFlashCookie(w, "rotated:"+hostname)
@@ -799,7 +799,7 @@ func (s *Server) handleRotateAllHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.SetAllHostsRotateBefore(hosts)
 	for _, h := range hosts {
-		s.store.LogAction(username, "rotation_requested", h, "", username)
+		s.store.LogAction(username, challpkg.ActionRotationRequested, h, "", username)
 	}
 	slog.Info("ROTATE_ALL_BREAKGLASS", "user", username, "count", len(hosts), "remote_addr", remoteAddr(r))
 	s.broadcastSSE(username, "host_changed")

@@ -567,7 +567,10 @@ func RotateBreakglass(cfg *config.ClientConfig, force, quiet bool) (plaintext st
 	// If escrow fails, the old password remains valid on disk.
 	// If we wrote first and escrow failed, the new password would be lost
 	// (exists only in process memory) and the old password is already gone.
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identree: WARNING: failed to get hostname: %v\n", err)
+	}
 	escrowed := false
 	if cfg.ServerURL != "" {
 		err :=EscrowPassword(cfg, hostname, password, quiet)

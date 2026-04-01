@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -54,15 +53,6 @@ func truncateOutput(s string) string {
 		return s[:truncLen] + "...(truncated)"
 	}
 	return s
-}
-
-// randomHex returns n random bytes encoded as a hex string.
-func randomHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
 }
 
 // verifyWebhookSignature validates HMAC-SHA256 webhook signatures from PocketID.

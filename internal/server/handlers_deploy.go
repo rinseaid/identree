@@ -13,6 +13,8 @@ import (
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+
+	"github.com/rinseaid/identree/internal/randutil"
 )
 
 // deployTimeout is the maximum time a single deploy operation may run.
@@ -278,7 +280,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID, err := randomHex(16)
+	jobID, err := randutil.Hex(16)
 	if err != nil {
 		<-deploySemaphore
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -504,7 +506,7 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID, err := randomHex(8)
+	jobID, err := randutil.Hex(8)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

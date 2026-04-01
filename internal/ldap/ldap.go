@@ -501,13 +501,13 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 
 		// sudoOptions: controlled by LDAPSudoNoAuthenticate + per-group claim
 		var sudoOptions []string
-		if noAuth == "true" {
+		if noAuth == config.SudoNoAuthTrue {
 			sudoOptions = append(sudoOptions, "!authenticate")
 		}
 		if extra := splitClaim(claims, "sudoOptions"); len(extra) > 0 {
 			for _, opt := range extra {
 				if isNoAuthOption(opt) {
-					if noAuth == "claims" {
+					if noAuth == config.SudoNoAuthClaims {
 						sudoOptions = append(sudoOptions, strings.TrimSpace(opt))
 					}
 					continue
@@ -622,13 +622,13 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 
 		// sudoOptions
 		var sudoOptions []string
-		if noAuth == "true" {
+		if noAuth == config.SudoNoAuthTrue {
 			sudoOptions = append(sudoOptions, "!authenticate")
 		}
 		if extra := splitComma(rule.Options); len(extra) > 0 {
 			for _, opt := range extra {
 				if isNoAuthOption(opt) {
-					if noAuth == "claims" {
+					if noAuth == config.SudoNoAuthClaims {
 						sudoOptions = append(sudoOptions, strings.TrimSpace(opt))
 					}
 					continue

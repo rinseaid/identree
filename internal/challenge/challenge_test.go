@@ -2,6 +2,8 @@ package challenge
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -556,6 +558,127 @@ func TestKnownHostsExcludesRemovedHosts(t *testing.T) {
 		hosts := s.KnownHosts("alice")
 		if len(hosts) != 1 || hosts[0] != "host2" {
 			t.Errorf("expected only [host2] after removing host1, got %v", hosts)
+		}
+	})
+}
+
+// TestDeny verifies the Deny method and its counter bookkeeping.
+func TestDeny(t *testing.T) {
+	t.Run("deny removes challenge from pending and decrements counter", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		s.mu.RLock()
+		before := s.pendingByUser["alice"]
+		s.mu.RUnlock()
+		if before != 1 {
+			t.Fatalf("expected pendingByUser=1 before Deny, got %d", before)
+		}
+
+		if err := s.Deny(c.ID); err != nil {
+			t.Fatalf("Deny returned unexpected error: %v", err)
+		}
+
+		// Challenge should still exist in the store but with StatusDenied.
+		s.mu.RLock()
+		ch, exists := s.challenges[c.ID]
+		after := s.pendingByUser["alice"]
+		s.mu.RUnlock()
+
+		if !exists {
+			t.Fatal("challenge disappeared from store after Deny")
+		}
+		if ch.Status != StatusDenied {
+			t.Errorf("status after Deny: got %q, want %q", ch.Status, StatusDenied)
+		}
+		if after != 0 {
+			t.Errorf("expected pendingByUser=0 after Deny, got %d", after)
+		}
+	})
+
+	t.Run("double deny returns an error", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.Deny(c.ID); err != nil {
+			t.Fatalf("first Deny returned unexpected error: %v", err)
+		}
+		if err := s.Deny(c.ID); err == nil {
+			t.Fatal("expected error on double Deny, got nil")
+		}
+	})
+
+	t.Run("denying a non-existent challenge ID returns an error", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		if err := s.Deny("does-not-exist"); err == nil {
+			t.Fatal("expected error for nonexistent challenge ID, got nil")
+		}
+	})
+}
+
+// TestStatePersistence verifies that state survives a save+load round-trip.
+func TestStatePersistence(t *testing.T) {
+	t.Run("grace sessions, action log, and revokeTokensBefore survive round-trip", func(t *testing.T) {
+		dir := t.TempDir()
+		persistPath := filepath.Join(dir, "sessions.json")
+
+		// Create the first store with a persist path.
+		s1 := NewChallengeStore(5*time.Minute, 10*time.Minute, persistPath)
+		s1.Stop()
+
+		// Add a grace session on host1.
+		s1.CreateGraceSession("alice", "host1", 10*time.Minute)
+
+		// Log an action on host1.
+		s1.LogAction("alice", ActionApproved, "host1", "CODE1", "")
+
+		// Revoke a session on a different host so the grace session above is preserved.
+		s1.RevokeSession("alice", "host2")
+
+		// Force a flush to disk.
+		s1.SaveState()
+
+		// Confirm the file was written.
+		if _, err := os.Stat(persistPath); err != nil {
+			t.Fatalf("persist file not created: %v", err)
+		}
+
+		// Create a second store loading from the same file.
+		s2 := NewChallengeStore(5*time.Minute, 10*time.Minute, persistPath)
+		s2.Stop()
+
+		// Verify grace session is present.
+		if !s2.WithinGracePeriod("alice", "host1") {
+			t.Error("expected grace session for alice@host1 to survive round-trip")
+		}
+
+		// Verify action log is present.
+		hosts := s2.KnownHosts("alice")
+		found := false
+		for _, h := range hosts {
+			if h == "host1" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected host1 in KnownHosts after load, got %v", hosts)
+		}
+
+		// Verify revokeTokensBefore is present.
+		s2.mu.RLock()
+		rts, ok := s2.revokeTokensBefore["alice"]
+		s2.mu.RUnlock()
+		if !ok {
+			t.Error("expected revokeTokensBefore[alice] to survive round-trip")
+		}
+		if rts.IsZero() {
+			t.Error("expected non-zero revokeTokensBefore timestamp after load")
 		}
 	})
 }

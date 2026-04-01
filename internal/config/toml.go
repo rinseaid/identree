@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -227,12 +228,9 @@ func SaveTOMLConfig(path string, values map[string]string) error {
 	}
 
 	// Ensure parent directory exists.
-	dir := "."
-	if slash := strings.LastIndexByte(path, '/'); slash > 0 {
-		dir = path[:slash]
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("creating config directory: %w", err)
-		}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
 	}
 	// Write atomically: write to a temp file in the same directory, then
 	// rename into place. This prevents a partial write from leaving a corrupt

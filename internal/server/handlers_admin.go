@@ -508,7 +508,7 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_LDAP_BIND_DN":                    cfg.LDAPBindDN,
 		"IDENTREE_LDAP_REFRESH_INTERVAL":           formatDuration(cfg.LDAPRefreshInterval),
 		"IDENTREE_LDAP_UID_MAP_FILE":               cfg.LDAPUIDMapFile,
-		"IDENTREE_SUDO_NO_AUTHENTICATE":            cfg.LDAPSudoNoAuthenticate,
+		"IDENTREE_SUDO_NO_AUTHENTICATE":            string(cfg.LDAPSudoNoAuthenticate),
 		"IDENTREE_SUDO_RULES_FILE":                 cfg.SudoRulesFile,
 		"IDENTREE_LDAP_UID_BASE":                   strconv.Itoa(cfg.LDAPUIDBase),
 		"IDENTREE_LDAP_GID_BASE":                   strconv.Itoa(cfg.LDAPGIDBase),
@@ -767,7 +767,8 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 		s.cfg.DefaultPageSize = parseInt("IDENTREE_HISTORY_PAGE_SIZE", s.cfg.DefaultPageSize)
 	}
 	if !config.IsEnvSourced("IDENTREE_SUDO_NO_AUTHENTICATE") {
-		if v := values["IDENTREE_SUDO_NO_AUTHENTICATE"]; v == "true" || v == "false" || v == "claims" {
+		switch v := config.SudoNoAuthenticate(values["IDENTREE_SUDO_NO_AUTHENTICATE"]); v {
+		case config.SudoNoAuthTrue, config.SudoNoAuthFalse, config.SudoNoAuthClaims:
 			s.cfg.LDAPSudoNoAuthenticate = v
 		}
 	}

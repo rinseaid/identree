@@ -227,7 +227,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		if hostname == "" {
 			hostname = "(unknown)"
 		}
-		s.store.LogAction(req.Username, "auto_approved", hostname, challenge.UserCode, "")
+		s.store.LogAction(req.Username, challpkg.ActionAutoApproved, hostname, challenge.UserCode, "")
 		s.sendEventNotification(notify.WebhookData{
 			Event:     "auto_approved",
 			Username:  req.Username,
@@ -637,7 +637,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	// Since escrow is a machine-level operation (no user session), log it for all
 	// users who have activity on this host so it appears in their history.
 	for _, user := range s.store.UsersWithHostActivity(req.Hostname) {
-		s.store.LogAction(user, "rotated_breakglass", req.Hostname, "", "")
+		s.store.LogAction(user, challpkg.ActionRotatedBreakglass, req.Hostname, "", "")
 	}
 	slog.Info("BREAKGLASS password escrowed", "host", req.Hostname)
 	w.Header().Set("Content-Type", "application/json")
@@ -704,10 +704,10 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	// Log the reveal for every user with activity on this host so it is
 	// visible in their history, with the admin as actor.
 	for _, user := range s.store.UsersWithHostActivity(hostname) {
-		s.store.LogAction(user, "revealed_breakglass", hostname, "", actor)
+		s.store.LogAction(user, challpkg.ActionRevealedBreakglass, hostname, "", actor)
 	}
 	// Also log against the actor themselves so it always appears in their history.
-	s.store.LogAction(actor, "revealed_breakglass", hostname, "", actor)
+	s.store.LogAction(actor, challpkg.ActionRevealedBreakglass, hostname, "", actor)
 	slog.Info("BREAKGLASS password revealed", "host", hostname, "admin", actor, "remote_addr", remoteAddr(r))
 
 	s.sendEventNotification(notify.WebhookData{

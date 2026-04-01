@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/rinseaid/identree/internal/randutil"
 	"github.com/rinseaid/identree/internal/sanitize"
 	"golang.org/x/oauth2"
 )
@@ -60,7 +61,7 @@ func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nonce, err := randomHex(16)
+	nonce, err := randutil.Hex(16)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
