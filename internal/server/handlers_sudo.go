@@ -39,8 +39,9 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	s.setSessionCookie(w, username, s.getSessionRole(r))
-	if s.getSessionRole(r) != "admin" {
+	role := s.getSessionRole(r)
+	s.setSessionCookie(w, username, role)
+	if role != "admin" {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}

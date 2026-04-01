@@ -278,10 +278,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Refresh session cookie on every dashboard page load (sliding 30-min window).
-	s.setSessionCookie(w, username, s.getSessionRole(r))
-
-	// Determine if this user has admin role
-	isAdmin := s.getSessionRole(r) == "admin"
+	role := s.getSessionRole(r)
+	s.setSessionCookie(w, username, role)
+	isAdmin := role == "admin"
 
 	var allHistoryWithUsers []challpkg.ActionLogEntryWithUser
 	for _, e := range s.store.ActionHistory(username, 6) {
@@ -562,8 +561,9 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	s.setSessionCookie(w, username, s.getSessionRole(r))
-	isAdmin := s.getSessionRole(r) == "admin"
+	role := s.getSessionRole(r)
+	s.setSessionCookie(w, username, role)
+	isAdmin := role == "admin"
 
 	// Target user: admin can view any user, others view themselves.
 	targetUser := username
@@ -1044,7 +1044,9 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	s.setSessionCookie(w, username, s.getSessionRole(r))
+	role := s.getSessionRole(r)
+	s.setSessionCookie(w, username, role)
+	isAdmin := role == "admin"
 
 	// Timezone handling: set cookie if tz param provided, then read from cookie
 	tzName := "UTC"
@@ -1068,8 +1070,6 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	tzLoc, _ := time.LoadLocation(tzName)
-
-	isAdmin := s.getSessionRole(r) == "admin"
 
 	query := r.URL.Query().Get("q")
 	actionFilter := r.URL.Query().Get("action")

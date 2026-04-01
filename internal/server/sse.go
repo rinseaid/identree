@@ -38,10 +38,10 @@ func (s *Server) unregisterSSE(username string, ch chan string) {
 func (s *Server) broadcastSSE(username, event string) {
 	// Copy channel slices under the lock (fast), then release before sending
 	// to avoid holding the mutex while blocked on channel sends.
-	s.sseMu.Lock()
+	s.sseMu.RLock()
 	userChans := append([]chan string{}, s.sseClients[username]...)
 	adminChans := append([]chan string{}, s.sseClients[sseAdminKey]...)
-	s.sseMu.Unlock()
+	s.sseMu.RUnlock()
 
 	for _, ch := range userChans {
 		select {
