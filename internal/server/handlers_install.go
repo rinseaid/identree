@@ -21,7 +21,7 @@ set -euo pipefail
 # Usage: curl -fsSL {{.ServerURL}}/install.sh | sudo bash
 # Automated: SHARED_SECRET=xxx curl -fsSL {{.ServerURL}}/install.sh | sudo bash
 
-SERVER_URL="{{.ServerURL}}"
+SERVER_URL={{.ServerURL}}
 MACHINE_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
 echo "IDENTREE_HOSTNAME=$MACHINE_HOSTNAME"
 INSTALL_DIR="/usr/local/bin"
@@ -363,7 +363,7 @@ func (s *Server) renderInstallScript() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data := struct{ ServerURL string }{ServerURL: s.installServerURL()}
+	data := struct{ ServerURL string }{ServerURL: shellQuote(s.installServerURL())}
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return nil, err
@@ -408,7 +408,7 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	data := struct {
 		ServerURL string
 	}{
-		ServerURL: s.installServerURL(),
+		ServerURL: shellQuote(s.installServerURL()),
 	}
 
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
