@@ -98,25 +98,12 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Push to a dedicated unprotected branch so branch protection on dev
-          # doesn't block the bot commit (required status checks aren't satisfied
-          # for [skip ci] commits pushed directly by a bot).
-          # Fetch the screenshots branch so origin/screenshots tracking ref exists;
-          # actions/checkout only fetches the triggering branch by default.
-          git fetch origin screenshots:screenshots 2>/dev/null || true
-          DEST=$(mktemp -d)
-          git worktree add "$DEST" screenshots 2>/dev/null || {
-            git worktree add --orphan -b screenshots "$DEST"
-          }
-          mkdir -p "$DEST/docs/screenshots"
-          cp screenshots/*-split.png    "$DEST/docs/screenshots/" 2>/dev/null || true
-          cp screenshots/elevation-*.png "$DEST/docs/screenshots/" 2>/dev/null || true
-          cd "$DEST"
-          # git add -A handles additions (new screenshots) and deletions (screenshots
-          # that no longer exist) without removing the newly copied files.
+          mkdir -p docs/screenshots
+          cp screenshots/*-split.png    docs/screenshots/ 2>/dev/null || true
+          cp screenshots/elevation-*.png docs/screenshots/ 2>/dev/null || true
           git add -A docs/screenshots/
-          git diff --cached --quiet || git commit -m "Update UI screenshots (from ${{ github.sha }})"
-          git push origin HEAD:screenshots
+          git diff --cached --quiet || git commit -m "Update UI screenshots [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4
