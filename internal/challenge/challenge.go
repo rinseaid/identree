@@ -501,6 +501,9 @@ func (s *ChallengeStore) AutoApprove(id string) error {
 	if !ok {
 		return fmt.Errorf("challenge not found")
 	}
+	if time.Now().After(c.ExpiresAt) {
+		return fmt.Errorf("challenge expired")
+	}
 	if c.Status != StatusPending {
 		return fmt.Errorf("challenge already resolved")
 	}
@@ -1080,7 +1083,10 @@ func (s *ChallengeStore) flushDirty() {
 	s.mu.Lock()
 	data, rotate := s.marshalStateLocked()
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
+	if !s.writeStateToDisk(data, rotate) {
+		// Restore dirty flag so the next cycle retries the write.
+		s.dirty.Store(true)
+	}
 }
 
 // reapLoop removes expired challenges periodically and flushes dirty action-log
@@ -1361,9 +1367,9 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 // sessions.json.1 etc.) before the new file is written.
 // No-op when data is nil (persistPath was empty or marshal failed).
 // Serialises concurrent writers via s.diskMu.
-func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) {
+func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) bool {
 	if data == nil {
-		return
+		return true
 	}
 	s.diskMu.Lock()
 	defer s.diskMu.Unlock()
@@ -1377,36 +1383,37 @@ func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) {
 	tmp, err := os.CreateTemp(dir, ".sessions-tmp-*")
 	if err != nil {
 		log.Printf("ERROR: creating temp session state file: %v", err)
-		return
+		return false
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
 		log.Printf("ERROR: writing session state: %v", err)
-		return
+		return false
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
 		log.Printf("ERROR: syncing session state: %v", err)
-		return
+		return false
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		log.Printf("ERROR: closing session state temp file: %v", err)
-		return
+		return false
 	}
 	if err := os.Chmod(tmpName, 0600); err != nil {
 		os.Remove(tmpName)
 		log.Printf("ERROR: setting session state permissions: %v", err)
-		return
+		return false
 	}
 	if err := os.Rename(tmpName, s.persistPath); err != nil {
 		os.Remove(tmpName)
 		log.Printf("ERROR: renaming session state file: %v", err)
-		return
+		return false
 	}
+	return true
 }
 
 // rotateStateFiles shifts existing archive files to make room for a new backup.

@@ -68,7 +68,7 @@ var OpenTTY = func() (*os.File, error) {
 	}
 	// Try PAM_TTY — pam_exec provides the user's terminal device path
 	if pamTTY := os.Getenv("PAM_TTY"); pamTTY != "" {
-		if f, err := os.OpenFile(pamTTY, os.O_RDWR, 0); err == nil {
+		if f, err := os.OpenFile(pamTTY, os.O_RDWR|syscall.O_NOFOLLOW, 0); err == nil {
 			if term.IsTerminal(int(f.Fd())) {
 				return f, nil
 			}
@@ -405,6 +405,7 @@ func recordBreakglassFailure() {
 		return
 	}
 	fmt.Fprintf(f, "%d %d", count, time.Now().Unix())
+	f.Sync() // ensure counter survives a power failure before the flock is released
 }
 
 // clearBreakglassFailures resets the counter on successful authentication.

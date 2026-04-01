@@ -307,12 +307,15 @@ func (r *HostRegistry) RemoveUserFromAllHosts(username string) {
 	defer r.mu.Unlock()
 	changed := false
 	for _, host := range r.hosts {
-		for i, u := range host.Users {
-			if u == username {
-				host.Users = append(host.Users[:i], host.Users[i+1:]...)
-				changed = true
-				break
+		var kept []string
+		for _, u := range host.Users {
+			if u != username {
+				kept = append(kept, u)
 			}
+		}
+		if len(kept) != len(host.Users) {
+			host.Users = kept
+			changed = true
 		}
 	}
 	if changed {

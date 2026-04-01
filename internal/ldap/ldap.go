@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -152,7 +153,7 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 	// Service-account bind — must match configured bind DN and password.
 	// RFC 4511 §2.1 requires case-insensitive DN comparison.
 	if s.cfg.LDAPBindDN != "" && strings.EqualFold(msg.UserName, s.cfg.LDAPBindDN) {
-		if s.cfg.LDAPBindPassword != "" && string(msg.Password) == s.cfg.LDAPBindPassword {
+		if s.cfg.LDAPBindPassword != "" && subtle.ConstantTimeCompare([]byte(msg.Password), []byte(s.cfg.LDAPBindPassword)) == 1 {
 			resp.SetResultCode(gldap.ResultSuccess)
 		}
 		// Otherwise stays InvalidCredentials

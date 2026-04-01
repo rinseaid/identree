@@ -117,7 +117,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	challengeID, expiresStr, providedHMAC := parts[0], parts[1], parts[2]
 
 	// Validate challenge ID format
-	if len(challengeID) != 32 {
+	if len(challengeID) != 32 || !isHex(challengeID) {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
 		return
 	}

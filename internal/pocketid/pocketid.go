@@ -215,6 +215,11 @@ func (c *PocketIDClient) fetchGroupData() (*pocketIDData, error) {
 	var failed []string
 
 	for _, g := range allGroups {
+		if !validAdminIDPattern.MatchString(g.ID) {
+			slog.Warn("pocketid: skipping group with invalid ID", "group", g.Name, "id", g.ID)
+			failed = append(failed, g.Name)
+			continue
+		}
 		url := fmt.Sprintf("%s/api/user-groups/%s", c.baseURL, g.ID)
 		resp, err := c.apiGet(url)
 		if err != nil {
