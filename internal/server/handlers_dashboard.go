@@ -401,7 +401,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return hostAccessViews[i].Hostname < hostAccessViews[j].Hostname
 	})
 
-	hasActiveSessions := len(activeMap) > 0
+	hasActiveSessions := false
+	for _, hav := range hostAccessViews {
+		if hav.Active {
+			hasActiveSessions = true
+			break
+		}
+	}
 
 	// Admin: build all-users active sessions view, with optional ?user= / ?host= filters.
 	type allSessionView struct {

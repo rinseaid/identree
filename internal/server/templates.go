@@ -1089,6 +1089,7 @@ const dashboardHTML = `<!DOCTYPE html>
       {{end}}
     </div>
     <div class="pagination-bar" id="sessions-admin-pagination"></div>
+    {{if .AllSessions}}
     <div style="display:flex;justify-content:flex-end;margin-top:8px">
       <form method="POST" action="/api/sessions/revoke-all">
         <input type="hidden" name="username" value="{{.Username}}">
@@ -1098,6 +1099,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <button type="submit" class="saction-btn saction-danger saction-confirm" data-confirm="{{call .T "confirm_revoke_all"}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>{{call .T "revoke_all"}}</button>
       </form>
     </div>
+    {{end}}
     <script nonce="{{.CSPNonce}}">
     (function(){
       var justMineActive=false,myUsername='';
