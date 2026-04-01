@@ -31,7 +31,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	challengeID := r.FormValue("challenge_id")
-	if challengeID == "" {
+	if challengeID == "" || len(challengeID) != 32 || !isHex(challengeID) {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "missing_fields")
 		return
 	}
@@ -572,7 +572,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	challengeID := r.FormValue("challenge_id")
-	if challengeID == "" {
+	if challengeID == "" || len(challengeID) != 32 || !isHex(challengeID) {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "missing_fields")
 		return
 	}

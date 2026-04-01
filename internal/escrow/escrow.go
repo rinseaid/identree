@@ -411,8 +411,17 @@ func (b *opConnectBackend) resolveVaultName(ctx context.Context, name string) (s
 	return "", fmt.Errorf("vault %q not found", name)
 }
 
+// opConnectEscapeTitle escapes a title string for use in a 1Password Connect OPFilter expression.
+// The only characters needing escaping within a double-quoted filter string are backslash and
+// double-quote, per the 1Password Connect filter grammar.
+func opConnectEscapeTitle(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return s
+}
+
 func (b *opConnectBackend) findItem(ctx context.Context, vaultID, title string) (string, error) {
-	filter := `title eq "` + title + `"`
+	filter := `title eq "` + opConnectEscapeTitle(title) + `"`
 	path := fmt.Sprintf("%s/v1/vaults/%s/items?filter=%s", b.baseURL, vaultID, url.QueryEscape(filter))
 	respData, err := doJSONRequest(ctx, b.client, "GET", path, nil, "Bearer "+b.token)
 	if err != nil {

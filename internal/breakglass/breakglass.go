@@ -387,7 +387,10 @@ func recordBreakglassFailure() {
 	if err != nil {
 		return // can't write counter — fail open (rate limiting unavailable)
 	}
-	f.Write(content)
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		return
+	}
 	f.Close()
 }
 

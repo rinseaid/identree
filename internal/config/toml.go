@@ -188,13 +188,37 @@ func parseTOMLValue(raw string, isList bool) string {
 		if inner == "" {
 			return ""
 		}
+		// Parse comma-separated items, respecting quoted strings so that
+		// a value like ["admin, ops", "users"] splits into two items, not three.
 		var items []string
-		for _, item := range strings.Split(inner, ",") {
-			item = strings.TrimSpace(item)
-			item = strings.Trim(item, `"'`)
-			if item != "" {
-				items = append(items, item)
+		inQuote := false
+		var cur strings.Builder
+		for i := 0; i < len(inner); i++ {
+			c := inner[i]
+			if c == '\\' && inQuote && i+1 < len(inner) {
+				cur.WriteByte(inner[i+1])
+				i++
+				continue
 			}
+			if c == '"' {
+				inQuote = !inQuote
+				continue
+			}
+			if c == '\'' && !inQuote {
+				// single-quoted items — skip the quote char
+				continue
+			}
+			if c == ',' && !inQuote {
+				if item := strings.TrimSpace(cur.String()); item != "" {
+					items = append(items, item)
+				}
+				cur.Reset()
+				continue
+			}
+			cur.WriteByte(c)
+		}
+		if item := strings.TrimSpace(cur.String()); item != "" {
+			items = append(items, item)
 		}
 		return strings.Join(items, ",")
 	}

@@ -1157,12 +1157,11 @@ func (s *ChallengeStore) reap() {
 	if pruned {
 		data, rotate = s.marshalStateLocked()
 	}
-	graceCount := len(s.lastApproval)
+	graceSessions.Set(float64(len(s.lastApproval)))
 	s.mu.Unlock()
 	if data != nil {
 		s.writeStateToDisk(data, rotate)
 	}
-	graceSessions.Set(float64(graceCount))
 }
 
 // loadState reads persisted grace sessions and revocation timestamps from the JSON file.

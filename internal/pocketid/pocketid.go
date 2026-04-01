@@ -646,6 +646,8 @@ func (c *PocketIDClient) apiPut(urlStr string, payload any) error {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
+	// Drain the body so the connection can be reused.
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 	return nil
 }
 
