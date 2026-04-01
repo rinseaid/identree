@@ -127,15 +127,19 @@ func (s *Server) requiresAdminApproval(hostname string) bool {
 
 // setFlashCookie sets a short-lived cookie containing a flash message.
 // The cookie is read and cleared on the next page load.
-func setFlashCookie(w http.ResponseWriter, flash string) {
-	http.SetCookie(w, &http.Cookie{
+func (s *Server) setFlashCookie(w http.ResponseWriter, flash string) {
+	cookie := &http.Cookie{
 		Name:     "pam_flash",
 		Value:    flash,
 		Path:     "/",
 		MaxAge:   10,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-	})
+	}
+	if strings.HasPrefix(s.cfg.ExternalURL, "https://") {
+		cookie.Secure = true
+	}
+	http.SetCookie(w, cookie)
 }
 
 // getAndClearFlash reads the pam_flash cookie, clears it, and returns the value.

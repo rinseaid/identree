@@ -39,7 +39,7 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
 	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
 // handleSignOut clears the session cookie and redirects to OIDC login.
@@ -557,7 +557,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 
 	username := s.getSessionUser(r)
 	if username == "" {
-		setFlashCookie(w, "expired:")
+		s.setFlashCookie(w, "expired:")
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
@@ -1040,7 +1040,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 
 	username := s.getSessionUser(r)
 	if username == "" {
-		setFlashCookie(w, "expired:")
+		s.setFlashCookie(w, "expired:")
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}

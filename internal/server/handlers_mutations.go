@@ -81,7 +81,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect back to the dashboard with flash cookie
 	expiry := time.Now().Add(s.store.GraceRemaining(challenge.Username, challenge.Hostname))
-	setFlashCookie(w, fmt.Sprintf("approved:%s:%s:%d", hostname, challenge.Username, expiry.Unix()))
+	s.setFlashCookie(w, fmt.Sprintf("approved:%s:%s:%d", hostname, challenge.Username, expiry.Unix()))
 	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
@@ -346,7 +346,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
 	}
-	setFlashCookie(w, fmt.Sprintf("revoked:%s:%s", displayHostname, sessionOwner))
+	s.setFlashCookie(w, fmt.Sprintf("revoked:%s:%s", displayHostname, sessionOwner))
 	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
@@ -391,7 +391,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	setFlashCookie(w, fmt.Sprintf("approved_all:%d", count))
+	s.setFlashCookie(w, fmt.Sprintf("approved_all:%d", count))
 	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
@@ -452,7 +452,7 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 		return
 	}
-	setFlashCookie(w, fmt.Sprintf("revoked_all:%d", count))
+	s.setFlashCookie(w, fmt.Sprintf("revoked_all:%d", count))
 	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
@@ -513,7 +513,7 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 		dest = "/"
 	}
 	expiry := time.Now().Add(remaining)
-	setFlashCookie(w, fmt.Sprintf("extended:%s:%s:%d", displayHostname, username, expiry.Unix()))
+	s.setFlashCookie(w, fmt.Sprintf("extended:%s:%s:%d", displayHostname, username, expiry.Unix()))
 	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
@@ -550,7 +550,7 @@ func (s *Server) handleExtendAll(w http.ResponseWriter, r *http.Request) {
 	slog.Info("BULK_EXTEND_ALL", "user", username, "count", count, "target_user", targetUser, "remote_addr", remoteAddr(r))
 
 	expiry := time.Now().Add(s.cfg.GracePeriod)
-	setFlashCookie(w, fmt.Sprintf("extended_all:%d:%d", count, expiry.Unix()))
+	s.setFlashCookie(w, fmt.Sprintf("extended_all:%d:%d", count, expiry.Unix()))
 	dest := r.FormValue("from")
 	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
 		dest = "/"
@@ -612,7 +612,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 
-	setFlashCookie(w, "rejected:"+hostname)
+	s.setFlashCookie(w, "rejected:"+hostname)
 	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
@@ -652,7 +652,7 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
-	setFlashCookie(w, fmt.Sprintf("rejected_all:%d", count))
+	s.setFlashCookie(w, fmt.Sprintf("rejected_all:%d", count))
 	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
@@ -726,7 +726,7 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 	s.broadcastSSE(targetUser, "session_changed")
 
 	expiry := time.Now().Add(duration)
-	setFlashCookie(w, fmt.Sprintf("elevated:%s:%s:%d", hostname, targetUser, expiry.Unix()))
+	s.setFlashCookie(w, fmt.Sprintf("elevated:%s:%s:%d", hostname, targetUser, expiry.Unix()))
 	from := r.FormValue("from")
 	if from == "" || !strings.HasPrefix(from, "/") || strings.HasPrefix(from, "//") || strings.ContainsAny(from, "?#\\") {
 		from = "/admin/hosts"
@@ -762,7 +762,7 @@ func (s *Server) handleRotateHost(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(username, challpkg.ActionRotationRequested, hostname, "", username)
 	slog.Info("ROTATE_BREAKGLASS", "user", username, "host", hostname, "remote_addr", remoteAddr(r))
 	s.broadcastSSE(username, "host_changed")
-	setFlashCookie(w, "rotated:"+hostname)
+	s.setFlashCookie(w, "rotated:"+hostname)
 	http.Redirect(w, r, s.baseURL+"/admin/hosts", http.StatusSeeOther)
 }
 
@@ -803,6 +803,6 @@ func (s *Server) handleRotateAllHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("ROTATE_ALL_BREAKGLASS", "user", username, "count", len(hosts), "remote_addr", remoteAddr(r))
 	s.broadcastSSE(username, "host_changed")
-	setFlashCookie(w, fmt.Sprintf("rotated_all:%d", len(hosts)))
+	s.setFlashCookie(w, fmt.Sprintf("rotated_all:%d", len(hosts)))
 	http.Redirect(w, r, s.baseURL+"/admin/hosts", http.StatusSeeOther)
 }

@@ -235,7 +235,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 
 	username := s.getSessionUser(r)
 	if username == "" {
-		setFlashCookie(w, "expired:")
+		s.setFlashCookie(w, "expired:")
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
@@ -312,7 +312,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 
 	username := s.getSessionUser(r)
 	if username == "" {
-		setFlashCookie(w, "expired:")
+		s.setFlashCookie(w, "expired:")
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
@@ -378,14 +378,14 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Validate.
 		if err := validateConfigValues(values, s.cfg); err != nil {
-			setFlashCookie(w, "config_error:"+url.QueryEscape(err.Error()))
+			s.setFlashCookie(w, "config_error:"+url.QueryEscape(err.Error()))
 			http.Redirect(w, r, s.baseURL+"/admin/config", http.StatusSeeOther)
 			return
 		}
 
 		// Write TOML.
 		if err := config.SaveTOMLConfig(config.TOMLConfigPath(), values); err != nil {
-			setFlashCookie(w, "config_error:"+url.QueryEscape(err.Error()))
+			s.setFlashCookie(w, "config_error:"+url.QueryEscape(err.Error()))
 			http.Redirect(w, r, s.baseURL+"/admin/config", http.StatusSeeOther)
 			return
 		}
@@ -400,9 +400,9 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		s.store.LogAction(username, challpkg.ActionConfigChanged, "", "", username)
 
 		if len(restartSections) > 0 {
-			setFlashCookie(w, "config_saved_restart:"+strings.Join(restartSections, "|"))
+			s.setFlashCookie(w, "config_saved_restart:"+strings.Join(restartSections, "|"))
 		} else {
-			setFlashCookie(w, "config_saved:")
+			s.setFlashCookie(w, "config_saved:")
 		}
 		http.Redirect(w, r, s.baseURL+"/admin/config", http.StatusSeeOther)
 		return
@@ -803,7 +803,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	username := s.getSessionUser(r)
 	if username == "" {
-		setFlashCookie(w, "expired:")
+		s.setFlashCookie(w, "expired:")
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
@@ -1058,7 +1058,7 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 
 	username := s.getSessionUser(r)
 	if username == "" {
-		setFlashCookie(w, "expired:")
+		s.setFlashCookie(w, "expired:")
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
@@ -1248,7 +1248,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 
 	username := s.getSessionUser(r)
 	if username == "" {
-		setFlashCookie(w, "expired:")
+		s.setFlashCookie(w, "expired:")
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
@@ -1652,7 +1652,7 @@ func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 	s.removedUsersMu.Unlock()
 	slog.Info("USER_REMOVED", "admin", adminUser, "user", targetUser, "remote_addr", remoteAddr(r))
 
-	setFlashCookie(w, "removed_user:"+targetUser)
+	s.setFlashCookie(w, "removed_user:"+targetUser)
 	http.Redirect(w, r, s.baseURL+"/admin/users", http.StatusSeeOther)
 }
 
