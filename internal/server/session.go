@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -118,7 +119,14 @@ func (s *Server) getSessionRole(r *http.Request) string {
 // Patterns use filepath.Match glob syntax (e.g., "*.prod", "bastion-*").
 func (s *Server) requiresAdminApproval(hostname string) bool {
 	for _, pattern := range s.cfg.AdminApprovalHosts {
-		if matched, _ := filepath.Match(pattern, hostname); matched {
+		matched, err := filepath.Match(pattern, hostname)
+		if err != nil {
+			// A malformed glob pattern would never match, silently bypassing
+			// the intended admin-approval requirement. Log a warning instead.
+			slog.Warn("requiresAdminApproval: invalid glob pattern", "pattern", pattern, "err", err)
+			continue
+		}
+		if matched {
 			return true
 		}
 	}
@@ -143,20 +151,24 @@ func (s *Server) setFlashCookie(w http.ResponseWriter, flash string) {
 }
 
 // getAndClearFlash reads the pam_flash cookie, clears it, and returns the value.
-func getAndClearFlash(w http.ResponseWriter, r *http.Request) string {
+func (s *Server) getAndClearFlash(w http.ResponseWriter, r *http.Request) string {
 	cookie, err := r.Cookie("pam_flash")
 	if err != nil || cookie.Value == "" {
 		return ""
 	}
 	// Clear the cookie immediately
-	http.SetCookie(w, &http.Cookie{
+	c := &http.Cookie{
 		Name:     "pam_flash",
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-	})
+	}
+	if strings.HasPrefix(s.cfg.ExternalURL, "https://") {
+		c.Secure = true
+	}
+	http.SetCookie(w, c)
 	return cookie.Value
 }
 

@@ -484,6 +484,10 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 	if req.SSHUser == "" {
 		req.SSHUser = "root"
 	}
+	if !validUsername.MatchString(req.SSHUser) {
+		http.Error(w, "invalid ssh_user", http.StatusBadRequest)
+		return
+	}
 	if req.PrivateKey == "" {
 		http.Error(w, "private_key required", http.StatusBadRequest)
 		return
@@ -678,8 +682,10 @@ func privateIP(ip net.IP) bool {
 }
 
 // clientIP extracts the real client IP from the request.
-// When RemoteAddr is a private/loopback address (i.e. a reverse proxy), the
-// leftmost entry in X-Forwarded-For is used as the real client IP.
+// When RemoteAddr is a private/loopback address (i.e. behind a reverse proxy),
+// the rightmost entry in X-Forwarded-For is used as the real client IP.
+// The rightmost entry is appended by the outermost trusted proxy and cannot be
+// spoofed by the client (unlike the leftmost, which the client controls).
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -687,11 +693,11 @@ func clientIP(r *http.Request) string {
 	}
 	if privateIP(net.ParseIP(host)) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// X-Forwarded-For may be "client, proxy1, proxy2" — take leftmost.
-			if idx := strings.IndexByte(xff, ','); idx != -1 {
-				xff = xff[:idx]
-			}
-			if candidate := strings.TrimSpace(xff); candidate != "" {
+			// X-Forwarded-For may be "client, proxy1, proxy2".
+			// Take the rightmost entry: it was appended by the last trusted proxy
+			// and cannot be forged by the client (the leftmost can be).
+			parts := strings.Split(xff, ",")
+			if candidate := strings.TrimSpace(parts[len(parts)-1]); candidate != "" {
 				return candidate
 			}
 		}

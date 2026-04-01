@@ -191,7 +191,12 @@ func (c *PocketIDClient) fetchGroupData() (*pocketIDData, error) {
 			} `json:"pagination"`
 		}
 		if err := json.Unmarshal(resp, &result); err != nil {
-			// Try as plain array (some Pocket ID versions)
+			// Try as plain array (some Pocket ID versions that don't paginate).
+			// Only attempt this fallback on the first page; if pagination was
+			// already in progress a parse failure is a real error.
+			if page != 1 {
+				return nil, fmt.Errorf("parsing groups page %d: %w", page, err)
+			}
 			if err2 := json.Unmarshal(resp, &allGroups); err2 != nil {
 				return nil, fmt.Errorf("parsing groups: %w", err2)
 			}

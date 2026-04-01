@@ -26,13 +26,14 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	target := r.URL.Query().Get("set")
+	secure := strings.HasPrefix(s.cfg.ExternalURL, "https://")
 	switch target {
 	case "dark":
-		http.SetCookie(w, &http.Cookie{Name: "identree_theme", Value: "dark", Path: "/", MaxAge: 31536000, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+		http.SetCookie(w, &http.Cookie{Name: "identree_theme", Value: "dark", Path: "/", MaxAge: 31536000, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure})
 	case "light":
-		http.SetCookie(w, &http.Cookie{Name: "identree_theme", Value: "light", Path: "/", MaxAge: 31536000, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+		http.SetCookie(w, &http.Cookie{Name: "identree_theme", Value: "light", Path: "/", MaxAge: 31536000, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure})
 	default: // "system" or anything else — delete cookie
-		http.SetCookie(w, &http.Cookie{Name: "identree_theme", Value: "", Path: "/", MaxAge: -1})
+		http.SetCookie(w, &http.Cookie{Name: "identree_theme", Value: "", Path: "/", MaxAge: -1, Secure: secure})
 	}
 
 	dest := r.URL.Query().Get("from")
@@ -49,7 +50,7 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, Secure: strings.HasPrefix(s.cfg.ExternalURL, "https://")})
 	loginURL := s.baseURL + "/sessions/login"
 	http.Redirect(w, r, loginURL, http.StatusSeeOther)
 }
@@ -218,7 +219,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	// Read and clear flash BEFORE auth check so login page can show flash messages.
 	var flashes []string
-	if flashParam := getAndClearFlash(w, r); flashParam != "" {
+	if flashParam := s.getAndClearFlash(w, r); flashParam != "" {
 		for _, f := range strings.Split(flashParam, ",") {
 			parts := strings.SplitN(f, ":", 5)
 			if len(parts) < 2 {

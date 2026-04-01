@@ -523,16 +523,29 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Verify per-host escrow token to prevent a compromised host from
-	// planting a known password for a different host. The token is
-	// HMAC(shared_secret, "escrow:" + hostname), so each host can only
-	// escrow for its own hostname.
+	// Verify per-host escrow authorization to prevent a compromised host from
+	// planting a known password for a different host.
+	//
+	// When using a global SharedSecret: verify HMAC(shared_secret, "escrow:"+hostname).
+	// When using host registry (no global SharedSecret): re-validate that the
+	// caller's credential specifically matches req.Hostname, not just any host.
 	if s.cfg.SharedSecret != "" {
 		expectedToken := breakglass.ComputeEscrowToken(s.cfg.SharedSecret, req.Hostname)
 		providedToken := r.Header.Get("X-Escrow-Token")
 		if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {
 			slog.Warn("AUTH_FAILURE invalid escrow token", "host", req.Hostname, "remote_addr", remoteAddr(r))
 			http.Error(w, "invalid escrow token for hostname", http.StatusForbidden)
+			return
+		}
+	} else if s.hostRegistry.IsEnabled() {
+		// Without a global SharedSecret, verifyAPISecret above only checked that
+		// the credential matches *some* host in the registry. Re-check here that
+		// it specifically matches the target hostname, so a host can only escrow
+		// for itself.
+		provided := r.Header.Get("X-Shared-Secret")
+		if !s.hostRegistry.ValidateHost(req.Hostname, provided) {
+			slog.Warn("AUTH_FAILURE escrow credential does not match target hostname", "host", req.Hostname, "remote_addr", remoteAddr(r))
+			http.Error(w, "invalid credential for hostname", http.StatusForbidden)
 			return
 		}
 	}

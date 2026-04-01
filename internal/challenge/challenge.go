@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -260,7 +261,14 @@ func (s *ChallengeStore) Create(username, hostname, breakglassRotateBefore strin
 	// Check per-host rotate-before; use it if it's newer than the global one
 	if hostname != "" {
 		if perHostT, ok := s.rotateBreakglassBefore[hostname]; ok {
-			globalT, _ := time.Parse(time.RFC3339, breakglassRotateBefore)
+			var globalT time.Time
+			if breakglassRotateBefore != "" {
+				var parseErr error
+				globalT, parseErr = time.Parse(time.RFC3339, breakglassRotateBefore)
+				if parseErr != nil {
+					slog.Warn("challenge: invalid breakglassRotateBefore, treating as zero", "value", breakglassRotateBefore, "err", parseErr)
+				}
+			}
 			if perHostT.After(globalT) {
 				breakglassRotateBefore = perHostT.Format(time.RFC3339)
 			}

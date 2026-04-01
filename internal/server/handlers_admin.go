@@ -412,7 +412,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 	var flashes []string
 	var flashErrors []string
 	var restartSections []string
-	if fp := getAndClearFlash(w, r); fp != "" {
+	if fp := s.getAndClearFlash(w, r); fp != "" {
 		for _, f := range strings.Split(fp, ",") {
 			parts := strings.SplitN(f, ":", 2)
 			if len(parts) == 2 {
@@ -817,7 +817,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	// Parse flash messages
 	var flashes []string
-	if flashParam := getAndClearFlash(w, r); flashParam != "" {
+	if flashParam := s.getAndClearFlash(w, r); flashParam != "" {
 		for _, f := range strings.Split(flashParam, ",") {
 			parts := strings.SplitN(f, ":", 2)
 			if len(parts) == 2 {
@@ -1277,7 +1277,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 
 	// Parse flash messages from cookie
 	var flashes []string
-	if flashParam := getAndClearFlash(w, r); flashParam != "" {
+	if flashParam := s.getAndClearFlash(w, r); flashParam != "" {
 		for _, f := range strings.Split(flashParam, ",") {
 			parts := strings.SplitN(f, ":", 5)
 			if len(parts) < 2 {

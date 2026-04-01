@@ -49,7 +49,7 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 
 	// Parse flash messages
 	var flashes []string
-	if flashParam := getAndClearFlash(w, r); flashParam != "" {
+	if flashParam := s.getAndClearFlash(w, r); flashParam != "" {
 		for _, f := range strings.Split(flashParam, ",") {
 			parts := strings.SplitN(f, ":", 2)
 			if len(parts) != 2 {

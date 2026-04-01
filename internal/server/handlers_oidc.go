@@ -220,6 +220,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 
 	// Set session cookie and avatar cookie, then redirect to dashboard.
 	s.setSessionCookie(w, username, role)
+	httpsOrigin := strings.HasPrefix(s.cfg.ExternalURL, "https://")
 	// Only store avatar URLs with safe schemes to prevent javascript: XSS.
 	if p := claims.Picture; p != "" && (strings.HasPrefix(p, "https://") || strings.HasPrefix(p, "http://")) {
 		http.SetCookie(w, &http.Cookie{
@@ -229,6 +230,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 			MaxAge:   2592000, // 30 days — outlasts session cookie so avatar persists
 			HttpOnly: false,   // needs to be readable for display
 			SameSite: http.SameSiteLaxMode,
+			Secure:   httpsOrigin,
 		})
 	}
 
@@ -237,7 +239,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	// handleOneTap because their OIDC auth was stale. Now that they've
 	// re-authenticated, resume the one-tap approval flow.
 	if onetapCookie, err := r.Cookie("pam_onetap"); err == nil && onetapCookie.Value != "" {
-		http.SetCookie(w, &http.Cookie{Name: "pam_onetap", Value: "", Path: "/", MaxAge: -1})
+		http.SetCookie(w, &http.Cookie{Name: "pam_onetap", Value: "", Path: "/", MaxAge: -1, Secure: httpsOrigin})
 		// Verify the one-tap token's challenge belongs to the authenticated user
 		parts := strings.SplitN(onetapCookie.Value, ".", 3)
 		if len(parts) == 3 {

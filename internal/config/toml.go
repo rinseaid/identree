@@ -225,8 +225,8 @@ func parseTOMLValue(raw string, isList bool) string {
 	// Quoted string
 	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
 		s := raw[1 : len(raw)-1]
-		s = strings.ReplaceAll(s, `\"`, `"`)
 		s = strings.ReplaceAll(s, `\\`, `\`)
+		s = strings.ReplaceAll(s, `\"`, `"`)
 		s = strings.ReplaceAll(s, `\n`, "\n")
 		s = strings.ReplaceAll(s, `\t`, "\t")
 		return s
