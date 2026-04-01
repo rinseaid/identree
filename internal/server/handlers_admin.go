@@ -360,14 +360,14 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Validate.
 		if err := validateConfigValues(values, s.cfg); err != nil {
-			setFlashCookie(w, "config_error:"+err.Error())
+			setFlashCookie(w, "config_error:"+url.QueryEscape(err.Error()))
 			http.Redirect(w, r, s.baseURL+"/admin/config", http.StatusSeeOther)
 			return
 		}
 
 		// Write TOML.
 		if err := config.SaveTOMLConfig(config.TOMLConfigPath(), values); err != nil {
-			setFlashCookie(w, "config_error:"+err.Error())
+			setFlashCookie(w, "config_error:"+url.QueryEscape(err.Error()))
 			http.Redirect(w, r, s.baseURL+"/admin/config", http.StatusSeeOther)
 			return
 		}
@@ -406,7 +406,8 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 						restartSections = strings.Split(parts[1], "|")
 					}
 				case "config_error":
-					flashErrors = append(flashErrors, parts[1])
+					msg, _ := url.QueryUnescape(parts[1])
+					flashErrors = append(flashErrors, msg)
 				}
 			}
 		}
