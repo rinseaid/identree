@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/sudorules"
 )
 
@@ -143,7 +144,7 @@ func (s *Server) handleSudoRuleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.LogAction(adminUser, "sudo_rule_modified", rule.Group, "", adminUser)
+	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
 	slog.Info("SUDO_RULE_ADDED", "admin", adminUser, "group", rule.Group, "remote_addr", remoteAddr(r))
 	setFlashCookie(w, "sudo_added:"+rule.Group)
 	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
@@ -192,7 +193,7 @@ func (s *Server) handleSudoRuleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.LogAction(adminUser, "sudo_rule_modified", rule.Group, "", adminUser)
+	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
 	slog.Info("SUDO_RULE_UPDATED", "admin", adminUser, "group", rule.Group, "remote_addr", remoteAddr(r))
 	setFlashCookie(w, "sudo_updated:"+rule.Group)
 	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
@@ -233,7 +234,7 @@ func (s *Server) handleSudoRuleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.LogAction(adminUser, "sudo_rule_modified", group, "", adminUser)
+	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, group, "", adminUser)
 	slog.Info("SUDO_RULE_DELETED", "admin", adminUser, "group", group, "remote_addr", remoteAddr(r))
 	setFlashCookie(w, "sudo_deleted:"+group)
 	http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)

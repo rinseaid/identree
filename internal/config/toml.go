@@ -94,7 +94,7 @@ var TOMLSections = []TOMLSection{
 	}},
 	{Name: "misc", Fields: []TOMLField{
 		{Key: "host_registry_file", EnvKey: "IDENTREE_HOST_REGISTRY_FILE"},
-		{Key: "default_page_size", EnvKey: "IDENTREE_PAGE_SIZE"},
+		{Key: "default_page_size", EnvKey: "IDENTREE_HISTORY_PAGE_SIZE"},
 		{Key: "session_state_file", EnvKey: "IDENTREE_SESSION_STATE_FILE"},
 		{Key: "dev_login", EnvKey: "IDENTREE_DEV_LOGIN", IsBool: true},
 	}},

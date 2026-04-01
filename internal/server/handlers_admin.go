@@ -514,7 +514,7 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS": strconv.Itoa(cfg.ClientBreakglassRotationDays),
 		"IDENTREE_CLIENT_TOKEN_CACHE_ENABLED":      tokenCache,
 		"IDENTREE_HOST_REGISTRY_FILE":              cfg.HostRegistryFile,
-		"IDENTREE_PAGE_SIZE":                       strconv.Itoa(cfg.DefaultPageSize),
+		"IDENTREE_HISTORY_PAGE_SIZE":               strconv.Itoa(cfg.DefaultPageSize),
 		"IDENTREE_SESSION_STATE_FILE":              cfg.SessionStateFile,
 	}
 }
@@ -745,8 +745,8 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 			s.cfg.ClientTokenCacheEnabled = nil
 		}
 	}
-	if !config.IsEnvSourced("IDENTREE_PAGE_SIZE") {
-		s.cfg.DefaultPageSize = parseInt("IDENTREE_PAGE_SIZE", s.cfg.DefaultPageSize)
+	if !config.IsEnvSourced("IDENTREE_HISTORY_PAGE_SIZE") {
+		s.cfg.DefaultPageSize = parseInt("IDENTREE_HISTORY_PAGE_SIZE", s.cfg.DefaultPageSize)
 	}
 	if !config.IsEnvSourced("IDENTREE_SUDO_NO_AUTHENTICATE") {
 		if v := values["IDENTREE_SUDO_NO_AUTHENTICATE"]; v == "true" || v == "false" || v == "claims" {
@@ -1614,7 +1614,7 @@ func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 		s.hostRegistry.RemoveUserFromAllHosts(targetUser)
 	}
 
-	s.store.LogAction(targetUser, "user_removed", "", "", adminUser)
+	s.store.LogAction(targetUser, challpkg.ActionRemovedUser, "", "", adminUser)
 	s.store.RemoveUser(targetUser)
 	s.removedUsersMu.Lock()
 	s.removedUsers[targetUser] = time.Now()
@@ -1683,7 +1683,7 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.pocketIDClient.InvalidateCache()
-	s.store.LogAction(adminUser, "claims_updated", current.Name, "", adminUser)
+	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Name, "", adminUser)
 	slog.Info("CLAIMS_UPDATED", "admin", adminUser, "group_id", groupID, "remote_addr", remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
 		w.Header().Set("Content-Type", "application/json")
@@ -1767,7 +1767,7 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.pocketIDClient.InvalidateCache()
-	s.store.LogAction(adminUser, "claims_updated", current.Username, "", adminUser)
+	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Username, "", adminUser)
 	slog.Info("CLAIMS_UPDATED", "admin", adminUser, "user_id", userID, "remote_addr", remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
 		w.Header().Set("Content-Type", "application/json")
@@ -1839,7 +1839,7 @@ func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	s.store.LogAction(username, "server_restarted", "", "", username)
+	s.store.LogAction(username, challpkg.ActionServerRestarted, "", "", username)
 	slog.Info("server restart requested via admin UI", "user", username)
 	w.WriteHeader(http.StatusNoContent)
 	go func() {

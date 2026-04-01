@@ -36,6 +36,9 @@ const (
 	ActionRotationRequested  = "rotation_requested"
 	ActionDeployed           = "deployed"
 	ActionConfigChanged      = "config_changed"
+	ActionSudoRuleModified   = "sudo_rule_modified"
+	ActionClaimsUpdated      = "claims_updated"
+	ActionServerRestarted    = "server_restarted"
 )
 
 var (
