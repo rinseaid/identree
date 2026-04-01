@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -22,7 +21,7 @@ const sessionCookieTTL = 30 * time.Minute
 // setSessionCookie sets a signed session cookie on the response.
 // role should be "admin" or "user".
 func (s *Server) setSessionCookie(w http.ResponseWriter, username, role string) {
-	ts := fmt.Sprintf("%d", time.Now().Unix())
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
 	mac.Write([]byte("session:" + username + ":" + role + ":" + ts))
 	sig := hex.EncodeToString(mac.Sum(nil))

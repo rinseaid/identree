@@ -284,7 +284,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	isAdmin := s.getSessionRole(r) == "admin"
 
 	var allHistoryWithUsers []challpkg.ActionLogEntryWithUser
-	for _, e := range s.store.ActionHistory(username) {
+	for _, e := range s.store.ActionHistory(username, 6) {
 		allHistoryWithUsers = append(allHistoryWithUsers, challpkg.ActionLogEntryWithUser{
 			Username:  username,
 			Actor:     e.Actor,
@@ -301,7 +301,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	csrfTs := fmt.Sprintf("%d", now.Unix())
+	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
 	pendingViews := s.buildPendingViews(username, lang)
@@ -833,7 +833,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	csrfTs := fmt.Sprintf("%d", time.Now().Unix())
+	csrfTs := strconv.FormatInt(time.Now().Unix(), 10)
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
 	// Elevate duration options clamped to GracePeriod.
@@ -1112,7 +1112,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	if isAdmin {
 		allHistory = s.store.AllActionHistoryWithUsers()
 	} else {
-		for _, e := range s.store.ActionHistory(username) {
+		for _, e := range s.store.ActionHistory(username, 0) {
 			if e.Action == "rotated_breakglass" {
 				continue // server-level event; not shown to non-admins
 			}
@@ -1418,7 +1418,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 
 	perPageOptions := []int{15, 30, 50, 100}
 
-	historyCSRFTs := fmt.Sprintf("%d", time.Now().Unix())
+	historyCSRFTs := strconv.FormatInt(time.Now().Unix(), 10)
 	historyCSRFToken := computeCSRFToken(s.cfg.SharedSecret, username, historyCSRFTs)
 
 	w.Header().Set("Content-Type", "text/html")
@@ -1517,7 +1517,7 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Session-based access: export the authenticated user's own history.
-	history := s.store.ActionHistory(username)
+	history := s.store.ActionHistory(username, 0)
 	switch format {
 	case "csv":
 		w.Header().Set("Content-Type", "text/csv")

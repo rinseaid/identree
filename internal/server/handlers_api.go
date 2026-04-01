@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -431,7 +432,7 @@ func (s *Server) computeOneTapToken(challengeID string, expiresAt time.Time) str
 	if s.cfg.SharedSecret == "" {
 		return ""
 	}
-	expires := fmt.Sprintf("%d", expiresAt.Unix())
+	expires := strconv.FormatInt(expiresAt.Unix(), 10)
 	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
 	mac.Write([]byte("onetap:" + challengeID + ":" + expires))
 	sig := hex.EncodeToString(mac.Sum(nil))

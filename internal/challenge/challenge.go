@@ -10,6 +10,7 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -655,17 +656,22 @@ func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor str
 }
 
 // ActionHistory returns the action log entries for a user, most recent first.
-func (s *ChallengeStore) ActionHistory(username string) []ActionLogEntry {
+// limit <= 0 means return all entries.
+func (s *ChallengeStore) ActionHistory(username string, limit int) []ActionLogEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	log := s.actionLog[username]
 	if len(log) == 0 {
 		return nil
 	}
-	// Return a copy in reverse order (most recent first)
-	result := make([]ActionLogEntry, len(log))
-	for i, e := range log {
-		result[len(log)-1-i] = e
+	n := len(log)
+	if limit > 0 && limit < n {
+		n = limit
+	}
+	// Return a copy in reverse order (most recent first), bounded by limit.
+	result := make([]ActionLogEntry, n)
+	for i := 0; i < n; i++ {
+		result[i] = log[len(log)-1-i]
 	}
 	return result
 }
@@ -1275,10 +1281,7 @@ func (s *ChallengeStore) saveStateLocked() {
 	}
 
 	// Atomic write: temp file + rename (same pattern as writeBreakglassFile).
-	dir := s.persistPath[:strings.LastIndex(s.persistPath, "/")+1]
-	if dir == "" {
-		dir = "."
-	}
+	dir := filepath.Dir(s.persistPath) + "/"
 	tmp, err := os.CreateTemp(dir, ".sessions-tmp-*")
 	if err != nil {
 		log.Printf("ERROR: creating temp session state file: %v", err)

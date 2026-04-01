@@ -238,7 +238,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	infoCSRFTs := fmt.Sprintf("%d", time.Now().Unix())
+	infoCSRFTs := strconv.FormatInt(time.Now().Unix(), 10)
 	infoCSRFToken := computeCSRFToken(s.cfg.SharedSecret, username, infoCSRFTs)
 
 	w.Header().Set("Content-Type", "text/html")
@@ -413,7 +413,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	csrfTs := fmt.Sprintf("%d", now.Unix())
+	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
 	adminTZ := "UTC"
@@ -887,13 +887,13 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	adminLoc, _ := time.LoadLocation(adminTZ)
 
 	now := time.Now()
-	csrfTs := fmt.Sprintf("%d", now.Unix())
+	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
 	var userViews []userView
 	for _, u := range users {
 		sessions := s.store.ActiveSessions(u)
-		history := s.store.ActionHistory(u)
+		history := s.store.ActionHistory(u, 0)
 		lastActive := ""
 		lastActiveAgo := ""
 		var lastActiveTime time.Time
@@ -1159,7 +1159,7 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	csrfTs := fmt.Sprintf("%d", now.Unix())
+	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
 	adminTZ := "UTC"
@@ -1497,7 +1497,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	})
 
 	now := time.Now()
-	csrfTs := fmt.Sprintf("%d", now.Unix())
+	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
 	// Build duration options, filtering to those <= GracePeriod

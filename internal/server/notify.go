@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/rinseaid/identree/internal/challenge"
@@ -215,7 +216,7 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration) error {
 		"NOTIFY_USER_CODE=" + d.UserCode,
 		"NOTIFY_APPROVAL_URL=" + effectiveURL,
 		"NOTIFY_ONETAP_URL=" + d.OneTapURL,
-		"NOTIFY_EXPIRES_IN=" + fmt.Sprintf("%d", d.ExpiresIn),
+		"NOTIFY_EXPIRES_IN=" + strconv.Itoa(d.ExpiresIn),
 		"NOTIFY_TIMESTAMP=" + d.Timestamp,
 	}
 

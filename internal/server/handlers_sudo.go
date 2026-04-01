@@ -1,10 +1,10 @@
 package server
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,7 +65,7 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	csrfTs := fmt.Sprintf("%d", now.Unix())
+	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
 	adminTZ := "UTC"

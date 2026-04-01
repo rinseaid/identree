@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -201,10 +202,7 @@ func hashBreakglassPassword(password string) (string, error) {
 // A metadata comment header is written before the hash for provenance tracking.
 func writeBreakglassFile(path, hash, hostname, passwordType string) error {
 	// Write to temp file in the same directory (ensures same filesystem for rename)
-	dir := path[:strings.LastIndex(path, "/")+1]
-	if dir == "" {
-		dir = "."
-	}
+	dir := filepath.Dir(path) + "/"
 	tmp, err := os.CreateTemp(dir, ".breakglass-tmp-*")
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)

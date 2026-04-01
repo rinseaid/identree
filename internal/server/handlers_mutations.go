@@ -184,7 +184,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		// Render a confirmation page so the user explicitly clicks Approve.
 		// This prevents link previewers from auto-approving the challenge.
 		username := s.getSessionUser(r)
-		csrfTs := fmt.Sprintf("%d", time.Now().Unix())
+		csrfTs := strconv.FormatInt(time.Now().Unix(), 10)
 		csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
 		w.Header().Set("Content-Type", "text/html")

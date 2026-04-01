@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -258,10 +258,7 @@ func (r *HostRegistry) saveLocked() {
 		return
 	}
 	// Atomic write: temp file + fsync + rename
-	dir := r.filePath[:strings.LastIndex(r.filePath, "/")+1]
-	if dir == "" {
-		dir = "."
-	}
+	dir := filepath.Dir(r.filePath) + "/"
 	tmp, err := os.CreateTemp(dir, ".hosts-tmp-*")
 	if err != nil {
 		slog.Error("creating temp host registry file", "err", err)
