@@ -30,3 +30,17 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t identree:test .
+
+  merge-screenshots:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/screenshots'
+    steps:
+      - name: Merge screenshots PR into dev
+        env:
+          GH_TOKEN: ${{ secrets.SCREENSHOTS_PAT }}
+        run: |
+          gh pr merge \
+            --repo "${{ github.repository }}" \
+            --squash --admin screenshots \
+            || true
