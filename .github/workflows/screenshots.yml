@@ -101,11 +101,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin screenshots:screenshots 2>/dev/null || true
+          # Create screenshots branch from current HEAD so it shares history with
+          # dev — required for GitHub to allow a PR between them.
+          # -B resets the branch to HEAD if it already exists.
           DEST=$(mktemp -d)
-          git worktree add "$DEST" screenshots 2>/dev/null || {
-            git worktree add --orphan -b screenshots "$DEST"
-          }
+          git worktree add -B screenshots "$DEST" HEAD
           mkdir -p "$DEST/docs/screenshots"
           cp screenshots/*-split.png    "$DEST/docs/screenshots/" 2>/dev/null || true
           cp screenshots/elevation-*.png "$DEST/docs/screenshots/" 2>/dev/null || true
@@ -116,7 +116,8 @@ jobs:
             exit 0
           fi
           git commit -m "Update UI screenshots (from ${{ github.sha }})"
-          git push origin HEAD:screenshots
+          # Force-push to replace any previous orphan history on screenshots branch.
+          git push origin screenshots --force
           # Open a PR screenshots → dev if one doesn't exist yet; enable auto-merge
           # so it lands as soon as the required status checks pass on the PR.
           gh pr create \
