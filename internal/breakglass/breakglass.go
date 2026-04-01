@@ -206,7 +206,11 @@ func writeBreakglassFile(path, hash, hostname, passwordType string) error {
 	// by other users — even briefly. os.CreateTemp would create with umask-modified
 	// permissions before we could Chmod, creating a TOCTOU window.
 	dir := filepath.Dir(path) + "/"
-	tmpName := dir + fmt.Sprintf(".breakglass-tmp-%d", time.Now().UnixNano())
+	randBytes := make([]byte, 8)
+	if _, err := rand.Read(randBytes); err != nil {
+		return fmt.Errorf("generating temp file name: %w", err)
+	}
+	tmpName := dir + ".breakglass-tmp-" + hex.EncodeToString(randBytes)
 	tmp, err := os.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
@@ -317,7 +321,7 @@ const breakglassFailurePath = "/var/run/identree-breakglass-failures"
 // Returns (0, nil) if the file doesn't exist, is malformed, or fails security checks.
 // This fails-open (allows attempts) on any read error — rate limiting is defense-in-depth.
 func readFailureCounter() (count int, lastFail time.Time) {
-	f, err := os.OpenFile(breakglassFailurePath, os.O_RDONLY, 0)
+	f, err := os.OpenFile(breakglassFailurePath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return 0, time.Time{}
 	}

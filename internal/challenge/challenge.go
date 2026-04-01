@@ -986,10 +986,15 @@ func (s *ChallengeStore) decPending(username string) {
 	}
 }
 
-// ConsumeOneTap marks a challenge's one-tap token as used. Returns error if already consumed.
+// ConsumeOneTap marks a challenge's one-tap token as used. Returns error if already consumed
+// or if the challenge no longer exists (prevents orphaned oneTapUsed entries when the challenge
+// is removed between Get and ConsumeOneTap by reap or RemoveUser).
 func (s *ChallengeStore) ConsumeOneTap(challengeID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.challenges[challengeID]; !ok {
+		return fmt.Errorf("challenge not found or expired")
+	}
 	if s.oneTapUsed[challengeID] {
 		return fmt.Errorf("one-tap already used")
 	}

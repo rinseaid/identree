@@ -26,12 +26,20 @@ func (lw *limitedWriter) Write(p []byte) (int, error) {
 		// as a short-write error and spin. The data is silently discarded.
 		return len(p), nil
 	}
+	total := len(p)
 	if int64(len(p)) > lw.n {
 		p = p[:lw.n]
 	}
 	n, err := lw.w.Write(p)
 	lw.n -= int64(n)
-	return n, err
+	if err != nil {
+		return n, err
+	}
+	// Return total (original len) so callers don't see a short-write when we
+	// intentionally truncated data at the cap. io.Writer contract requires
+	// returning a non-nil error if n < len(p); claiming all bytes prevents
+	// callers (e.g. io.Copy) from spinning on a phantom short-write.
+	return total, nil
 }
 
 // truncateOutput trims whitespace and caps output for log messages.

@@ -461,6 +461,13 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-IP rate limit
+	callerIP := clientIP(r)
+	if !s.deployRL.allow(callerIP) {
+		http.Error(w, "too many requests — wait before retrying", http.StatusTooManyRequests)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize*64)
 	var req struct {
 		Hostname       string `json:"hostname"`
@@ -547,6 +554,13 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 			_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
 			s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
 		}
+		// Schedule job cleanup after TTL to prevent unbounded map growth.
+		go func() {
+			time.Sleep(deployJobTTL)
+			s.deployMu.Lock()
+			delete(s.deployJobs, jobID)
+			s.deployMu.Unlock()
+		}()
 	}()
 
 	slog.Info("REMOVE starting", "admin", adminUser, "host", req.Hostname, "port", req.Port, "ssh_user", req.SSHUser, "job", jobID)

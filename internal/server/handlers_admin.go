@@ -718,9 +718,10 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 	if !config.IsEnvSourced("IDENTREE_NOTIFY_URL") {
 		s.cfg.NotifyURL = values["IDENTREE_NOTIFY_URL"]
 	}
-	if !config.IsEnvSourced("IDENTREE_NOTIFY_COMMAND") {
-		s.cfg.NotifyCommand = values["IDENTREE_NOTIFY_COMMAND"]
-	}
+	// IDENTREE_NOTIFY_COMMAND is intentionally not live-updated: it executes
+	// arbitrary shell commands as the identree process user. Allowing admins
+	// to change it without an OS-level restart would let any admin silently
+	// install persistence. Set via environment variable only.
 	if !config.IsEnvSourced("IDENTREE_NOTIFY_TIMEOUT") {
 		if d, err := time.ParseDuration(values["IDENTREE_NOTIFY_TIMEOUT"]); err == nil {
 			s.cfg.NotifyTimeout = d

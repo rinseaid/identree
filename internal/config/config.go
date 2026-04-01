@@ -366,6 +366,11 @@ func LoadServerConfig() (*ServerConfig, error) {
 		cfg.ChallengeTTL = 600 * time.Second
 	}
 
+	// Clamp LDAPRefreshInterval: time.NewTicker panics if d <= 0.
+	if cfg.LDAPRefreshInterval < time.Second {
+		cfg.LDAPRefreshInterval = time.Second
+	}
+
 	// Load escrow auth secret from file if EscrowAuthSecretFile is set and EscrowAuthSecret is empty.
 	if cfg.EscrowAuthSecretFile != "" && cfg.EscrowAuthSecret == "" {
 		if data, err := os.ReadFile(cfg.EscrowAuthSecretFile); err == nil {
@@ -388,6 +393,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 	if cfg.ExternalURL == "" {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL is required")
+	}
+	if !strings.HasPrefix(cfg.ExternalURL, "http://") && !strings.HasPrefix(cfg.ExternalURL, "https://") {
+		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL must start with http:// or https://")
 	}
 	if cfg.LDAPEnabled && cfg.LDAPBaseDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN is required when LDAP is enabled")
