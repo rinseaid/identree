@@ -137,7 +137,8 @@ jobs:
           # Explicitly trigger CI on the screenshots branch so the required check
           # run exists on its HEAD commit (GITHUB_TOKEN pushes don't fire
           # pull_request events, so we can't rely on those to start CI).
-          gh workflow run ci.yml \
+          # Uses SCREENSHOTS_PAT because GITHUB_TOKEN can't dispatch other workflows.
+          GH_TOKEN="${SCREENSHOTS_PAT}" gh workflow run ci.yml \
             --repo "${{ github.repository }}" \
             --ref screenshots \
             || true
