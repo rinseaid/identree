@@ -38,7 +38,8 @@ const oidcDiscoveryTimeout = 30 * time.Second
 // It bridges PAM challenges to the OIDC provider, serves the admin UI,
 // and exposes a webhook endpoint for real-time directory invalidation.
 type Server struct {
-	cfg          *config.ServerConfig
+	cfg    *config.ServerConfig
+	cfgMu  sync.RWMutex // protects concurrent reads/writes of cfg slice fields during live updates
 	baseURL      string // cfg.ExternalURL with trailing slashes stripped; precomputed once
 	store        *challenge.ChallengeStore
 	hostRegistry *HostRegistry

@@ -193,15 +193,20 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Determine role based on group membership
+	// Determine role based on group membership.
+	// Snapshot AdminGroups under cfgMu to avoid a data race with applyLiveConfigUpdates.
+	s.cfgMu.RLock()
+	adminGroups := s.cfg.AdminGroups
+	s.cfgMu.RUnlock()
+
 	role := "user"
-	if len(s.cfg.AdminGroups) > 0 {
+	if len(adminGroups) > 0 {
 		if len(claims.Groups) == 0 {
 			slog.Warn("OIDC groups claim is empty — user will be assigned role=user; check IdP group scope configuration",
 				"user", username)
 		}
 		for _, userGroup := range claims.Groups {
-			for _, adminGroup := range s.cfg.AdminGroups {
+			for _, adminGroup := range adminGroups {
 				if userGroup == adminGroup {
 					role = "admin"
 					break

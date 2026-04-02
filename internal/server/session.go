@@ -118,7 +118,11 @@ func (s *Server) getSessionRole(r *http.Request) string {
 // requiresAdminApproval checks if a hostname matches the admin approval policy.
 // Patterns use filepath.Match glob syntax (e.g., "*.prod", "bastion-*").
 func (s *Server) requiresAdminApproval(hostname string) bool {
-	for _, pattern := range s.cfg.AdminApprovalHosts {
+	// Snapshot under cfgMu to avoid a data race with applyLiveConfigUpdates.
+	s.cfgMu.RLock()
+	patterns := s.cfg.AdminApprovalHosts
+	s.cfgMu.RUnlock()
+	for _, pattern := range patterns {
 		matched, err := filepath.Match(pattern, hostname)
 		if err != nil {
 			// A malformed glob pattern would never match, silently bypassing

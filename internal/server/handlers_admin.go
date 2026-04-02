@@ -666,7 +666,11 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 }
 
 // applyLiveConfigUpdates applies the subset of config changes that are safe without a restart.
+// Holds s.cfgMu write lock for the entire mutation so concurrent handlers that snapshot
+// slice fields (AdminGroups, AdminApprovalHosts) under the read lock see consistent values.
 func (s *Server) applyLiveConfigUpdates(values map[string]string) {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
 	parseDur := func(key string, def time.Duration) time.Duration {
 		if v := values[key]; v != "" {
 			if d, err := time.ParseDuration(v); err == nil {
