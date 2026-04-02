@@ -269,7 +269,12 @@ func (s *Server) verifyFormAuth(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 
-	// Verify CSRF token
+	// Verify CSRF token. When SharedSecret is empty computeCSRFToken returns "".
+	// ConstantTimeCompare([]byte{},[]byte{}) == 1, so we must guard explicitly.
+	if s.cfg.SharedSecret == "" {
+		revokeErrorPage(w, r, http.StatusForbidden, "invalid_request", "invalid_csrf")
+		return ""
+	}
 	expected := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(csrfToken)) != 1 {
 		revokeErrorPage(w, r, http.StatusForbidden, "invalid_request", "invalid_csrf")

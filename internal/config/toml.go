@@ -98,7 +98,9 @@ var TOMLSections = []TOMLSection{
 		{Key: "host_registry_file", EnvKey: "IDENTREE_HOST_REGISTRY_FILE"},
 		{Key: "default_page_size", EnvKey: "IDENTREE_HISTORY_PAGE_SIZE"},
 		{Key: "session_state_file", EnvKey: "IDENTREE_SESSION_STATE_FILE"},
-		{Key: "dev_login", EnvKey: "IDENTREE_DEV_LOGIN", IsBool: true},
+		// IDENTREE_DEV_LOGIN is intentionally excluded from TOML/admin-UI to prevent
+		// a compromised admin session from permanently disabling OIDC authentication.
+		// Set via environment variable only.
 	}},
 }
 

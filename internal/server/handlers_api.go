@@ -594,9 +594,15 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	ip := remoteAddr(r)
+	if s.authFailRL.throttled(ip) {
+		http.Error(w, "too many authentication failures", http.StatusTooManyRequests)
+		return
+	}
 	if !s.verifyAPISecret(r) {
 		authFailures.Inc()
-		slog.Warn("AUTH_FAILURE invalid shared secret", "path", "POST /api/breakglass/escrow", "remote_addr", remoteAddr(r))
+		s.authFailRL.record(ip)
+		slog.Warn("AUTH_FAILURE invalid shared secret", "path", "POST /api/breakglass/escrow", "remote_addr", ip)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

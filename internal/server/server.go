@@ -111,6 +111,9 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 
 	oidcTransport := http.DefaultTransport
 	if cfg.OIDCInsecureSkipVerify {
+		if strings.HasPrefix(cfg.ExternalURL, "https://") {
+			slog.Error("SECURITY IDENTREE_OIDC_INSECURE_SKIP_VERIFY=true on an HTTPS deployment — TLS certificate verification is disabled; this must not be used in production")
+		}
 		oidcTransport = &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test environments with self-signed certs only
 		}
@@ -441,6 +444,18 @@ func (s *Server) handlePocketIDWebhook(w http.ResponseWriter, r *http.Request) {
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+func isDecimal(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func isHex(s string) bool {

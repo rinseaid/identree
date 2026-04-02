@@ -446,6 +446,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if len(cfg.SharedSecret) < 32 {
 		return nil, fmt.Errorf("IDENTREE_SHARED_SECRET must be at least 32 characters")
 	}
+	if cfg.WebhookSecret != "" && len(cfg.WebhookSecret) < 32 {
+		return nil, fmt.Errorf("IDENTREE_WEBHOOK_SECRET must be at least 32 characters when set")
+	}
 	if cfg.ExternalURL == "" {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL is required")
 	}
@@ -473,14 +476,22 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
+	// NotifyBackend must be one of the recognised values or empty (disabled).
+	switch cfg.NotifyBackend {
+	case "", "ntfy", "slack", "discord", "apprise", "webhook", "custom":
+		// valid
+	default:
+		return nil, fmt.Errorf("IDENTREE_NOTIFY_BACKEND must be one of: ntfy, slack, discord, apprise, webhook, custom (got %q)", cfg.NotifyBackend)
+	}
+
 	// EscrowCommand and EscrowBackend are mutually exclusive.
 	if cfg.EscrowCommand != "" && cfg.EscrowBackend != "" {
 		return nil, fmt.Errorf("IDENTREE_ESCROW_COMMAND and IDENTREE_ESCROW_BACKEND are mutually exclusive; set only one")
 	}
 
-	// EscrowEncryptionKey must be at least 16 characters when using the local backend.
-	if cfg.EscrowBackend == EscrowBackendLocal && len(cfg.EscrowEncryptionKey) < 16 {
-		return nil, fmt.Errorf("IDENTREE_ESCROW_ENCRYPTION_KEY must be at least 16 characters when using the local escrow backend")
+	// EscrowEncryptionKey must be at least 32 characters when using the local backend.
+	if cfg.EscrowBackend == EscrowBackendLocal && len(cfg.EscrowEncryptionKey) < 32 {
+		return nil, fmt.Errorf("IDENTREE_ESCROW_ENCRYPTION_KEY must be at least 32 characters when using the local escrow backend")
 	}
 
 	if cfg.EscrowBackend == EscrowBackendVault && cfg.EscrowPath != "" {

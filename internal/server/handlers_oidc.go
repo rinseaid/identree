@@ -300,9 +300,11 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	// re-authenticated, resume the one-tap approval flow.
 	if onetapCookie, err := r.Cookie("pam_onetap"); err == nil && onetapCookie.Value != "" {
 		http.SetCookie(w, &http.Cookie{Name: "pam_onetap", Value: "", Path: "/", MaxAge: -1, Secure: httpsOrigin, HttpOnly: true, SameSite: http.SameSiteLaxMode})
-		// Verify the one-tap token's challenge belongs to the authenticated user
+		// Verify the one-tap token's challenge belongs to the authenticated user.
+		// Validate format before constructing a redirect URL: parts[1] must be
+		// a decimal integer and parts[2] must be a 64-char lowercase hex HMAC.
 		parts := strings.SplitN(onetapCookie.Value, ".", 3)
-		if len(parts) == 3 {
+		if len(parts) == 3 && isDecimal(parts[1]) && isHex(parts[2]) && len(parts[2]) == 64 {
 			if challenge, ok := s.store.Get(parts[0]); ok && challenge.Username == username {
 				onetapURL := s.baseURL + "/api/onetap/" + onetapCookie.Value
 				http.Redirect(w, r, onetapURL, http.StatusSeeOther)

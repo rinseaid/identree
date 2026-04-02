@@ -1314,13 +1314,22 @@ func (s *ChallengeStore) loadState() {
 			break
 		}
 	}
+	rotateCeiling := now.Add(maxRevokeTokensAge)
 	for host, ts := range state.RotateBreakglassBefore {
+		// Skip timestamps implausibly far in the future (could force-expire all passwords).
+		if ts.After(rotateCeiling) {
+			continue
+		}
 		s.rotateBreakglassBefore[host] = ts
 		if len(s.rotateBreakglassBefore) >= maxStateMapEntries {
 			break
 		}
 	}
 	for user, ts := range state.LastOIDCAuth {
+		// Skip future timestamps — a future LastOIDCAuth could suppress re-auth checks.
+		if ts.After(now.Add(time.Minute)) {
+			continue
+		}
 		s.lastOIDCAuth[user] = ts
 		if len(s.lastOIDCAuth) >= maxStateMapEntries {
 			break

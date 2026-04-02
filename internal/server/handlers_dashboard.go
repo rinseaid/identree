@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -51,6 +52,30 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	// Verify CSRF token when a valid session exists.
+	// Uses the session cookie's username to validate the HMAC, so no username
+	// field is needed in the form itself.
+	if s.cfg.SharedSecret != "" {
+		if username := s.getSessionUser(r); username != "" {
+			r.Body = http.MaxBytesReader(w, r.Body, 1024)
+			_ = r.ParseForm()
+			csrfToken := r.FormValue("csrf_token")
+			csrfTs := r.FormValue("csrf_ts")
+			valid := false
+			if csrfToken != "" && csrfTs != "" {
+				if tsInt, err := strconv.ParseInt(csrfTs, 10, 64); err == nil {
+					if age := time.Since(time.Unix(tsInt, 0)); age >= 0 && age <= 5*time.Minute {
+						expected := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+						valid = subtle.ConstantTimeCompare([]byte(expected), []byte(csrfToken)) == 1
+					}
+				}
+			}
+			if !valid {
+				http.Error(w, "invalid_csrf", http.StatusForbidden)
+				return
+			}
+		}
+	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: strings.HasPrefix(s.cfg.ExternalURL, "https://")})
 	loginURL := s.baseURL + "/sessions/login"
 	http.Redirect(w, r, loginURL, http.StatusSeeOther)
@@ -61,6 +86,12 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 // GET /dev/login?user=alice&role=admin
 func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.DevLoginEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	// Restrict dev login to loopback connections — prevents accidental exposure
+	// if the server is reachable from outside localhost.
+	if addr := remoteAddr(r); addr != "127.0.0.1" && addr != "::1" {
 		http.NotFound(w, r)
 		return
 	}
@@ -83,6 +114,10 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 // POST /dev/seed-history  body: [{"username":"alice","action":"approved","hostname":"prod-web-01","actor":"testadmin","minutes_ago":90}]
 func (s *Server) handleDevSeedHistory(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.DevLoginEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	if addr := remoteAddr(r); addr != "127.0.0.1" && addr != "::1" {
 		http.NotFound(w, r)
 		return
 	}
@@ -114,6 +149,10 @@ func (s *Server) handleDevSeedHistory(w http.ResponseWriter, r *http.Request) {
 // POST /dev/seed-session  body: {"username":"alice","hostname":"prod-web-01"}
 func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.DevLoginEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	if addr := remoteAddr(r); addr != "127.0.0.1" && addr != "::1" {
 		http.NotFound(w, r)
 		return
 	}

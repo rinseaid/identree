@@ -502,7 +502,7 @@ func IsServerUnreachable(err error) bool {
 	var httpErr *ServerHTTPError
 	if errors.As(err, &httpErr) {
 		switch httpErr.StatusCode {
-		case 404, 502, 503, 504:
+		case 502, 503, 504:
 			return true // proxy/gateway error = backend down or not routed
 		default:
 			return false // server responded, it's reachable

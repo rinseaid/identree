@@ -74,9 +74,13 @@ func verifyWebhookSignature(r *http.Request, secret, sig string) bool {
 
 	// 64 KB limit: large enough for any real PocketID webhook payload while
 	// preventing memory exhaustion from oversized or malicious requests.
+	// Reject bodies that hit the exact limit — we cannot verify a truncated payload.
 	body, err := io.ReadAll(io.LimitReader(r.Body, 65536))
 	if err != nil {
 		return false
+	}
+	if len(body) == 65536 {
+		return false // payload too large to verify safely
 	}
 	// Replace body so it can be read again downstream if needed
 	r.Body = io.NopCloser(bytes.NewReader(body))

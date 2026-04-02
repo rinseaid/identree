@@ -19,6 +19,7 @@ import (
 	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/pocketid"
+	"golang.org/x/crypto/ssh"
 )
 
 var sshKeyClaimPattern = regexp.MustCompile(`^sshPublicKey\d*$`)
@@ -134,6 +135,13 @@ func isEditableGroupClaim(key string) bool {
 // resolved vault UUID (stored in vaultID) and item UUID to form a direct link.
 func deriveEscrowLink(backend, escrowURL, escrowPath, itemID, vaultID, webURL, hostname string) string {
 	base := strings.TrimRight(escrowURL, "/")
+	// Reject non-http(s) schemes to prevent javascript: or data: URIs in link hrefs.
+	if escrowURL != "" && !strings.HasPrefix(escrowURL, "http://") && !strings.HasPrefix(escrowURL, "https://") {
+		return ""
+	}
+	if webURL != "" && !strings.HasPrefix(webURL, "http://") && !strings.HasPrefix(webURL, "https://") {
+		return ""
+	}
 	switch backend {
 	case "1password-connect":
 		// Requires ESCROW_WEB_URL = https://my.1password.com/app#/ACCOUNTUUID
@@ -258,11 +266,11 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := s.getSessionRole(r)
-	s.setSessionCookie(w, username, role)
 	if role != "admin" {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
+	s.setSessionCookie(w, username, role)
 
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
@@ -835,12 +843,11 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := s.getSessionRole(r)
-	s.setSessionCookie(w, username, role)
-
 	if role != "admin" {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
+	s.setSessionCookie(w, username, role)
 
 	// Parse flash messages
 	var flashes []string
@@ -1090,11 +1097,11 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := s.getSessionRole(r)
-	s.setSessionCookie(w, username, role)
 	if role != "admin" {
 		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
 		return
 	}
+	s.setSessionCookie(w, username, role)
 	if s.isBridgeMode() {
 		http.Redirect(w, r, s.baseURL+"/admin/sudo-rules", http.StatusSeeOther)
 		return
@@ -1280,12 +1287,12 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := s.getSessionRole(r)
-	s.setSessionCookie(w, username, role)
-
 	if role != "admin" {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
 	}
+	s.setSessionCookie(w, username, role)
+
 	// Resolve timezone for flash time formatting
 	flashTZ := "UTC"
 	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
@@ -1351,13 +1358,10 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	escrowed := s.store.EscrowedHosts()
 
-	// Merge escrowed hosts into the known hosts list
+	// Merge escrowed hosts into the known hosts list.
+	// All escrowed hosts are visible to admins regardless of host-registry scoping.
 	escrowedSet := make(map[string]bool)
-	isAdmin := true
 	for h := range escrowed {
-		if !isAdmin && s.hostRegistry.IsEnabled() && !s.hostRegistry.IsUserAuthorized(h, username) {
-			continue
-		}
 		escrowedSet[h] = true
 		found := false
 		for _, kh := range hosts {
@@ -1510,7 +1514,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 			hv.EscrowLink = deriveEscrowLink(string(s.cfg.EscrowBackend), s.cfg.EscrowURL, s.cfg.EscrowPath, escrowRecord.ItemID, escrowRecord.VaultID, s.cfg.EscrowWebURL, h)
 			// Reveal is available for all native backends (local, 1password-connect, vault, bitwarden, infisical).
 			// Command-based escrow has no standardised retrieval API.
-			hv.EscrowRevealable = isAdmin && s.cfg.EscrowBackend != "" && s.cfg.EscrowCommand == ""
+			hv.EscrowRevealable = s.cfg.EscrowBackend != "" && s.cfg.EscrowCommand == ""
 		}
 		if _, group, _, ok := s.hostRegistry.GetHost(h); ok {
 			hv.Group = group
@@ -1727,12 +1731,15 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 	}
 
 	// sudoClaimKeys are the group claims that carry sudo policy; validated below.
+	// accessHosts is also included here so it receives the same length and
+	// character checks as the sudo fields.
 	sudoClaimKeys := map[string]bool{
 		"sudoCommands":   true,
 		"sudoHosts":      true,
 		"sudoRunAsUser":  true,
 		"sudoRunAsGroup": true,
 		"sudoOptions":    true,
+		"accessHosts":    true,
 	}
 
 	// Add non-empty form values for managed keys.
@@ -1860,6 +1867,11 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 			k = strings.TrimSpace(k)
 			if k == "" {
 				continue
+			}
+			// Validate SSH public key format before storing.
+			if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(k)); err != nil {
+				http.Error(w, fmt.Sprintf("invalid SSH public key at index %d: %v", keyIdx, err), http.StatusBadRequest)
+				return
 			}
 			keyName := "sshPublicKey"
 			if keyIdx > 0 {
