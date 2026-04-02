@@ -64,7 +64,7 @@ var TOMLSections = []TOMLSection{
 		{Key: "bind_dn", EnvKey: "IDENTREE_LDAP_BIND_DN"},
 		{Key: "refresh_interval", EnvKey: "IDENTREE_LDAP_REFRESH_INTERVAL"},
 		{Key: "uid_map_file", EnvKey: "IDENTREE_LDAP_UID_MAP_FILE"},
-		{Key: "sudo_no_authenticate", EnvKey: "IDENTREE_SUDO_NO_AUTHENTICATE"},
+		{Key: "sudo_no_authenticate", EnvKey: "IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"},
 		{Key: "sudo_rules_file", EnvKey: "IDENTREE_SUDO_RULES_FILE"},
 		{Key: "uid_base", EnvKey: "IDENTREE_LDAP_UID_BASE"},
 		{Key: "gid_base", EnvKey: "IDENTREE_LDAP_GID_BASE"},
@@ -99,7 +99,7 @@ var TOMLSections = []TOMLSection{
 	}},
 	{Name: "misc", Fields: []TOMLField{
 		{Key: "host_registry_file", EnvKey: "IDENTREE_HOST_REGISTRY_FILE"},
-		{Key: "default_page_size", EnvKey: "IDENTREE_HISTORY_PAGE_SIZE"},
+		{Key: "default_page_size", EnvKey: "IDENTREE_DEFAULT_PAGE_SIZE"},
 		{Key: "session_state_file", EnvKey: "IDENTREE_SESSION_STATE_FILE"},
 		// IDENTREE_DEV_LOGIN is intentionally excluded from TOML/admin-UI to prevent
 		// a compromised admin session from permanently disabling OIDC authentication.

@@ -241,7 +241,7 @@ Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 | `IDENTREE_LDAP_GID_BASE` | `200000` | First GID assigned to PocketID groups |
 | `IDENTREE_LDAP_DEFAULT_SHELL` | `/bin/bash` | Default `loginShell` |
 | `IDENTREE_LDAP_DEFAULT_HOME` | `/home/%s` | `homeDirectory` pattern (`%s` = username) |
-| `IDENTREE_SUDO_NO_AUTHENTICATE` | `false` | `false`, `true`, or `claims` — see [deployment modes](docs/deployment-modes.md) |
+| `IDENTREE_LDAP_SUDO_NO_AUTHENTICATE` | `false` | `false`, `true`, or `claims` — see [deployment modes](docs/deployment-modes.md) |
 | `IDENTREE_SUDO_RULES_FILE` | `/config/sudorules.json` | Sudo rules file (bridge mode) |
 
 #### Notifications
@@ -286,7 +286,7 @@ See [docs/breakglass.md](docs/breakglass.md) for full details and per-backend ex
 |---|---|---|
 | `IDENTREE_SESSION_STATE_FILE` | `/config/sessions.json` | Active sessions (persists across restarts) |
 | `IDENTREE_HOST_REGISTRY_FILE` | `/config/hosts.json` | Registered host registry |
-| `IDENTREE_HISTORY_PAGE_SIZE` | `10` | Default entries per page in the history view |
+| `IDENTREE_DEFAULT_PAGE_SIZE` | `10` | Default entries per page in the history view |
 
 #### Client defaults (pushed to clients on every auth)
 

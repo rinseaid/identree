@@ -1000,12 +1000,12 @@ const dashboardHTML = `<!DOCTYPE html>
     document.querySelectorAll('.user-btn').forEach(function(btn){
       btn.addEventListener('click',function(e){
         var open=btn.classList.contains('open');
-        document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');});
-        if(!open){btn.classList.add('open');}
+        document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');});
+        if(!open){btn.classList.add('open');btn.setAttribute('aria-expanded','true');}
         e.stopPropagation();
       });
     });
-    document.addEventListener('click',function(){document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');});});
+    document.addEventListener('click',function(){document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');});});
     // Active-only filter toggle
     var filterBtn=document.getElementById('active-filter-btn');
     var hostList=document.getElementById('host-access-list');
@@ -1042,10 +1042,10 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="sidebar-nav">` + sidebarNavHTML + `
     </div>
     <div class="sidebar-footer">
-      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true">
+      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
         <div class="user-avatar">{{if .Avatar}}<img src="{{.Avatar}}" alt="">{{else}}{{.Initial}}{{end}}</div>
         <div class="user-name-wrap"><span class="user-display-name">{{.Username}}{{if .IsAdmin}}<span class="user-role-badge">{{call .T "admin"}}</span>{{end}}</span></div>
-        <div class="user-dropdown" role="menu">
+        <div class="user-dropdown">
           <div class="user-dropdown-label">{{call .T "language"}}</div>
           <form method="GET" action="/"><select name="lang" class="lang-select" aria-label="{{call .T "language"}}">{{range .Languages}}<option value="{{.Code}}" {{if eq .Code $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}</select></form>
           <div class="user-dropdown-divider"></div>
@@ -1059,7 +1059,7 @@ const dashboardHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
-          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px" role="menuitem">{{call .T "sign_out"}}</button></form>
+          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px">{{call .T "sign_out"}}</button></form>
         </div>
       </button>
     </div>
@@ -1388,12 +1388,12 @@ const historyPageHTML = `<!DOCTYPE html>
     document.querySelectorAll('.user-btn').forEach(function(btn){
       btn.addEventListener('click',function(e){
         var open=btn.classList.contains('open');
-        document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');});
-        if(!open){btn.classList.add('open');}
+        document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');});
+        if(!open){btn.classList.add('open');btn.setAttribute('aria-expanded','true');}
         e.stopPropagation();
       });
     });
-    document.addEventListener('click',function(){document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');});});
+    document.addEventListener('click',function(){document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');});});
     (function(){
       var axisEl=document.getElementById('timeline-axis');
       var barsEl=document.getElementById('timeline-bars');
@@ -1462,10 +1462,10 @@ const historyPageHTML = `<!DOCTYPE html>
     <div class="sidebar-nav">` + sidebarNavHTML + `
     </div>
     <div class="sidebar-footer">
-      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true">
+      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
         <div class="user-avatar">{{if .Avatar}}<img src="{{.Avatar}}" alt="">{{else}}{{.Initial}}{{end}}</div>
         <div class="user-name-wrap"><span class="user-display-name">{{.Username}}{{if .IsAdmin}}<span class="user-role-badge">{{call .T "admin"}}</span>{{end}}</span></div>
-        <div class="user-dropdown" role="menu">
+        <div class="user-dropdown">
           <div class="user-dropdown-label">{{call .T "language"}}</div>
           <form method="GET" action="/history"><select name="lang" class="lang-select" aria-label="{{call .T "language"}}">{{range .Languages}}<option value="{{.Code}}" {{if eq .Code $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}</select></form>
           <div class="user-dropdown-divider"></div>
@@ -1479,7 +1479,7 @@ const historyPageHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/history" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
-          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px" role="menuitem">{{call .T "sign_out"}}</button></form>
+          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px">{{call .T "sign_out"}}</button></form>
         </div>
       </button>
     </div>
@@ -1695,12 +1695,12 @@ const adminPageHTML = `<!DOCTYPE html>
     document.querySelectorAll('.user-btn').forEach(function(btn){
       btn.addEventListener('click',function(e){
         var open=btn.classList.contains('open');
-        document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');});
-        if(!open){btn.classList.add('open');}
+        document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');});
+        if(!open){btn.classList.add('open');btn.setAttribute('aria-expanded','true');}
         e.stopPropagation();
       });
     });
-    document.addEventListener('click',function(){document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');});});
+    document.addEventListener('click',function(){document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');});});
     // Script preview toggle + copy
     var scriptPreview=document.getElementById('deploy-script-preview');
     var scriptToggle=document.getElementById('deploy-script-toggle');
@@ -1951,10 +1951,10 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="sidebar-nav">` + sidebarNavHTML + `
     </div>
     <div class="sidebar-footer">
-      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true">
+      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
         <div class="user-avatar">{{if .Avatar}}<img src="{{.Avatar}}" alt="">{{else}}{{.Initial}}{{end}}</div>
         <div class="user-name-wrap"><span class="user-display-name">{{.Username}}<span class="user-role-badge">{{call .T "admin"}}</span></span></div>
-        <div class="user-dropdown" role="menu">
+        <div class="user-dropdown">
           <div class="user-dropdown-label">{{call .T "language"}}</div>
           <form method="GET" action="/admin/{{.AdminTab}}"><select name="lang" class="lang-select" aria-label="{{call .T "language"}}">{{range .Languages}}<option value="{{.Code}}" {{if eq .Code $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}</select></form>
           <div class="user-dropdown-divider"></div>
@@ -1968,7 +1968,7 @@ const adminPageHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/admin" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
-          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px" role="menuitem">{{call .T "sign_out"}}</button></form>
+          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px">{{call .T "sign_out"}}</button></form>
         </div>
       </button>
     </div>
@@ -2037,7 +2037,7 @@ const adminPageHTML = `<!DOCTYPE html>
       {{$sc:=index .ConfigSecrets "IDENTREE_LDAP_BIND_PASSWORD"}}<div class="config-table-row config-locked" data-section="ldap" data-search="IDENTREE_LDAP_BIND_PASSWORD Password for the LDAP bind DN."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_bind_password"}}</div><div class="config-label-env">IDENTREE_LDAP_BIND_PASSWORD</div><div class="config-label-desc">Password for the LDAP bind DN.</div></div><div class="config-row-control"><span class="config-secret-badge{{if $sc}} configured{{end}}">{{if $sc}}{{call .T "configured"}}{{else}}{{call .T "not_configured"}}{{end}}</span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span style="font-size:0.75rem;color:var(--text-3)">env only</span></div></div>
       {{$v:=index .ConfigValues "IDENTREE_LDAP_REFRESH_INTERVAL"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_REFRESH_INTERVAL"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_REFRESH_INTERVAL How often identree re-syncs its user and group cache from Pocket ID."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_refresh_interval"}}</div><div class="config-label-env">IDENTREE_LDAP_REFRESH_INTERVAL</div><div class="config-label-desc">How often identree re-syncs its user and group cache from Pocket ID.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_LDAP_REFRESH_INTERVAL" value="{{$v}}" class="config-input" placeholder="5m">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
       {{$v:=index .ConfigValues "IDENTREE_LDAP_UID_MAP_FILE"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_UID_MAP_FILE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_UID_MAP_FILE JSON file mapping usernames to stable POSIX UIDs. Auto-created on first use."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_uid_map_file"}}</div><div class="config-label-env">IDENTREE_LDAP_UID_MAP_FILE</div><div class="config-label-desc">JSON file mapping usernames to stable POSIX UIDs. Auto-created on first use.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_LDAP_UID_MAP_FILE" value="{{$v}}" class="config-input" placeholder="/config/uidmap.json">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
-      {{$v:=index .ConfigValues "IDENTREE_SUDO_NO_AUTHENTICATE"}}{{$lk:=index .ConfigLocked "IDENTREE_SUDO_NO_AUTHENTICATE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_SUDO_NO_AUTHENTICATE PAM re-auth in sudo: false=always authenticate, true=never, claims=skip when OIDC groups grant sudo."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_sudo_no_auth"}}</div><div class="config-label-env">IDENTREE_SUDO_NO_AUTHENTICATE</div><div class="config-label-desc">PAM re-auth in sudo: false=always authenticate, true=never, claims=skip when OIDC groups grant sudo.</div></div><div class="config-row-control">{{if $lk}}<select disabled class="config-select"><option>{{$v}}</option></select><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{else}}<select name="IDENTREE_SUDO_NO_AUTHENTICATE" class="config-select"><option value="false" {{if eq $v "false"}}selected{{end}}>false</option><option value="true" {{if eq $v "true"}}selected{{end}}>true</option><option value="claims" {{if eq $v "claims"}}selected{{end}}>claims</option></select>{{end}}</div></div>
+      {{$v:=index .ConfigValues "IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_SUDO_NO_AUTHENTICATE PAM re-auth in sudo: false=always authenticate, true=never, claims=skip when OIDC groups grant sudo."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_sudo_no_auth"}}</div><div class="config-label-env">IDENTREE_LDAP_SUDO_NO_AUTHENTICATE</div><div class="config-label-desc">PAM re-auth in sudo: false=always authenticate, true=never, claims=skip when OIDC groups grant sudo.</div></div><div class="config-row-control">{{if $lk}}<select disabled class="config-select"><option>{{$v}}</option></select><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{else}}<select name="IDENTREE_LDAP_SUDO_NO_AUTHENTICATE" class="config-select"><option value="false" {{if eq $v "false"}}selected{{end}}>false</option><option value="true" {{if eq $v "true"}}selected{{end}}>true</option><option value="claims" {{if eq $v "claims"}}selected{{end}}>claims</option></select>{{end}}</div></div>
       {{$v:=index .ConfigValues "IDENTREE_SUDO_RULES_FILE"}}{{$lk:=index .ConfigLocked "IDENTREE_SUDO_RULES_FILE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_SUDO_RULES_FILE JSON file of static sudo rules applied in addition to group-based policy."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_sudo_rules_file"}}</div><div class="config-label-env">IDENTREE_SUDO_RULES_FILE</div><div class="config-label-desc">JSON file of static sudo rules applied in addition to group-based policy.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_SUDO_RULES_FILE" value="{{$v}}" class="config-input" placeholder="/config/sudorules.json">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
       {{$v:=index .ConfigValues "IDENTREE_LDAP_UID_BASE"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_UID_BASE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_UID_BASE Starting UID for dynamically assigned POSIX user IDs."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_uid_base"}}</div><div class="config-label-env">IDENTREE_LDAP_UID_BASE</div><div class="config-label-desc">Starting UID for dynamically assigned POSIX user IDs.</div></div><div class="config-row-control">{{if $lk}}<input type="number" value="{{$v}}" disabled class="config-input" style="max-width:120px"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{else}}<input type="number" name="IDENTREE_LDAP_UID_BASE" value="{{$v}}" class="config-input" style="max-width:120px" min="0">{{end}}</div></div>
       {{$v:=index .ConfigValues "IDENTREE_LDAP_GID_BASE"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_GID_BASE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_GID_BASE Starting GID for dynamically assigned POSIX group IDs."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_gid_base"}}</div><div class="config-label-env">IDENTREE_LDAP_GID_BASE</div><div class="config-label-desc">Starting GID for dynamically assigned POSIX group IDs.</div></div><div class="config-row-control">{{if $lk}}<input type="number" value="{{$v}}" disabled class="config-input" style="max-width:120px"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{else}}<input type="number" name="IDENTREE_LDAP_GID_BASE" value="{{$v}}" class="config-input" style="max-width:120px" min="0">{{end}}</div></div>
@@ -2077,7 +2077,7 @@ const adminPageHTML = `<!DOCTYPE html>
     {{/* Miscellaneous */}}
       <div class="config-section-row" data-section="misc"><span class="config-section-title">{{call .T "cfg_misc"}}</span><button type="submit" class="saction-btn saction-primary config-save-btn">{{call .T "save"}}</button></div>
       {{$v:=index .ConfigValues "IDENTREE_HOST_REGISTRY_FILE"}}{{$lk:=index .ConfigLocked "IDENTREE_HOST_REGISTRY_FILE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="misc" data-search="IDENTREE_HOST_REGISTRY_FILE JSON file listing registered hosts and their metadata."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_host_registry_file"}}</div><div class="config-label-env">IDENTREE_HOST_REGISTRY_FILE</div><div class="config-label-desc">JSON file listing registered hosts and their metadata.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_HOST_REGISTRY_FILE" value="{{$v}}" class="config-input" placeholder="/config/hosts.json">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
-      {{$v:=index .ConfigValues "IDENTREE_HISTORY_PAGE_SIZE"}}{{$lk:=index .ConfigLocked "IDENTREE_HISTORY_PAGE_SIZE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="misc" data-search="IDENTREE_HISTORY_PAGE_SIZE Number of entries shown per page in the history view."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_history_page_size"}}</div><div class="config-label-env">IDENTREE_HISTORY_PAGE_SIZE</div><div class="config-label-desc">Number of entries shown per page in the history view.</div></div><div class="config-row-control">{{if $lk}}<input type="number" value="{{$v}}" disabled class="config-input" style="max-width:120px"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{else}}<input type="number" name="IDENTREE_HISTORY_PAGE_SIZE" value="{{$v}}" class="config-input" style="max-width:120px" min="0" max="200" placeholder="10">{{end}}</div></div>
+      {{$v:=index .ConfigValues "IDENTREE_DEFAULT_PAGE_SIZE"}}{{$lk:=index .ConfigLocked "IDENTREE_DEFAULT_PAGE_SIZE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="misc" data-search="IDENTREE_DEFAULT_PAGE_SIZE Number of entries shown per page in the history view."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_history_page_size"}}</div><div class="config-label-env">IDENTREE_DEFAULT_PAGE_SIZE</div><div class="config-label-desc">Number of entries shown per page in the history view.</div></div><div class="config-row-control">{{if $lk}}<input type="number" value="{{$v}}" disabled class="config-input" style="max-width:120px"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{else}}<input type="number" name="IDENTREE_DEFAULT_PAGE_SIZE" value="{{$v}}" class="config-input" style="max-width:120px" min="0" max="200" placeholder="10">{{end}}</div></div>
       {{$v:=index .ConfigValues "IDENTREE_SESSION_STATE_FILE"}}{{$lk:=index .ConfigLocked "IDENTREE_SESSION_STATE_FILE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="misc" data-search="IDENTREE_SESSION_STATE_FILE JSON file for persisting sessions, grace periods, and the action log."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_session_state_file"}}</div><div class="config-label-env">IDENTREE_SESSION_STATE_FILE</div><div class="config-label-desc">JSON file for persisting sessions, grace periods, and the action log.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_SESSION_STATE_FILE" value="{{$v}}" class="config-input" placeholder="/config/sessions.json">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
       {{$sc:=index .ConfigSecrets "IDENTREE_WEBHOOK_SECRET"}}<div class="config-table-row config-locked" data-section="misc" data-search="IDENTREE_WEBHOOK_SECRET HMAC secret for verifying Pocket ID webhook payloads."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_webhook_secret"}}</div><div class="config-label-env">IDENTREE_WEBHOOK_SECRET</div><div class="config-label-desc">HMAC secret for verifying Pocket ID webhook payloads.</div></div><div class="config-row-control"><span class="config-secret-badge{{if $sc}} configured{{end}}">{{if $sc}}{{call .T "configured"}}{{else}}{{call .T "not_configured"}}{{end}}</span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span style="font-size:0.75rem;color:var(--text-3)">env only</span></div></div>
     </div>
@@ -3359,12 +3359,12 @@ const accessPageHTML = `<!DOCTYPE html>
     document.querySelectorAll('.user-btn').forEach(function(btn){
       btn.addEventListener('click',function(e){
         var open=btn.classList.contains('open');
-        document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');});
-        if(!open){btn.classList.add('open');}
+        document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');});
+        if(!open){btn.classList.add('open');btn.setAttribute('aria-expanded','true');}
         e.stopPropagation();
       });
     });
-    document.addEventListener('click',function(){document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');});});
+    document.addEventListener('click',function(){document.querySelectorAll('.user-btn').forEach(function(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');});});
     (function(){
       var accessJustMeActive=false,accessMyUsername='';
       var accessActiveOnlyActive=false;
@@ -3516,10 +3516,10 @@ const accessPageHTML = `<!DOCTYPE html>
     <div class="sidebar-nav">` + sidebarNavHTML + `
     </div>
     <div class="sidebar-footer">
-      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true">
+      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
         <div class="user-avatar">{{if .Avatar}}<img src="{{.Avatar}}" alt="">{{else}}{{.Initial}}{{end}}</div>
         <div class="user-name-wrap"><span class="user-display-name">{{.Username}}{{if .IsAdmin}}<span class="user-role-badge">{{call .T "admin"}}</span>{{end}}</span></div>
-        <div class="user-dropdown" role="menu">
+        <div class="user-dropdown">
           <div class="user-dropdown-label">{{call .T "language"}}</div>
           <form method="GET" action="/access"><select name="lang" class="lang-select" aria-label="{{call .T "language"}}">{{range .Languages}}<option value="{{.Code}}" {{if eq .Code $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}</select></form>
           <div class="user-dropdown-divider"></div>
@@ -3530,7 +3530,7 @@ const accessPageHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/access" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
-          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px" role="menuitem">{{call .T "sign_out"}}</button></form>
+          <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px">{{call .T "sign_out"}}</button></form>
         </div>
       </button>
     </div>

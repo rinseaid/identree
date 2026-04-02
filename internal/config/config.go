@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -132,6 +133,13 @@ type ServerConfig struct {
 	EscrowWebURL           string
 	EscrowVaultMap         map[string]string
 	EscrowEncryptionKey    string // used by EscrowBackendLocal only
+	// EscrowHKDFSalt is a hex-encoded salt (16+ bytes recommended) used in the
+	// HKDF key derivation for the local escrow backend. When set, it diversifies
+	// the derived key across deployments so two servers with the same
+	// EscrowEncryptionKey still produce distinct subkeys.
+	// NOTE: changing this value after enrollment invalidates all stored escrow
+	// ciphertexts — clients must re-enroll (re-rotate break-glass passwords).
+	EscrowHKDFSalt         string
 	BreakglassRotateBefore time.Time // clients should rotate if their hash is older than this
 
 	// ── Host registry ─────────────────────────────────────────────────────────
@@ -288,7 +296,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPBindPassword:       get("IDENTREE_LDAP_BIND_PASSWORD"),
 		LDAPRefreshInterval:    getDuration("IDENTREE_LDAP_REFRESH_INTERVAL", 300*time.Second),
 		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/config/uidmap.json"),
-		LDAPSudoNoAuthenticate: SudoNoAuthenticate(stringDefault(get("IDENTREE_SUDO_NO_AUTHENTICATE"), "false")),
+		LDAPSudoNoAuthenticate: SudoNoAuthenticate(stringDefault(get("IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"), "false")),
 		LDAPAllowAnonymous:     getBool("IDENTREE_LDAP_ALLOW_ANONYMOUS", true),
 		SudoRulesFile:          stringDefault(get("IDENTREE_SUDO_RULES_FILE"), "/config/sudorules.json"),
 		LDAPUIDBase:            getInt("IDENTREE_LDAP_UID_BASE", 200000),
@@ -316,9 +324,10 @@ func LoadServerConfig() (*ServerConfig, error) {
 		EscrowPath:           get("IDENTREE_ESCROW_PATH"),
 		EscrowWebURL:         get("IDENTREE_ESCROW_WEB_URL"),
 		EscrowEncryptionKey:  get("IDENTREE_ESCROW_ENCRYPTION_KEY"),
+		EscrowHKDFSalt:       get("IDENTREE_ESCROW_HKDF_SALT"),
 
 		HostRegistryFile:       stringDefault(get("IDENTREE_HOST_REGISTRY_FILE"), "/config/hosts.json"),
-		DefaultPageSize: getInt("IDENTREE_HISTORY_PAGE_SIZE", 15),
+		DefaultPageSize: getInt("IDENTREE_DEFAULT_PAGE_SIZE", 15),
 		SessionStateFile:       stringDefault(get("IDENTREE_SESSION_STATE_FILE"), "/config/sessions.json"),
 
 		ClientPollInterval:           getDuration("IDENTREE_CLIENT_POLL_INTERVAL", 0),
@@ -328,6 +337,20 @@ func LoadServerConfig() (*ServerConfig, error) {
 
 		WebhookSecret:   get("IDENTREE_WEBHOOK_SECRET"),
 		DevLoginEnabled: getBool("IDENTREE_DEV_LOGIN", false),
+	}
+
+	// Backward compatibility: accept old env var names with deprecation warnings.
+	if cfg.LDAPSudoNoAuthenticate == SudoNoAuthenticate("false") {
+		if v := get("IDENTREE_SUDO_NO_AUTHENTICATE"); v != "" && get("IDENTREE_LDAP_SUDO_NO_AUTHENTICATE") == "" {
+			slog.Warn("config: IDENTREE_SUDO_NO_AUTHENTICATE is deprecated, use IDENTREE_LDAP_SUDO_NO_AUTHENTICATE instead")
+			cfg.LDAPSudoNoAuthenticate = SudoNoAuthenticate(v)
+		}
+	}
+	if cfg.DefaultPageSize == 15 {
+		if v := get("IDENTREE_HISTORY_PAGE_SIZE"); v != "" && get("IDENTREE_DEFAULT_PAGE_SIZE") == "" {
+			slog.Warn("config: IDENTREE_HISTORY_PAGE_SIZE is deprecated, use IDENTREE_DEFAULT_PAGE_SIZE instead")
+			cfg.DefaultPageSize = getInt("IDENTREE_HISTORY_PAGE_SIZE", 15)
+		}
 	}
 
 	// Warn if SessionStateFile is unset — grace sessions, revocations, and audit log will not persist.
@@ -354,15 +377,19 @@ func LoadServerConfig() (*ServerConfig, error) {
 		cfg.EscrowVaultMap = m
 	}
 
-	// Client bool overrides
+	// Client bool overrides — *bool fields (nil = no override, non-nil = override).
 	if v := get("IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.ClientTokenCacheEnabled = &b
+		} else {
+			slog.Warn("config: invalid boolean value, field left unset", "key", "IDENTREE_CLIENT_TOKEN_CACHE_ENABLED", "value", v)
 		}
 	}
 	if v := get("IDENTREE_CLIENT_BREAKGLASS_ENABLED"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.ClientBreakglassEnabled = &b
+		} else {
+			slog.Warn("config: invalid boolean value, field left unset", "key", "IDENTREE_CLIENT_BREAKGLASS_ENABLED", "value", v)
 		}
 	}
 
@@ -370,6 +397,8 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if v := get("IDENTREE_BREAKGLASS_ROTATE_BEFORE"); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			cfg.BreakglassRotateBefore = t
+		} else {
+			slog.Error("config: invalid RFC3339 timestamp for IDENTREE_BREAKGLASS_ROTATE_BEFORE, field left unset", "value", v, "error", err)
 		}
 	}
 
@@ -525,6 +554,17 @@ func LoadServerConfig() (*ServerConfig, error) {
 	// EscrowEncryptionKey must be at least 32 characters when using the local backend.
 	if cfg.EscrowBackend == EscrowBackendLocal && len(cfg.EscrowEncryptionKey) < 32 {
 		return nil, fmt.Errorf("IDENTREE_ESCROW_ENCRYPTION_KEY must be at least 32 characters when using the local escrow backend")
+	}
+
+	// Validate EscrowHKDFSalt: must be valid hex and at least 32 hex chars (16 bytes) when set.
+	if cfg.EscrowHKDFSalt != "" {
+		decoded, err := hex.DecodeString(cfg.EscrowHKDFSalt)
+		if err != nil {
+			return nil, fmt.Errorf("IDENTREE_ESCROW_HKDF_SALT must be a valid hex-encoded string: %w", err)
+		}
+		if len(decoded) < 16 {
+			return nil, fmt.Errorf("IDENTREE_ESCROW_HKDF_SALT must decode to at least 16 bytes (got %d)", len(decoded))
+		}
 	}
 
 	if cfg.EscrowBackend == EscrowBackendVault && cfg.EscrowPath != "" {

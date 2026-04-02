@@ -73,7 +73,7 @@ Sudo rules are defined as **custom claims on PocketID groups**. A group with no 
 | `sudoRunAsGroup` | No | Run-as group | `docker` |
 | `sudoOptions` | No | Extra sudo options | `NOPASSWD` |
 
-Set `IDENTREE_SUDO_NO_AUTHENTICATE=false` (the default) so every `sudo` invocation requires passkey approval. Set to `true` to disable, or `claims` to control per-group via `sudoOptions=!authenticate`.
+Set `IDENTREE_LDAP_SUDO_NO_AUTHENTICATE=false` (the default) so every `sudo` invocation requires passkey approval. Set to `true` to disable, or `claims` to control per-group via `sudoOptions=!authenticate`.
 
 ### LDAP schema
 

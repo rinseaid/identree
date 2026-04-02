@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -52,8 +53,11 @@ var liveUpdateKeys = map[string]bool{
 	"IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE": true,
 	"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS": true,
 	"IDENTREE_CLIENT_TOKEN_CACHE_ENABLED":      true,
-	"IDENTREE_HISTORY_PAGE_SIZE":               true,
-	"IDENTREE_SUDO_NO_AUTHENTICATE":            true,
+	"IDENTREE_DEFAULT_PAGE_SIZE":               true,
+	"IDENTREE_LDAP_SUDO_NO_AUTHENTICATE":       true,
+	"IDENTREE_LDAP_DEFAULT_SHELL":              true,
+	"IDENTREE_LDAP_DEFAULT_HOME":               true,
+	"IDENTREE_LDAP_ALLOW_ANONYMOUS":            true,
 }
 
 var configSectionLabels = map[string]string{
@@ -430,7 +434,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		restartSections := findRestartSections(values, currentValues)
 
 		// Apply live-safe changes.
-		s.applyLiveConfigUpdates(values)
+		s.applyLiveConfigUpdates(values, username)
 
 		s.store.LogAction(username, challpkg.ActionConfigChanged, "", "", username)
 
@@ -543,7 +547,7 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_LDAP_BIND_DN":                    cfg.LDAPBindDN,
 		"IDENTREE_LDAP_REFRESH_INTERVAL":           formatDuration(nil, cfg.LDAPRefreshInterval),
 		"IDENTREE_LDAP_UID_MAP_FILE":               cfg.LDAPUIDMapFile,
-		"IDENTREE_SUDO_NO_AUTHENTICATE":            string(cfg.LDAPSudoNoAuthenticate),
+		"IDENTREE_LDAP_SUDO_NO_AUTHENTICATE":       string(cfg.LDAPSudoNoAuthenticate),
 		"IDENTREE_SUDO_RULES_FILE":                 cfg.SudoRulesFile,
 		"IDENTREE_LDAP_UID_BASE":                   strconv.Itoa(cfg.LDAPUIDBase),
 		"IDENTREE_LDAP_GID_BASE":                   strconv.Itoa(cfg.LDAPGIDBase),
@@ -579,7 +583,7 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS": strconv.Itoa(cfg.ClientBreakglassRotationDays),
 		"IDENTREE_CLIENT_TOKEN_CACHE_ENABLED":      tokenCache,
 		"IDENTREE_HOST_REGISTRY_FILE":              cfg.HostRegistryFile,
-		"IDENTREE_HISTORY_PAGE_SIZE":               strconv.Itoa(cfg.DefaultPageSize),
+		"IDENTREE_DEFAULT_PAGE_SIZE":               strconv.Itoa(cfg.DefaultPageSize),
 		"IDENTREE_SESSION_STATE_FILE":              cfg.SessionStateFile,
 	}
 }
@@ -635,6 +639,64 @@ func configSecretStatus(cfg *config.ServerConfig) map[string]bool {
 	}
 }
 
+// isPrivateIP returns true if the given IP is loopback, link-local, or private
+// (RFC 1918 / RFC 4193 / RFC 3927 / IPv6 loopback).
+func isPrivateIP(ip net.IP) bool {
+	private := []net.IPNet{
+		{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(8, 32)},
+		{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)},
+		{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)},
+		{IP: net.ParseIP("169.254.0.0"), Mask: net.CIDRMask(16, 32)}, // link-local
+		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},      // ULA
+		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},     // link-local IPv6
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, block := range private {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateWebhookURL checks that a URL is safe to use as an outbound webhook target.
+// It rejects non-http(s) schemes, URLs with embedded userinfo, and hostnames that
+// resolve to loopback, link-local, or private IP ranges to prevent SSRF.
+func validateWebhookURL(rawURL string) error {
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		return fmt.Errorf("must start with http:// or https://")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("URL must not contain userinfo credentials")
+	}
+	hostname := parsed.Hostname()
+	if hostname == "" {
+		return fmt.Errorf("URL must contain a hostname")
+	}
+	// Resolve the hostname and reject any address in a private/loopback range.
+	addrs, err := net.LookupHost(hostname)
+	if err != nil {
+		// If DNS resolution fails entirely, reject to be safe.
+		return fmt.Errorf("hostname %q could not be resolved: %w", hostname, err)
+	}
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			continue
+		}
+		if isPrivateIP(ip) {
+			return fmt.Errorf("hostname %q resolves to a private/loopback address (%s), which is not allowed", hostname, addr)
+		}
+	}
+	return nil
+}
+
 // validateConfigValues validates form-submitted config values.
 func validateConfigValues(values map[string]string, cfg *config.ServerConfig) error {
 	for _, key := range []string{
@@ -651,7 +713,7 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 	}
 	for _, key := range []string{
 		"IDENTREE_LDAP_UID_BASE", "IDENTREE_LDAP_GID_BASE",
-		"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", "IDENTREE_HISTORY_PAGE_SIZE",
+		"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", "IDENTREE_DEFAULT_PAGE_SIZE",
 	} {
 		if v := values[key]; v != "" {
 			if _, err := strconv.Atoi(v); err != nil {
@@ -666,11 +728,11 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 			return fmt.Errorf("invalid notify backend: %q", v)
 		}
 	}
-	if v := values["IDENTREE_SUDO_NO_AUTHENTICATE"]; v != "" {
+	if v := values["IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"]; v != "" {
 		switch v {
 		case "true", "false", "claims":
 		default:
-			return fmt.Errorf("invalid value for IDENTREE_SUDO_NO_AUTHENTICATE: %q (must be true, false, or claims)", v)
+			return fmt.Errorf("invalid value for IDENTREE_LDAP_SUDO_NO_AUTHENTICATE: %q (must be true, false, or claims)", v)
 		}
 	}
 	if v := values["IDENTREE_ESCROW_BACKEND"]; v != "" {
@@ -686,13 +748,13 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 			return fmt.Errorf("IDENTREE_ESCROW_BACKEND = \"local\" requires IDENTREE_ESCROW_ENCRYPTION_KEY to be set as an environment variable")
 		}
 	}
-	// URL scheme validation: reject non-http(s) values to prevent SSRF.
+	// URL validation: reject non-http(s) values and SSRF-risky targets.
 	for _, key := range []string{
 		"IDENTREE_NOTIFY_URL", "IDENTREE_ESCROW_URL", "IDENTREE_ESCROW_WEB_URL",
 	} {
 		if v := values[key]; v != "" {
-			if !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
-				return fmt.Errorf("%s must start with http:// or https://", key)
+			if err := validateWebhookURL(v); err != nil {
+				return fmt.Errorf("%s: %w", key, err)
 			}
 		}
 	}
@@ -729,7 +791,8 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 // applyLiveConfigUpdates applies the subset of config changes that are safe without a restart.
 // Holds s.cfgMu write lock for the entire mutation so concurrent handlers that snapshot
 // slice fields (AdminGroups, AdminApprovalHosts) under the read lock see consistent values.
-func (s *Server) applyLiveConfigUpdates(values map[string]string) {
+// actor is the authenticated admin username making the change, used for audit logging.
+func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	parseDur := func(key string, def time.Duration) time.Duration {
@@ -776,7 +839,18 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 		s.cfg.OneTapMaxAge = parseDur("IDENTREE_ONE_TAP_MAX_AGE", s.cfg.OneTapMaxAge)
 	}
 	if !config.IsEnvSourced("IDENTREE_ADMIN_GROUPS") {
-		s.cfg.AdminGroups = parseSlice("IDENTREE_ADMIN_GROUPS")
+		newGroups := parseSlice("IDENTREE_ADMIN_GROUPS")
+		// Reject changes that would remove all admin groups (lockout prevention).
+		if len(newGroups) == 0 && len(s.cfg.AdminGroups) > 0 {
+			slog.Warn("ADMIN_GROUPS_CHANGE_REJECTED: new value is empty, keeping existing groups to prevent lockout",
+				"actor", actor, "current_groups", s.cfg.AdminGroups)
+		} else {
+			if fmt.Sprintf("%v", newGroups) != fmt.Sprintf("%v", s.cfg.AdminGroups) {
+				slog.Info("ADMIN_GROUPS_CHANGED", "actor", actor,
+					"old_groups", s.cfg.AdminGroups, "new_groups", newGroups)
+			}
+			s.cfg.AdminGroups = newGroups
+		}
 	}
 	if !config.IsEnvSourced("IDENTREE_ADMIN_APPROVAL_HOSTS") {
 		s.cfg.AdminApprovalHosts = parseSlice("IDENTREE_ADMIN_APPROVAL_HOSTS")
@@ -849,13 +923,26 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string) {
 			s.cfg.ClientTokenCacheEnabled = nil
 		}
 	}
-	if !config.IsEnvSourced("IDENTREE_HISTORY_PAGE_SIZE") {
-		s.cfg.DefaultPageSize = parseInt("IDENTREE_HISTORY_PAGE_SIZE", s.cfg.DefaultPageSize)
+	if !config.IsEnvSourced("IDENTREE_DEFAULT_PAGE_SIZE") {
+		s.cfg.DefaultPageSize = parseInt("IDENTREE_DEFAULT_PAGE_SIZE", s.cfg.DefaultPageSize)
 	}
-	if !config.IsEnvSourced("IDENTREE_SUDO_NO_AUTHENTICATE") {
-		switch v := config.SudoNoAuthenticate(values["IDENTREE_SUDO_NO_AUTHENTICATE"]); v {
+	if !config.IsEnvSourced("IDENTREE_LDAP_SUDO_NO_AUTHENTICATE") {
+		switch v := config.SudoNoAuthenticate(values["IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"]); v {
 		case config.SudoNoAuthTrue, config.SudoNoAuthFalse, config.SudoNoAuthClaims:
 			s.cfg.LDAPSudoNoAuthenticate = v
+		}
+	}
+	if !config.IsEnvSourced("IDENTREE_LDAP_DEFAULT_SHELL") {
+		s.cfg.LDAPDefaultShell = values["IDENTREE_LDAP_DEFAULT_SHELL"]
+	}
+	if !config.IsEnvSourced("IDENTREE_LDAP_DEFAULT_HOME") {
+		s.cfg.LDAPDefaultHome = values["IDENTREE_LDAP_DEFAULT_HOME"]
+	}
+	if !config.IsEnvSourced("IDENTREE_LDAP_ALLOW_ANONYMOUS") {
+		if v := values["IDENTREE_LDAP_ALLOW_ANONYMOUS"]; v != "" {
+			if b, err := strconv.ParseBool(v); err == nil {
+				s.cfg.LDAPAllowAnonymous = b
+			}
 		}
 	}
 }
@@ -995,21 +1082,25 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
 
+	// Bulk-fetch all active sessions and action history to avoid N+1 store queries.
+	allSessionsByUser := make(map[string][]challpkg.GraceSession)
+	for _, sess := range s.store.AllActiveSessions() {
+		allSessionsByUser[sess.Username] = append(allSessionsByUser[sess.Username], sess)
+	}
+	latestActionByUser := make(map[string]time.Time)
+	for _, entry := range s.store.AllActionHistoryWithUsers() {
+		if entry.Timestamp.After(latestActionByUser[entry.Username]) {
+			latestActionByUser[entry.Username] = entry.Timestamp
+		}
+	}
+
 	var userViews []userView
 	for _, u := range users {
-		sessions := s.store.ActiveSessions(u)
-		history := s.store.ActionHistory(u, 0)
+		sessions := allSessionsByUser[u]
 		lastActive := ""
 		lastActiveAgo := ""
 		var lastActiveTime time.Time
-		if len(history) > 0 {
-			// Find most recent entry
-			var latest time.Time
-			for _, e := range history {
-				if e.Timestamp.After(latest) {
-					latest = e.Timestamp
-				}
-			}
+		if latest, ok := latestActionByUser[u]; ok {
 			lastActive = latest.In(adminLoc).Format("2006-01-02 15:04")
 			lastActiveAgo = timeAgoI18n(latest, t)
 			lastActiveTime = latest
@@ -1506,6 +1597,12 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	allKnownUsers := s.store.AllUsers()
 
+	// Bulk-fetch all active sessions once and index by hostname to avoid N+1 store queries.
+	allSessionsByHost := make(map[string][]challpkg.GraceSession)
+	for _, sess := range s.store.AllActiveSessions() {
+		allSessionsByHost[sess.Hostname] = append(allSessionsByHost[sess.Hostname], sess)
+	}
+
 	// Collect all group names for the filter dropdown
 	groupFilter := r.URL.Query().Get("group")
 	groupSet := make(map[string]struct{})
@@ -1514,9 +1611,9 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hosts {
 		hv := hostView{Hostname: h}
 
-		// Build active session map for this host
+		// Build active session map for this host from the pre-fetched bulk result.
 		activeMap := make(map[string]string) // username -> remaining
-		for _, sess := range s.store.ActiveSessionsForHost(h) {
+		for _, sess := range allSessionsByHost[h] {
 			activeMap[sess.Username] = formatDuration(t, time.Until(sess.ExpiresAt))
 		}
 		hv.ActiveSessionCount = len(activeMap)
