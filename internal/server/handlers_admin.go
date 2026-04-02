@@ -200,13 +200,26 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if path := s.cfg.SessionStateFile; path != "" {
-		dir := filepath.Dir(path)
-		tmp, err := os.CreateTemp(dir, ".healthz-*")
-		if err != nil {
+		// Cache the filesystem writability check for 10 seconds to avoid
+		// continuous disk I/O when the endpoint is polled by a load balancer.
+		s.healthzMu.Lock()
+		stateOK := s.healthzStateOK
+		if time.Since(s.healthzLast) > 10*time.Second {
+			dir := filepath.Dir(path)
+			tmp, err := os.CreateTemp(dir, ".healthz-*")
+			if err != nil {
+				stateOK = false
+			} else {
+				tmp.Close()
+				os.Remove(tmp.Name())
+				stateOK = true
+			}
+			s.healthzStateOK = stateOK
+			s.healthzLast = time.Now()
+		}
+		s.healthzMu.Unlock()
+		if !stateOK {
 			failing = append(failing, `"state_file":"not_writable"`)
-		} else {
-			tmp.Close()
-			os.Remove(tmp.Name())
 		}
 	}
 

@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,24 @@ import (
 	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/notify"
 )
+
+// safeRedirectDest validates and returns a safe same-origin redirect destination
+// from the "from" form field. It decodes percent-encoding before validation to
+// prevent %2f%2f bypass of the "//" open-redirect guard.
+func safeRedirectDest(raw string) string {
+	if raw == "" {
+		return "/"
+	}
+	// Decode percent-encoding before validation so %2f%2fevil.com is caught.
+	decoded, err := url.PathUnescape(raw)
+	if err != nil {
+		return "/"
+	}
+	if !strings.HasPrefix(decoded, "/") || strings.HasPrefix(decoded, "//") || strings.ContainsAny(decoded, "?#\\") {
+		return "/"
+	}
+	return decoded
+}
 
 // handleBulkApprove approves a pending challenge from the dashboard.
 // POST /api/challenges/approve
@@ -357,10 +376,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	s.broadcastSSE(sessionOwner, "session_changed")
 
 	// Redirect back to the referring page with flash cookie
-	dest := r.FormValue("from")
-	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
-		dest = "/"
-	}
+	dest := safeRedirectDest(r.FormValue("from"))
 	s.setFlashCookie(w, fmt.Sprintf("revoked:%s:%s", displayHostname, sessionOwner))
 	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
@@ -459,10 +475,7 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 			notified[sessUser] = true
 		}
 	}
-	dest := r.FormValue("from")
-	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
-		dest = "/"
-	}
+	dest := safeRedirectDest(r.FormValue("from"))
 	if count == 0 {
 		http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 		return
@@ -527,10 +540,7 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 	slog.Info("EXTENDED", "user", username, "host", displayHostname, "remaining", remaining, "remote_addr", remoteAddr(r))
 	s.broadcastSSE(username, "session_changed")
 
-	dest := r.FormValue("from")
-	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
-		dest = "/"
-	}
+	dest := safeRedirectDest(r.FormValue("from"))
 	expiry := time.Now().Add(remaining)
 	s.setFlashCookie(w, fmt.Sprintf("extended:%s:%s:%d", displayHostname, username, expiry.Unix()))
 	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
@@ -570,10 +580,7 @@ func (s *Server) handleExtendAll(w http.ResponseWriter, r *http.Request) {
 
 	expiry := time.Now().Add(s.cfg.GracePeriod)
 	s.setFlashCookie(w, fmt.Sprintf("extended_all:%d:%d", count, expiry.Unix()))
-	dest := r.FormValue("from")
-	if dest == "" || !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.ContainsAny(dest, "?#\\") {
-		dest = "/"
-	}
+	dest := safeRedirectDest(r.FormValue("from"))
 	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
 
@@ -751,8 +758,8 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 
 	expiry := time.Now().Add(duration)
 	s.setFlashCookie(w, fmt.Sprintf("elevated:%s:%s:%d", hostname, targetUser, expiry.Unix()))
-	from := r.FormValue("from")
-	if from == "" || !strings.HasPrefix(from, "/") || strings.HasPrefix(from, "//") || strings.ContainsAny(from, "?#\\") {
+	from := safeRedirectDest(r.FormValue("from"))
+	if from == "/" {
 		from = "/admin/hosts"
 	}
 	http.Redirect(w, r, s.baseURL+from, http.StatusSeeOther)

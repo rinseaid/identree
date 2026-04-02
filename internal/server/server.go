@@ -76,6 +76,13 @@ type Server struct {
 	deployMu   sync.Mutex
 	deployRL   *deployRateLimiter
 	loginRL    *loginRateLimiter
+	approveRL  *loginRateLimiter  // per-IP limit on /approve/{code}
+	authFailRL *authFailTracker   // per-IP auth-failure backoff on /api/challenge
+
+	// healthz filesystem check cache: avoids disk I/O on every probe.
+	healthzMu       sync.Mutex
+	healthzLast     time.Time
+	healthzStateOK  bool
 
 	// Recently-removed users: excluded from PocketID merge until cleared.
 	removedUsers   map[string]time.Time
@@ -163,6 +170,8 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		deployJobs:    make(map[string]*deployJob),
 		deployRL:      newDeployRateLimiter(),
 		loginRL:       newLoginRateLimiter(),
+		approveRL:     newLoginRateLimiter(),
+		authFailRL:    newAuthFailTracker(),
 		removedUsers:  make(map[string]time.Time),
 		ldapRefreshCh:  make(chan struct{}, 1),
 		oidcHTTPClient: oidcHTTPClient,

@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rinseaid/identree/internal/breakglass"
@@ -25,6 +26,66 @@ import (
 	"github.com/rinseaid/identree/internal/escrow"
 	"github.com/rinseaid/identree/internal/notify"
 )
+
+// authFailTracker counts per-IP authentication failures in a sliding window.
+// After authFailMax failures in authFailWindow, the IP is throttled.
+const (
+	authFailWindow = 60 * time.Second
+	authFailMax    = 10
+)
+
+type authFailTracker struct {
+	mu   sync.Mutex
+	seen map[string][]time.Time
+}
+
+func newAuthFailTracker() *authFailTracker {
+	return &authFailTracker{seen: make(map[string][]time.Time)}
+}
+
+// throttled returns true if ip has exceeded authFailMax failures in authFailWindow.
+func (a *authFailTracker) throttled(ip string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.recentCount(ip) >= authFailMax
+}
+
+// record records a new auth failure from ip.
+func (a *authFailTracker) record(ip string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-authFailWindow)
+	times := a.seen[ip]
+	j := 0
+	for _, t := range times {
+		if t.After(cutoff) {
+			times[j] = t
+			j++
+		}
+	}
+	a.seen[ip] = append(times[:j], now)
+	// Prune stale IPs.
+	for k, ts := range a.seen {
+		if k != ip && (len(ts) == 0 || ts[len(ts)-1].Before(cutoff)) {
+			delete(a.seen, k)
+		}
+	}
+}
+
+// recentCount returns the number of failures from ip in the current window.
+// Caller must hold a.mu.
+func (a *authFailTracker) recentCount(ip string) int {
+	cutoff := time.Now().Add(-authFailWindow)
+	times := a.seen[ip]
+	count := 0
+	for _, t := range times {
+		if t.After(cutoff) {
+			count++
+		}
+	}
+	return count
+}
 
 // verifySharedSecret checks the X-Shared-Secret header using constant-time comparison
 // to prevent timing attacks that could leak the secret byte-by-byte.
@@ -138,6 +199,13 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-IP auth-failure backoff: an IP that has failed too many times recently
+	// is throttled before we even attempt shared-secret verification.
+	if s.authFailRL.throttled(remoteAddr(r)) {
+		http.Error(w, "too many failed attempts — try again later", http.StatusTooManyRequests)
+		return
+	}
+
 	// Verify Content-Type to prevent cross-origin form submission
 	ct := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "application/json") {
@@ -178,6 +246,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	authorized, errMsg := s.authenticateChallenge(r, req.Hostname, req.Username)
 	if !authorized {
 		authFailures.Inc()
+		s.authFailRL.record(remoteAddr(r))
 		slog.Warn("AUTH_FAILURE", "reason", errMsg, "remote_addr", remoteAddr(r), "host", req.Hostname, "user", req.Username)
 		if errMsg == "user not authorized on this host" {
 			http.Error(w, errMsg, http.StatusForbidden)

@@ -84,7 +84,7 @@ func NewPocketIDClient(baseURL, apiKey string) *PocketIDClient {
 		return nil
 	}
 	return &PocketIDClient{
-		baseURL: baseURL,
+		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		client: &http.Client{
 			Timeout:   10 * time.Second,

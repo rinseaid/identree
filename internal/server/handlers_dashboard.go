@@ -907,6 +907,12 @@ func (s *Server) handleApprovalPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-IP rate limit to prevent user-code enumeration.
+	if !s.approveRL.allow(remoteAddr(r)) {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
 	code := strings.TrimPrefix(r.URL.Path, "/approve/")
 	if code == "" {
 		http.Error(w, "code required", http.StatusBadRequest)
