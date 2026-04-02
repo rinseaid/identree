@@ -720,3 +720,107 @@ func TestActionLogConstants(t *testing.T) {
 		}
 	})
 }
+
+// TestSetNonce verifies that a nonce can be set exactly once on a pending challenge
+// and is rejected when the challenge is expired or already resolved.
+func TestSetNonce(t *testing.T) {
+	t.Run("nonce is stored on a fresh challenge", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.SetNonce(c.ID, "nonce-abc"); err != nil {
+			t.Fatalf("SetNonce: unexpected error: %v", err)
+		}
+		// Verify that the nonce was stored.
+		s.mu.RLock()
+		stored := s.challenges[c.ID].Nonce
+		s.mu.RUnlock()
+		if stored != "nonce-abc" {
+			t.Errorf("stored nonce: got %q, want %q", stored, "nonce-abc")
+		}
+	})
+
+	t.Run("second SetNonce on same challenge fails", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.SetNonce(c.ID, "nonce-first"); err != nil {
+			t.Fatalf("SetNonce first call: %v", err)
+		}
+		if err := s.SetNonce(c.ID, "nonce-second"); err == nil {
+			t.Fatal("SetNonce second call: expected error, got nil")
+		}
+	})
+
+	t.Run("SetNonce on expired challenge fails", func(t *testing.T) {
+		// Create a store with a very short TTL so the challenge expires immediately.
+		s := newTestStore(time.Millisecond, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+		if err := s.SetNonce(c.ID, "nonce-late"); err == nil {
+			t.Fatal("SetNonce on expired challenge: expected error, got nil")
+		}
+	})
+
+	t.Run("SetNonce on unknown ID fails", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		if err := s.SetNonce("does-not-exist", "nonce-x"); err == nil {
+			t.Fatal("SetNonce on unknown ID: expected error, got nil")
+		}
+	})
+}
+
+// TestConsumeOneTap verifies one-tap token semantics: consume once succeeds,
+// a second consume of the same challenge fails, and an expired challenge fails.
+func TestConsumeOneTap(t *testing.T) {
+	t.Run("first consume succeeds", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.ConsumeOneTap(c.ID); err != nil {
+			t.Fatalf("ConsumeOneTap first call: unexpected error: %v", err)
+		}
+	})
+
+	t.Run("second consume of same nonce fails", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.ConsumeOneTap(c.ID); err != nil {
+			t.Fatalf("ConsumeOneTap first call: %v", err)
+		}
+		if err := s.ConsumeOneTap(c.ID); err == nil {
+			t.Fatal("ConsumeOneTap second call: expected error, got nil")
+		}
+	})
+
+	t.Run("consume on expired challenge fails", func(t *testing.T) {
+		s := newTestStore(time.Millisecond, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+		if err := s.ConsumeOneTap(c.ID); err == nil {
+			t.Fatal("ConsumeOneTap on expired challenge: expected error, got nil")
+		}
+	})
+
+	t.Run("consume on unknown ID fails", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		if err := s.ConsumeOneTap("does-not-exist"); err == nil {
+			t.Fatal("ConsumeOneTap on unknown ID: expected error, got nil")
+		}
+	})
+}

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -100,6 +101,11 @@ type Server struct {
 	ldapLastError   error
 	ldapLastErrorAt time.Time
 	ldapLastErrorMu sync.Mutex
+
+	// usedEscrowTokens tracks HMAC escrow tokens that have already been redeemed,
+	// keyed by "hostname:timestamp" to prevent replay within the 5-minute window.
+	usedEscrowTokens   map[string]time.Time
+	usedEscrowTokensMu sync.Mutex
 }
 
 var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
@@ -197,7 +203,8 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		loginRL:       newLoginRateLimiter(),
 		approveRL:     newLoginRateLimiter(),
 		authFailRL:    newAuthFailTracker(),
-		removedUsers:  make(map[string]time.Time),
+		removedUsers:       make(map[string]time.Time),
+		usedEscrowTokens:   make(map[string]time.Time),
 		ldapRefreshCh:  make(chan struct{}, 1),
 		oidcHTTPClient: oidcHTTPClient,
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
@@ -215,7 +222,21 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		if cfg.EscrowEncryptionKey == "" {
 			return nil, fmt.Errorf("IDENTREE_ESCROW_ENCRYPTION_KEY must be set when using the local escrow backend")
 		}
-		key, err := escrow.DeriveEscrowKey(cfg.EscrowEncryptionKey)
+		// Decode the configured HKDF salt, or fall back to the legacy static salt.
+		// Warn operators who have not configured a deployment-specific salt, since
+		// all deployments sharing the same EscrowEncryptionKey would otherwise derive
+		// identical subkeys.
+		var hkdfSalt []byte
+		if cfg.EscrowHKDFSalt != "" {
+			var err error
+			hkdfSalt, err = hex.DecodeString(cfg.EscrowHKDFSalt)
+			if err != nil {
+				return nil, fmt.Errorf("decoding IDENTREE_ESCROW_HKDF_SALT: %w", err)
+			}
+		} else {
+			slog.Warn("IDENTREE_ESCROW_HKDF_SALT is not set — using static legacy salt; set a random hex salt for cross-deployment key diversification")
+		}
+		key, err := escrow.DeriveEscrowKey(cfg.EscrowEncryptionKey, hkdfSalt)
 		if err != nil {
 			return nil, fmt.Errorf("deriving escrow encryption key: %w", err)
 		}
@@ -391,26 +412,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	nonce, err := randutil.Hex(16)
-	if err != nil {
-		slog.Error("CSP nonce generation failed", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", fmt.Sprintf(
-		"default-src 'self'; script-src 'nonce-%s'; style-src 'unsafe-inline'; img-src 'self' https:; frame-ancestors 'none'",
-		nonce,
-	))
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
 	if s.cfg.ExternalURL != "" && strings.HasPrefix(s.cfg.ExternalURL, "https://") {
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 	}
 
-	ctx := context.WithValue(r.Context(), ctxKeyCSPNonce, nonce)
+	// Only HTML-rendering handlers need a CSP nonce. API endpoints never serve
+	// HTML, so skip the crypto/rand call and use a restrictive no-nonce CSP.
+	var ctx context.Context
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		ctx = r.Context()
+	} else {
+		nonce, err := randutil.Hex(16)
+		if err != nil {
+			slog.Error("CSP nonce generation failed", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Security-Policy", fmt.Sprintf(
+			"default-src 'self'; script-src 'nonce-%s'; style-src 'unsafe-inline'; img-src 'self' https:; frame-ancestors 'none'",
+			nonce,
+		))
+		ctx = context.WithValue(r.Context(), ctxKeyCSPNonce, nonce)
+	}
+
 	s.mux.ServeHTTP(w, r.WithContext(ctx))
 }
 

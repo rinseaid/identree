@@ -41,6 +41,7 @@ type PAMClient struct {
 	cfg        *config.ClientConfig
 	client     *http.Client
 	tokenCache *TokenCache
+	hostname   string // resolved once at construction; avoids repeated syscalls
 }
 
 // maxResponseSize limits how much of a server response we will read (64KB).
@@ -51,10 +52,23 @@ const maxResponseSize = 64 * 1024
 type serverHTTPError = breakglass.ServerHTTPError
 
 // NewPAMClient creates a new PAM helper client.
-func NewPAMClient(cfg *config.ClientConfig, tokenCache *TokenCache) *PAMClient {
+// Returns an error if cfg.ServerURL uses plain HTTP, which would transmit the
+// shared secret in cleartext.
+func NewPAMClient(cfg *config.ClientConfig, tokenCache *TokenCache) (*PAMClient, error) {
+	if strings.HasPrefix(cfg.ServerURL, "http://") {
+		return nil, fmt.Errorf("identree: ServerURL must use https://, not http:// (shared secret would be sent in cleartext)")
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		// Non-fatal: hostname is best-effort context in challenge requests.
+		fmt.Fprintf(os.Stderr, "identree: os.Hostname() failed: %v\n", err)
+	}
+
 	return &PAMClient{
 		cfg:        cfg,
 		tokenCache: tokenCache,
+		hostname:   hostname,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
@@ -74,7 +88,7 @@ func NewPAMClient(cfg *config.ClientConfig, tokenCache *TokenCache) *PAMClient {
 				return http.ErrUseLastResponse
 			},
 		},
-	}
+	}, nil
 }
 
 // clientConfigResponse is the server-side client config override.
@@ -408,12 +422,8 @@ func (p *PAMClient) queryGraceStatus(username string) graceStatusResult {
 	if p.cfg.ServerURL == "" {
 		return graceStatusResult{}
 	}
-	hostname, hnErr := os.Hostname()
-	if hnErr != nil {
-		fmt.Fprintf(os.Stderr, "identree: os.Hostname() failed: %v\n", hnErr)
-	}
 	u := fmt.Sprintf("%s/api/grace-status", p.cfg.ServerURL)
-	params := "?username=" + neturl.QueryEscape(username) + "&hostname=" + neturl.QueryEscape(hostname)
+	params := "?username=" + neturl.QueryEscape(username) + "&hostname=" + neturl.QueryEscape(p.hostname)
 	url := u + params
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -425,8 +435,11 @@ func (p *PAMClient) queryGraceStatus(username string) graceStatusResult {
 	// Short timeout — revocation check is critical but must not block sudo indefinitely.
 	// Hardened like the main client: no proxy, no redirect following.
 	client := &http.Client{
-		Timeout:   2 * time.Second,
-		Transport: &http.Transport{Proxy: nil},
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			Proxy:       nil,
+			DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		},
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -533,13 +546,9 @@ func (p *PAMClient) verifyStatusToken(challengeID, username, status, token, rota
 }
 
 func (p *PAMClient) createChallenge(username string) (*challengeResponse, error) {
-	hostname, hnErr := os.Hostname()
-	if hnErr != nil {
-		fmt.Fprintf(os.Stderr, "identree: os.Hostname() failed: %v\n", hnErr)
-	}
 	payload := map[string]string{"username": username}
-	if hostname != "" {
-		payload["hostname"] = hostname
+	if p.hostname != "" {
+		payload["hostname"] = p.hostname
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, p.cfg.ServerURL+"/api/challenge", bytes.NewReader(body))

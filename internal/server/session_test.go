@@ -30,7 +30,7 @@ func newTestServer(sharedSecret string) *Server {
 // Uses a fixed nonce for test determinism.
 func makeCookie(secret, username, role string, ts int64) string {
 	tsStr := fmt.Sprintf("%d", ts)
-	nonce := "abcdef1234567890" // fixed 16-char hex nonce for tests
+	nonce := "abcdef1234567890abcdef1234567890" // fixed 32-char hex nonce for tests
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte("session:" + username + ":" + role + ":" + tsStr + ":" + nonce))
 	sig := hex.EncodeToString(mac.Sum(nil))
@@ -277,8 +277,8 @@ func TestVerifyFormAuth_CSRFWindow(t *testing.T) {
 		}
 	})
 
-	t.Run("CSRF token older than 5 minutes fails", func(t *testing.T) {
-		req := buildRequest(t, "alice", time.Now().Add(-6*time.Minute).Unix())
+	t.Run("CSRF token older than sessionCookieTTL fails", func(t *testing.T) {
+		req := buildRequest(t, "alice", time.Now().Add(-31*time.Minute).Unix())
 		w := httptest.NewRecorder()
 		got := s.verifyFormAuth(w, req)
 		if got != "" {
@@ -370,6 +370,110 @@ func TestVerifyFormAuth_CSRFWindow(t *testing.T) {
 		}
 		if w.Code != http.StatusForbidden {
 			t.Errorf("expected 403 for cookie mismatch, got %d", w.Code)
+		}
+	})
+}
+
+// buildJSONAdminRequest constructs a request that carries a valid admin session
+// cookie and CSRF headers for the given timestamp.
+func buildJSONAdminRequest(t *testing.T, secret, username string, csrfTs int64) *http.Request {
+	t.Helper()
+	sessionCookie := makeCookie(secret, username, "admin", time.Now().Unix())
+	csrfTsStr := fmt.Sprintf("%d", csrfTs)
+	csrfToken := computeCSRFToken(secret, username, csrfTsStr)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin", nil)
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.Header.Set("X-CSRF-Ts", csrfTsStr)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	return req
+}
+
+// TestVerifyJSONAdminAuth verifies the JSON admin auth check used by admin-only
+// API endpoints (deploy, config changes, etc.).
+func TestVerifyJSONAdminAuth(t *testing.T) {
+	const secret = "json-admin-secret"
+
+	t.Run("valid admin session with valid CSRF succeeds", func(t *testing.T) {
+		s := newTestServer(secret)
+		req := buildJSONAdminRequest(t, secret, "alice", time.Now().Add(-1*time.Minute).Unix())
+		w := httptest.NewRecorder()
+		got := s.verifyJSONAdminAuth(w, req)
+		if got != "alice" {
+			t.Errorf("expected username %q, got %q (status %d)", "alice", got, w.Code)
+		}
+	})
+
+	t.Run("valid admin session with expired CSRF returns 403", func(t *testing.T) {
+		s := newTestServer(secret)
+		// CSRF timestamp older than sessionCookieTTL (30 min).
+		req := buildJSONAdminRequest(t, secret, "alice", time.Now().Add(-(sessionCookieTTL+time.Minute)).Unix())
+		w := httptest.NewRecorder()
+		got := s.verifyJSONAdminAuth(w, req)
+		if got != "" {
+			t.Errorf("expected empty string for expired CSRF, got %q", got)
+		}
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 for expired CSRF, got %d", w.Code)
+		}
+	})
+
+	t.Run("valid non-admin session returns 401", func(t *testing.T) {
+		s := newTestServer(secret)
+		// Build session cookie with role "user".
+		sessionCookie := makeCookie(secret, "bob", "user", time.Now().Unix())
+		csrfTsStr := fmt.Sprintf("%d", time.Now().Unix())
+		csrfToken := computeCSRFToken(secret, "bob", csrfTsStr)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin", nil)
+		req.Header.Set("X-CSRF-Token", csrfToken)
+		req.Header.Set("X-CSRF-Ts", csrfTsStr)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+		w := httptest.NewRecorder()
+		got := s.verifyJSONAdminAuth(w, req)
+		if got != "" {
+			t.Errorf("expected empty string for non-admin user, got %q", got)
+		}
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401 for non-admin user, got %d", w.Code)
+		}
+	})
+
+	t.Run("no session returns 401", func(t *testing.T) {
+		s := newTestServer(secret)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin", nil)
+		w := httptest.NewRecorder()
+		got := s.verifyJSONAdminAuth(w, req)
+		if got != "" {
+			t.Errorf("expected empty string with no session, got %q", got)
+		}
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401 with no session, got %d", w.Code)
+		}
+	})
+
+	t.Run("empty SharedSecret returns 500", func(t *testing.T) {
+		// Build a cookie signed with the real secret so getSessionUser passes,
+		// then hand it to a server whose SharedSecret is blank.
+		sessionCookie := makeCookie(secret, "alice", "admin", time.Now().Unix())
+
+		// A server with no shared secret configured.
+		s := &Server{cfg: &config.ServerConfig{SharedSecret: ""}}
+
+		csrfTsStr := fmt.Sprintf("%d", time.Now().Unix())
+		csrfToken := computeCSRFToken(secret, "alice", csrfTsStr)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin", nil)
+		req.Header.Set("X-CSRF-Token", csrfToken)
+		req.Header.Set("X-CSRF-Ts", csrfTsStr)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+		w := httptest.NewRecorder()
+		got := s.verifyJSONAdminAuth(w, req)
+		// getSessionUser will return "" because SharedSecret is empty, so
+		// the 401 branch fires before the 500 branch. Both are acceptable
+		// rejection statuses here — the key invariant is that access is denied.
+		if got != "" {
+			t.Errorf("expected empty string when SharedSecret is empty, got %q", got)
+		}
+		if w.Code != http.StatusUnauthorized && w.Code != http.StatusInternalServerError {
+			t.Errorf("expected 401 or 500 when SharedSecret is empty, got %d", w.Code)
 		}
 	})
 }

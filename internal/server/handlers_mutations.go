@@ -279,15 +279,11 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// OIDC is fresh — consume the single-use token and approve.
-	if err := s.store.ConsumeOneTap(challengeID); err != nil {
+	// OIDC is fresh — atomically consume the single-use token and approve the challenge
+	// under a single lock to eliminate the TOCTOU window where another goroutine could
+	// approve the same challenge between ConsumeOneTap and Approve.
+	if err := s.store.ConsumeAndApprove(challengeID, approver); err != nil {
 		revokeErrorPage(w, r, http.StatusConflict, "challenge_expired_or_resolved", "challenge_expired_or_resolved")
-		return
-	}
-
-	// Approve the challenge
-	if err := s.store.Approve(challengeID, approver); err != nil {
-		revokeErrorPage(w, r, http.StatusInternalServerError, "approval_failed", "approval_failed_message")
 		return
 	}
 
@@ -738,8 +734,16 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify target user is authorized for this host
-	if s.hostRegistry.IsEnabled() && !s.hostRegistry.IsUserAuthorized(hostname, targetUser) {
+	// Verify target user is authorized for this host.
+	// When the host registry is disabled there is no per-host authorization list, so
+	// only admins may elevate — any authenticated user being able to create an arbitrary
+	// grace session would be an auth bypass.
+	if !s.hostRegistry.IsEnabled() {
+		if !isAdmin {
+			revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
+			return
+		}
+	} else if !s.hostRegistry.IsUserAuthorized(hostname, targetUser) {
 		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "not_authorized_message")
 		return
 	}

@@ -449,10 +449,19 @@ func runPAMHelper() {
 
 	var cache *pam.TokenCache
 	if cfg.TokenCacheEnabled {
-		cache = pam.NewTokenCache(cfg.TokenCacheDir, cfg.TokenCacheIssuer, cfg.TokenCacheClientID)
+		var err error
+		cache, err = pam.NewTokenCache(cfg.TokenCacheDir, cfg.TokenCacheIssuer, cfg.TokenCacheClientID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "identree: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
-	client := pam.NewPAMClient(cfg, cache)
+	client, err := pam.NewPAMClient(cfg, cache)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identree: %v\n", err)
+		os.Exit(1)
+	}
 	if err := client.Authenticate(username); err != nil {
 		fmt.Fprintf(os.Stderr, "identree: %v\n", err)
 		os.Exit(1)

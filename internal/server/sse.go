@@ -12,6 +12,11 @@ import (
 // The NUL byte prefix cannot appear in valid usernames, preventing collision.
 const sseAdminKey = "\x00admin"
 
+// sseNewlineReplacer strips CR and LF from SSE event strings to prevent
+// SSE protocol injection. Defined at package level to avoid allocating a
+// new Replacer on every broadcastSSE call.
+var sseNewlineReplacer = strings.NewReplacer("\n", "", "\r", "")
+
 // maxSSEPerUser caps the number of concurrent SSE connections per user/key
 // to prevent memory exhaustion from a single client opening many connections.
 const maxSSEPerUser = 10
@@ -59,7 +64,7 @@ func (s *Server) unregisterSSE(username string, ch chan string) {
 // broadcastSSE sends an event to all SSE channels for username and to admin subscribers.
 // Newlines are stripped from event to prevent SSE protocol injection.
 func (s *Server) broadcastSSE(username, event string) {
-	event = strings.NewReplacer("\n", "", "\r", "").Replace(event)
+	event = sseNewlineReplacer.Replace(event)
 	// Copy channel slices under the lock (fast), then release before sending
 	// to avoid holding the mutex while blocked on channel sends.
 	s.sseMu.RLock()

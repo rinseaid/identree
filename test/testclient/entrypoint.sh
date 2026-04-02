@@ -59,10 +59,11 @@ config_file_version = 2
 domains = LDAP
 
 [domain/LDAP]
-id_provider     = ldap
-auth_provider   = none
-access_provider = ldap
-sudo_provider   = ${SSSD_SUDO_PROVIDER}
+id_provider       = ldap
+auth_provider     = none
+access_provider   = ldap
+sudo_provider     = ${SSSD_SUDO_PROVIDER}
+ldap_access_order = expire
 
 ldap_uri               = ${LDAP_URI}
 ldap_search_base       = ${LDAP_BASE}

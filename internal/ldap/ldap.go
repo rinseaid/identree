@@ -63,8 +63,13 @@ type LDAPServer struct {
 	uidmap    *uidmap.UIDMap
 	sudoRules *sudorules.Store // non-nil = bridge mode
 
-	mu  sync.RWMutex
-	dir *pocketid.UserDirectory // refreshed periodically (full mode only)
+	mu          sync.RWMutex
+	dir         *pocketid.UserDirectory // refreshed periodically (full mode only)
+	userHostMap map[string][]string     // precomputed per Refresh (full mode only)
+
+	// authedConns tracks which connection IDs have completed a successful
+	// authenticated bind. Used to enforce LDAPAllowAnonymous=false for searches.
+	authedConns sync.Map // map[int]struct{}
 
 	srv *gldap.Server
 }
@@ -107,8 +112,13 @@ func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory, trigger string, exclud
 		slog.Warn("ldap: uid map flush failed", "err", err)
 	}
 
+	// Precompute the user→host map once per refresh so that every search
+	// request reads from the cached result rather than recomputing it.
+	hostMap := buildUserHostMap(dir.Groups, dir)
+
 	s.mu.Lock()
 	s.dir = dir
+	s.userHostMap = hostMap
 	s.mu.Unlock()
 
 	slog.Info("ldap: directory refreshed",
@@ -123,7 +133,12 @@ func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory, trigger string, exclud
 
 // Start launches the LDAP listener. It blocks until ctx is cancelled.
 func (s *LDAPServer) Start(ctx context.Context) error {
-	srv, err := gldap.NewServer(gldap.WithDisablePanicRecovery())
+	srv, err := gldap.NewServer(
+		gldap.WithDisablePanicRecovery(),
+		gldap.WithOnClose(func(connID int) {
+			s.authedConns.Delete(connID)
+		}),
+	)
 	if err != nil {
 		return fmt.Errorf("ldap: new server: %w", err)
 	}
@@ -172,6 +187,7 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 	// RFC 4511 §2.1 requires case-insensitive DN comparison.
 	if s.cfg.LDAPBindDN != "" && strings.EqualFold(msg.UserName, s.cfg.LDAPBindDN) {
 		if s.cfg.LDAPBindPassword != "" && subtle.ConstantTimeCompare([]byte(msg.Password), []byte(s.cfg.LDAPBindPassword)) == 1 {
+			s.authedConns.Store(req.ConnectionID(), struct{}{})
 			resp.SetResultCode(gldap.ResultSuccess)
 		}
 		// Otherwise stays InvalidCredentials
@@ -191,6 +207,16 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 	if err != nil {
 		resp.SetResultCode(gldap.ResultProtocolError)
 		return
+	}
+
+	// Enforce authentication requirement: if anonymous access is disabled,
+	// reject any search from a connection that has not completed a successful
+	// authenticated bind.
+	if !s.cfg.LDAPAllowAnonymous {
+		if _, authed := s.authedConns.Load(req.ConnectionID()); !authed {
+			resp.SetResultCode(gldap.ResultInsufficientAccessRights)
+			return
+		}
 	}
 
 	base := s.cfg.LDAPBaseDN
@@ -241,6 +267,7 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 	// Full mode: require directory snapshot.
 	s.mu.RLock()
 	dir := s.dir
+	userHosts := s.userHostMap
 	s.mu.RUnlock()
 
 	if dir == nil {
@@ -254,7 +281,7 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		s.sendRootDSE(w, req, base)
 
 	case scope == peopleDN || strings.HasSuffix(scope, ","+peopleDN):
-		truncated = s.searchPeople(w, req, filter, dir, base, limit)
+		truncated = s.searchPeople(w, req, filter, dir, userHosts, base, limit)
 
 	case scope == groupsDN || strings.HasSuffix(scope, ","+groupsDN):
 		truncated = s.searchGroups(w, req, filter, dir, base, limit)
@@ -265,7 +292,7 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 	case scope == baseLower:
 		// Subtree from root — serve everything. Note: SizeLimit is applied
 		// per sub-search; aggregate may exceed msg.SizeLimit in practice.
-		truncated = s.searchPeople(w, req, filter, dir, base, limit)
+		truncated = s.searchPeople(w, req, filter, dir, userHosts, base, limit)
 		if !truncated {
 			truncated = s.searchGroups(w, req, filter, dir, base, limit)
 		}
@@ -291,8 +318,9 @@ func (s *LDAPServer) sendRootDSE(w *gldap.ResponseWriter, req *gldap.Request, ba
 }
 
 // searchPeople sends posixAccount + shadowAccount entries.
+// userHosts is the precomputed username→[]host map from the last Refresh().
 // Returns true if the result set was truncated by limit.
-func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, base string, limit int) bool {
+func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, userHosts map[string][]string, base string, limit int) bool {
 	peopleDN := "ou=people," + base
 
 	// OU container
@@ -308,9 +336,6 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 	}) {
 		w.Write(ouEntry)
 	}
-
-	// Pre-compute host access restrictions from accessHosts claims.
-	userHosts := buildUserHostMap(dir.Groups, dir)
 
 	var sent int
 	for _, u := range dir.Users {

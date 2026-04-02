@@ -27,6 +27,13 @@ import (
 	"github.com/rinseaid/identree/internal/notify"
 )
 
+// apiError writes a JSON error response {"error": "..."} for /api/ routes.
+func apiError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
 // authFailTracker counts per-IP authentication failures in a sliding window.
 // After authFailMax failures in authFailWindow, the IP is throttled.
 const (
@@ -195,21 +202,21 @@ func remoteAddr(r *http.Request) string {
 // POST /api/challenge {"username": "jordan"}
 func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	// Per-IP auth-failure backoff: an IP that has failed too many times recently
 	// is throttled before we even attempt shared-secret verification.
 	if s.authFailRL.throttled(remoteAddr(r)) {
-		http.Error(w, "too many failed attempts — try again later", http.StatusTooManyRequests)
+		apiError(w, http.StatusTooManyRequests, "too many failed attempts — try again later")
 		return
 	}
 
 	// Verify Content-Type to prevent cross-origin form submission
 	ct := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "application/json") {
-		http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+		apiError(w, http.StatusUnsupportedMediaType, "content-type must be application/json")
 		return
 	}
 
@@ -221,17 +228,17 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		Hostname string `json:"hostname"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Username == "" {
-		http.Error(w, "username required", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "username required")
 		return
 	}
 
 	// Validate username to prevent log injection and other input-based attacks
 	if !validUsername.MatchString(req.Username) {
-		http.Error(w, "invalid username format", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid username format")
 		return
 	}
 
@@ -242,7 +249,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	if req.Hostname != "" {
 		req.Hostname = strings.ToLower(strings.TrimSuffix(req.Hostname, "."))
 		if !validHostname.MatchString(req.Hostname) {
-			http.Error(w, "invalid hostname format", http.StatusBadRequest)
+			apiError(w, http.StatusBadRequest, "invalid hostname format")
 			return
 		}
 	}
@@ -255,9 +262,9 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		s.authFailRL.record(remoteAddr(r))
 		slog.Warn("AUTH_FAILURE", "reason", errMsg, "remote_addr", remoteAddr(r), "host", req.Hostname, "user", req.Username)
 		if errMsg == "user not authorized on this host" {
-			http.Error(w, errMsg, http.StatusForbidden)
+			apiError(w, http.StatusForbidden, errMsg)
 		} else {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			apiError(w, http.StatusUnauthorized, "unauthorized")
 		}
 		return
 	}
@@ -276,11 +283,11 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, challpkg.ErrTooManyChallenges) || errors.Is(err, challpkg.ErrTooManyPerUser) {
 			rateLimitRejections.Inc()
 			slog.Warn("RATE_LIMIT", "user", req.Username, "remote_addr", remoteAddr(r), "host", req.Hostname)
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			apiError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 		slog.Error("creating challenge", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		apiError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -317,6 +324,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		})
 
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
 		resp := map[string]interface{}{
 			"challenge_id":    challenge.ID,
 			"user_code":       challenge.UserCode,
@@ -354,6 +362,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	s.sendNotification(challenge, approvalURL, oneTapURL)
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
 	resp := map[string]interface{}{
 		"challenge_id":     challenge.ID,
 		"user_code":        challenge.UserCode,
@@ -381,39 +390,39 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 // GET /api/challenge/{id}
 func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	ip := remoteAddr(r)
 	if s.authFailRL.throttled(ip) {
-		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
+		apiError(w, http.StatusTooManyRequests, "too many auth failures")
 		return
 	}
 	if !s.verifyAPISecret(r) {
 		authFailures.Inc()
 		s.authFailRL.record(ip)
 		slog.Warn("AUTH_FAILURE invalid shared secret", "path", "GET /api/challenge/", "remote_addr", ip)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apiError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/api/challenge/")
 	if id == "" {
-		http.Error(w, "challenge ID required", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "challenge ID required")
 		return
 	}
 
 	// Validate challenge ID format (hex string, 32 chars for 16 bytes)
 	if len(id) != 32 || !isHex(id) {
-		http.Error(w, "invalid challenge ID", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid challenge ID")
 		return
 	}
 
 	challenge, ok := s.store.Get(id)
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusGone)
 		if err := json.NewEncoder(w).Encode(map[string]string{"status": string(challpkg.StatusExpired)}); err != nil {
 			slog.Error("writing JSON response", "err", err)
 		}
@@ -427,7 +436,7 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		provided := r.Header.Get("X-Shared-Secret")
 		if !s.hostRegistry.ValidateHost(challenge.Hostname, provided) {
 			slog.Warn("AUTH_FAILURE poll credential does not match challenge hostname", "host", challenge.Hostname, "remote_addr", remoteAddr(r))
-			http.Error(w, "credential does not match challenge hostname", http.StatusForbidden)
+			apiError(w, http.StatusForbidden, "credential does not match challenge hostname")
 			return
 		}
 	}
@@ -467,33 +476,33 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 // Used by the PAM client to get the accurate grace time on cache hits.
 func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	ip := remoteAddr(r)
 	if s.authFailRL.throttled(ip) {
-		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
+		apiError(w, http.StatusTooManyRequests, "too many auth failures")
 		return
 	}
 	if !s.verifyAPISecret(r) {
 		authFailures.Inc()
 		s.authFailRL.record(ip)
 		slog.Warn("AUTH_FAILURE grace-status invalid shared secret", "remote_addr", ip)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apiError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	username := r.URL.Query().Get("username")
 	hostname := r.URL.Query().Get("hostname")
 	if username == "" {
-		http.Error(w, "username required", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "username required")
 		return
 	}
 	if !validUsername.MatchString(username) {
-		http.Error(w, "invalid username", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid username")
 		return
 	}
 	if hostname != "" && !validHostname.MatchString(hostname) {
-		http.Error(w, "invalid hostname", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid hostname")
 		return
 	}
 	// When using per-host credentials, restrict the caller to its own hostname
@@ -502,7 +511,7 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 		provided := r.Header.Get("X-Shared-Secret")
 		if !s.hostRegistry.ValidateHost(hostname, provided) {
 			slog.Warn("AUTH_FAILURE grace-status credential does not match hostname", "host", hostname, "remote_addr", remoteAddr(r))
-			http.Error(w, "credential does not match hostname", http.StatusForbidden)
+			apiError(w, http.StatusForbidden, "credential does not match hostname")
 			return
 		}
 	}
@@ -588,7 +597,7 @@ func (s *Server) buildClientConfig() map[string]interface{} {
 // POST /api/breakglass/escrow
 func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -596,26 +605,26 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	// Unlike the challenge API, this endpoint executes a shell command with caller-provided
 	// data on stdin, so unauthenticated access would be a command execution vector.
 	if s.cfg.SharedSecret == "" && !s.hostRegistry.IsEnabled() {
-		http.Error(w, "escrow endpoint requires shared secret authentication", http.StatusForbidden)
+		apiError(w, http.StatusForbidden, "escrow endpoint requires shared secret authentication")
 		return
 	}
 
 	ip := remoteAddr(r)
 	if s.authFailRL.throttled(ip) {
-		http.Error(w, "too many authentication failures", http.StatusTooManyRequests)
+		apiError(w, http.StatusTooManyRequests, "too many authentication failures")
 		return
 	}
 	if !s.verifyAPISecret(r) {
 		authFailures.Inc()
 		s.authFailRL.record(ip)
 		slog.Warn("AUTH_FAILURE invalid shared secret", "path", "POST /api/breakglass/escrow", "remote_addr", ip)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apiError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	ct := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "application/json") {
-		http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+		apiError(w, http.StatusUnsupportedMediaType, "content-type must be application/json")
 		return
 	}
 
@@ -626,22 +635,22 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if req.Password == "" {
-		http.Error(w, "password required", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "password required")
 		return
 	}
 	// Hostname is required for escrow (used for per-host token verification
 	// and as the key in the escrow command's BREAKGLASS_HOSTNAME env var).
 	if req.Hostname == "" {
-		http.Error(w, "hostname required", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "hostname required")
 		return
 	}
 	if !validHostname.MatchString(req.Hostname) {
-		http.Error(w, "invalid hostname format", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid hostname format")
 		return
 	}
 
@@ -659,7 +668,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		provided := r.Header.Get("X-Shared-Secret")
 		if !s.hostRegistry.ValidateHost(req.Hostname, provided) {
 			slog.Warn("AUTH_FAILURE escrow credential does not match target hostname", "host", req.Hostname, "remote_addr", remoteAddr(r))
-			http.Error(w, "invalid credential for hostname", http.StatusForbidden)
+			apiError(w, http.StatusForbidden, "invalid credential for hostname")
 			return
 		}
 	} else if s.cfg.SharedSecret != "" {
@@ -668,26 +677,48 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		tsHeader := r.Header.Get("X-Escrow-Ts")
 		if tsHeader == "" {
 			slog.Warn("AUTH_FAILURE missing escrow timestamp", "host", req.Hostname, "remote_addr", remoteAddr(r))
-			http.Error(w, "missing escrow timestamp", http.StatusForbidden)
+			apiError(w, http.StatusForbidden, "missing escrow timestamp")
 			return
 		}
 		tsUnix, err := strconv.ParseInt(tsHeader, 10, 64)
 		if err != nil {
 			slog.Warn("AUTH_FAILURE invalid escrow timestamp format", "host", req.Hostname, "remote_addr", remoteAddr(r))
-			http.Error(w, "invalid escrow timestamp", http.StatusForbidden)
+			apiError(w, http.StatusForbidden, "invalid escrow timestamp")
 			return
 		}
 		tsDiff := time.Since(time.Unix(tsUnix, 0))
 		if tsDiff > 5*time.Minute || tsDiff < -5*time.Minute {
 			slog.Warn("AUTH_FAILURE escrow timestamp out of window", "host", req.Hostname, "remote_addr", remoteAddr(r), "diff", tsDiff)
-			http.Error(w, "escrow timestamp out of window", http.StatusForbidden)
+			apiError(w, http.StatusForbidden, "escrow timestamp out of window")
 			return
 		}
 		expectedToken := breakglass.ComputeEscrowToken(s.cfg.SharedSecret, req.Hostname, tsHeader)
 		providedToken := r.Header.Get("X-Escrow-Token")
 		if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {
 			slog.Warn("AUTH_FAILURE invalid escrow token", "host", req.Hostname, "remote_addr", remoteAddr(r))
-			http.Error(w, "invalid escrow token for hostname", http.StatusForbidden)
+			apiError(w, http.StatusForbidden, "invalid escrow token for hostname")
+			return
+		}
+		// Replay protection: reject tokens that have already been redeemed.
+		// Key on hostname+timestamp; each unique (hostname, timestamp) pair can
+		// only be accepted once within the 5-minute validity window.
+		// Lazily prune entries older than 10 minutes (2× the window).
+		tokenKey := req.Hostname + ":" + tsHeader
+		s.usedEscrowTokensMu.Lock()
+		_, seen := s.usedEscrowTokens[tokenKey]
+		if !seen {
+			s.usedEscrowTokens[tokenKey] = time.Now()
+			cutoff := time.Now().Add(-10 * time.Minute)
+			for k, t := range s.usedEscrowTokens {
+				if t.Before(cutoff) {
+					delete(s.usedEscrowTokens, k)
+				}
+			}
+		}
+		s.usedEscrowTokensMu.Unlock()
+		if seen {
+			slog.Warn("REPLAY escrow token already used", "host", req.Hostname, "remote_addr", remoteAddr(r))
+			apiError(w, http.StatusGone, "escrow token already used")
 			return
 		}
 	}
@@ -695,7 +726,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	hasNativeEscrow := s.cfg.EscrowBackend != ""
 	if s.cfg.EscrowCommand == "" && !hasNativeEscrow {
 		slog.Warn("BREAKGLASS escrow received but not configured, password discarded", "host", req.Hostname)
-		http.Error(w, "escrow not configured on server", http.StatusNotImplemented)
+		apiError(w, http.StatusNotImplemented, "escrow not configured on server")
 		return
 	}
 
@@ -704,7 +735,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	case escrowSemaphore <- struct{}{}:
 		defer func() { <-escrowSemaphore }()
 	default:
-		http.Error(w, "too many concurrent escrow operations", http.StatusServiceUnavailable)
+		apiError(w, http.StatusServiceUnavailable, "too many concurrent escrow operations")
 		return
 	}
 
@@ -726,7 +757,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			breakglassEscrowTotal.WithLabelValues("failure").Inc()
 			slog.Error("BREAKGLASS escrow failed", "backend", s.cfg.EscrowBackend, "host", req.Hostname, "err", err)
-			http.Error(w, "escrow failed", http.StatusInternalServerError)
+			apiError(w, http.StatusInternalServerError, "escrow failed")
 			return
 		}
 		breakglassEscrowTotal.WithLabelValues("success").Inc()
@@ -772,7 +803,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 			breakglassEscrowTotal.WithLabelValues("failure").Inc()
 			combined := truncateOutput(stdoutBuf.String() + stderrBuf.String())
 			slog.Error("BREAKGLASS escrow command failed", "host", req.Hostname, "err", err, "output", combined)
-			http.Error(w, "escrow command failed", http.StatusInternalServerError)
+			apiError(w, http.StatusInternalServerError, "escrow command failed")
 			return
 		}
 		breakglassEscrowTotal.WithLabelValues("success").Inc()
@@ -806,7 +837,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 // POST /api/breakglass/reveal
 func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -816,13 +847,13 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if s.getSessionRole(r) != "admin" {
-		http.Error(w, "admin access required", http.StatusForbidden)
+		apiError(w, http.StatusForbidden, "admin access required")
 		return
 	}
 
 	hostname := r.FormValue("hostname")
 	if hostname == "" || !validHostname.MatchString(hostname) {
-		http.Error(w, "invalid hostname", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid hostname")
 		return
 	}
 
@@ -830,12 +861,12 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	escrowed := s.store.EscrowedHosts()
 	record, ok := escrowed[hostname]
 	if !ok {
-		http.Error(w, "no escrow record for host", http.StatusNotFound)
+		apiError(w, http.StatusNotFound, "no escrow record for host")
 		return
 	}
 
 	if s.cfg.EscrowBackend == "" {
-		http.Error(w, "no escrow backend configured", http.StatusNotImplemented)
+		apiError(w, http.StatusNotImplemented, "no escrow backend configured")
 		return
 	}
 
@@ -852,7 +883,7 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	password, err := backend.Retrieve(ctx, hostname, record.ItemID, record.VaultID)
 	if err != nil {
 		slog.Error("BREAKGLASS reveal failed", "host", hostname, "admin", actor, "err", err)
-		http.Error(w, "failed to retrieve password", http.StatusInternalServerError)
+		apiError(w, http.StatusInternalServerError, "failed to retrieve password")
 		return
 	}
 

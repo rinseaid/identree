@@ -187,6 +187,10 @@ type ChallengeStore struct {
 // persistedState is the JSON-serializable snapshot of grace sessions, revocation timestamps,
 // action log entries, and escrowed host records.
 type persistedState struct {
+	// Version is the schema version for this state file.
+	// Version 0 (absent) is the legacy format and is loaded as-is for backward compatibility.
+	// Version 1 is the current format.
+	Version                int                         `json:"version"`
 	GraceSessions          map[string]time.Time        `json:"grace_sessions"`
 	RevokeTokensBefore     map[string]time.Time        `json:"revoke_tokens_before"`
 	RotateBreakglassBefore map[string]time.Time        `json:"rotate_breakglass_before_hosts,omitempty"`
@@ -194,7 +198,10 @@ type persistedState struct {
 	EscrowedHosts          map[string]EscrowRecord      `json:"escrowed_hosts,omitempty"`
 	EscrowedCiphertexts    map[string]string            `json:"escrowed_ciphertexts,omitempty"`
 	LastOIDCAuth           map[string]time.Time         `json:"last_oidc_auth,omitempty"`
-	OneTapUsed             map[string]bool              `json:"one_tap_used,omitempty"`
+	// OneTapUsed is intentionally ephemeral: it is in-memory only and is reset on restart.
+	// Challenges do not survive restarts, so persisting consumed nonces would only accumulate
+	// orphaned entries with no corresponding challenge to protect.
+	OneTapUsed             map[string]bool              `json:"-"`
 }
 
 // NewChallengeStore creates a new store with the given challenge TTL, grace period,
@@ -232,12 +239,14 @@ func (s *ChallengeStore) Stop() {
 }
 
 // graceKey returns the key used for per-host grace period tracking.
-// Format: "username@hostname" or just "username" if hostname is empty.
+// Format: "username\x00hostname" or just "username" if hostname is empty.
+// The null byte separator is used because it cannot appear in POSIX usernames
+// or hostnames, avoiding collisions with email-style usernames (e.g. user@host).
 func graceKey(username, hostname string) string {
 	if hostname == "" {
 		return username
 	}
-	return username + "@" + hostname
+	return username + "\x00" + hostname
 }
 
 // Create generates a new challenge for the given username, optional hostname,
@@ -420,7 +429,10 @@ func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 	s.decPending(c.Username)
 	data, rotate := s.marshalStateLocked()
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
+	// Fix 5: if the disk write fails, set dirty so the next flush retries.
+	if !s.writeStateToDisk(data, rotate) {
+		s.dirty.Store(true)
+	}
 	return nil
 }
 
@@ -539,6 +551,10 @@ func (s *ChallengeStore) AutoApproveIfWithinGracePeriod(username, hostname, id s
 	if !ok || c.Status != StatusPending {
 		return false
 	}
+	// Fix 6: do not auto-approve an expired challenge.
+	if time.Now().After(c.ExpiresAt) {
+		return false
+	}
 	c.Status = StatusApproved
 	c.ApprovedBy = c.Username
 	c.ApprovedAt = time.Now()
@@ -550,7 +566,7 @@ func (s *ChallengeStore) AutoApproveIfWithinGracePeriod(username, hostname, id s
 func (s *ChallengeStore) ActiveSessions(username string) []GraceSession {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	prefix := username + "@"
+	prefix := username + "\x00"
 	var sessions []GraceSession
 	now := time.Now()
 	for key, expiry := range s.lastApproval {
@@ -592,7 +608,7 @@ func (s *ChallengeStore) AllActiveSessions() []GraceSession {
 		if !now.Before(expiry) {
 			continue
 		}
-		parts := strings.SplitN(key, "@", 2)
+		parts := strings.SplitN(key, "\x00", 2)
 		hostname := "(unknown)"
 		username := key
 		if len(parts) == 2 {
@@ -740,15 +756,14 @@ func (s *ChallengeStore) RemoveHost(hostname string) {
 	}
 	delete(s.escrowedHosts, hostname)
 	delete(s.escrowedCiphertexts, hostname)
-	suffix := "@" + hostname
+	suffix := "\x00" + hostname
 	for key := range s.lastApproval {
 		if strings.HasSuffix(key, suffix) {
 			delete(s.lastApproval, key)
 		}
 	}
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 }
 
 // ActiveSessionsForHost returns all users with active grace sessions on a host.
@@ -757,7 +772,7 @@ func (s *ChallengeStore) ActiveSessionsForHost(hostname string) []GraceSession {
 	defer s.mu.RUnlock()
 	now := time.Now()
 	var sessions []GraceSession
-	suffix := "@" + hostname
+	suffix := "\x00" + hostname
 	for key, expiry := range s.lastApproval {
 		if !now.Before(expiry) {
 			continue
@@ -765,7 +780,7 @@ func (s *ChallengeStore) ActiveSessionsForHost(hostname string) []GraceSession {
 		if strings.HasSuffix(key, suffix) {
 			username := strings.TrimSuffix(key, suffix)
 			sessions = append(sessions, GraceSession{Username: username, Hostname: hostname, ExpiresAt: expiry})
-		} else if hostname == "" && !strings.Contains(key, "@") {
+		} else if hostname == "" && !strings.Contains(key, "\x00") {
 			sessions = append(sessions, GraceSession{Username: key, Hostname: "", ExpiresAt: expiry})
 		}
 	}
@@ -819,18 +834,16 @@ func (s *ChallengeStore) CreateGraceSession(username, hostname string, duration 
 	key := graceKey(username, hostname)
 	s.lastApproval[key] = time.Now().Add(duration)
 	graceSessions.Set(float64(len(s.lastApproval)))
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 }
 
 // RecordEscrow records that a host has escrowed a break-glass password.
 func (s *ChallengeStore) RecordEscrow(hostname, itemID, vaultID string) {
 	s.mu.Lock()
 	s.escrowedHosts[hostname] = EscrowRecord{Timestamp: time.Now(), ItemID: itemID, VaultID: vaultID}
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 }
 
 // StoreEscrowCiphertext stores an encrypted break-glass password for the local escrow backend.
@@ -838,9 +851,8 @@ func (s *ChallengeStore) RecordEscrow(hostname, itemID, vaultID string) {
 func (s *ChallengeStore) StoreEscrowCiphertext(hostname, ciphertext string) {
 	s.mu.Lock()
 	s.escrowedCiphertexts[hostname] = ciphertext
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 }
 
 // GetEscrowCiphertext returns the encrypted ciphertext for a host, if any.
@@ -867,9 +879,8 @@ func (s *ChallengeStore) EscrowedHosts() map[string]EscrowRecord {
 func (s *ChallengeStore) SetHostRotateBefore(hostname string) {
 	s.mu.Lock()
 	s.rotateBreakglassBefore[hostname] = time.Now()
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 }
 
 // HostRotateBefore returns the per-host rotate-before time, or zero if not set.
@@ -886,9 +897,8 @@ func (s *ChallengeStore) SetAllHostsRotateBefore(hostnames []string) {
 	for _, h := range hostnames {
 		s.rotateBreakglassBefore[h] = now
 	}
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 }
 
 // ExtendGraceSession extends a grace session to the maximum allowed duration.
@@ -914,9 +924,8 @@ func (s *ChallengeStore) ExtendGraceSession(username, hostname string) (time.Dur
 	newExpiry := time.Now().Add(s.gracePeriod)
 	s.lastApproval[key] = newExpiry
 	graceSessions.Set(float64(len(s.lastApproval)))
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 	return s.gracePeriod, nil
 }
 
@@ -936,9 +945,8 @@ func (s *ChallengeStore) ForceExtendGraceSession(username, hostname string) time
 	newExpiry := time.Now().Add(s.gracePeriod)
 	s.lastApproval[key] = newExpiry
 	graceSessions.Set(float64(len(s.lastApproval)))
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 	return s.gracePeriod
 }
 
@@ -961,9 +969,8 @@ func (s *ChallengeStore) ExtendGraceSessionFor(username, hostname string, dur ti
 	newExpiry := time.Now().Add(dur)
 	s.lastApproval[key] = newExpiry
 	graceSessions.Set(float64(len(s.lastApproval)))
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 	return dur
 }
 
@@ -975,9 +982,8 @@ func (s *ChallengeStore) RevokeSession(username, hostname string) {
 	delete(s.lastApproval, key)
 	graceSessions.Set(float64(len(s.lastApproval)))
 	s.revokeTokensBefore[username] = time.Now()
-	data, rotate := s.marshalStateLocked()
+	s.dirty.Store(true)
 	s.mu.Unlock()
-	s.writeStateToDisk(data, rotate)
 }
 
 // RevokeTokensBefore returns the revocation timestamp for a user, if any.
@@ -1017,6 +1023,53 @@ func (s *ChallengeStore) ConsumeOneTap(challengeID string) error {
 	return nil
 }
 
+// ConsumeAndApprove atomically marks the one-tap token as used and approves the challenge
+// under a single lock acquisition, eliminating the TOCTOU window between separate
+// ConsumeOneTap and Approve calls where another goroutine could approve the same challenge.
+func (s *ChallengeStore) ConsumeAndApprove(challengeID, approvedBy string) error {
+	s.mu.Lock()
+	c, ok := s.challenges[challengeID]
+	if !ok || time.Now().After(c.ExpiresAt) {
+		s.mu.Unlock()
+		return fmt.Errorf("challenge not found or expired")
+	}
+	if s.oneTapUsed[challengeID] {
+		s.mu.Unlock()
+		return fmt.Errorf("one-tap already used")
+	}
+	if c.Status != StatusPending {
+		s.mu.Unlock()
+		return fmt.Errorf("challenge already resolved")
+	}
+	// If the user's session was revoked after this challenge was created,
+	// treat the challenge as expired to prevent approval of a stale challenge.
+	if revokeTs, ok := s.revokeTokensBefore[c.Username]; ok && revokeTs.After(c.CreatedAt) {
+		s.mu.Unlock()
+		return fmt.Errorf("challenge superseded by session revocation")
+	}
+	s.oneTapUsed[challengeID] = true
+	c.Status = StatusApproved
+	c.ApprovedBy = approvedBy
+	c.ApprovedAt = time.Now()
+	if s.gracePeriod > 0 {
+		key := graceKey(c.Username, c.Hostname)
+		graceDur := c.RequestedGrace
+		if graceDur == 0 {
+			graceDur = s.gracePeriod
+		}
+		s.lastApproval[key] = time.Now().Add(graceDur)
+	}
+	graceSessions.Set(float64(len(s.lastApproval)))
+	s.decPending(c.Username)
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	// Fix 5: if the disk write fails, set dirty so the next flush retries.
+	if !s.writeStateToDisk(data, rotate) {
+		s.dirty.Store(true)
+	}
+	return nil
+}
+
 // RecordOIDCAuth records the current time as the last OIDC authentication time for the user.
 func (s *ChallengeStore) RecordOIDCAuth(username string) {
 	s.mu.Lock()
@@ -1041,7 +1094,7 @@ func (s *ChallengeStore) AllUsers() []string {
 		users[user] = true
 	}
 	for key := range s.lastApproval {
-		parts := strings.SplitN(key, "@", 2)
+		parts := strings.SplitN(key, "\x00", 2)
 		users[parts[0]] = true
 	}
 	result := make([]string, 0, len(users))
@@ -1073,7 +1126,7 @@ func (s *ChallengeStore) RemoveUser(username string) {
 	// if decPending's behaviour changes.
 	delete(s.pendingByUser, username)
 	// Revoke all grace sessions for this user
-	prefix := username + "@"
+	prefix := username + "\x00"
 	for key := range s.lastApproval {
 		if key == username || strings.HasPrefix(key, prefix) {
 			delete(s.lastApproval, key)
@@ -1081,12 +1134,13 @@ func (s *ChallengeStore) RemoveUser(username string) {
 	}
 	// Set revocation timestamp so token caches are invalidated
 	s.revokeTokensBefore[username] = time.Now()
-	// Clear action log
-	delete(s.actionLog, username)
-	// Clear OIDC auth record
-	delete(s.lastOIDCAuth, username)
 	graceSessions.Set(float64(len(s.lastApproval)))
+	// Fix 7: marshal state before clearing the action log so that any
+	// ActionRemovedUser log entry added by the caller is included on disk.
 	data, rotate := s.marshalStateLocked()
+	// Clear action log and OIDC auth record after capturing state for disk.
+	delete(s.actionLog, username)
+	delete(s.lastOIDCAuth, username)
 	s.mu.Unlock()
 	s.writeStateToDisk(data, rotate)
 }
@@ -1373,6 +1427,7 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 	}
 	now := time.Now()
 	state := persistedState{
+		Version:            1,
 		GraceSessions:      make(map[string]time.Time),
 		RevokeTokensBefore: make(map[string]time.Time),
 		ActionLog:          make(map[string][]ActionLogEntry),

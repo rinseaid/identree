@@ -748,21 +748,21 @@ const pendingBarHTML = `{{if .Pending}}
 <div class="modal-overlay" id="pending-modal" onclick="if(event.target===this)closePendingModal()">
   <div class="modal-box pending-modal-box">
     <h3>{{call .T "pending_requests"}}</h3>
-    <div class="pending-table{{if .IsAdmin}} pending-table--admin{{end}}">
-      <div class="pending-table-header">
-        {{if .IsAdmin}}<div class="gtcol"><span class="col-sort-link">{{call .T "user"}}</span></div>{{end}}
-        <div class="gtcol"><span class="col-sort-link">{{call .T "host"}}</span></div>
-        <div class="gtcol"><span class="col-sort-link">{{call .T "code"}}</span></div>
-        <div class="gtcol"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
-        <div class="gtcol"><span class="col-sort-link">{{call .T "action"}}</span></div>
+    <div class="pending-table{{if .IsAdmin}} pending-table--admin{{end}}" role="table" aria-label="{{call .T "pending_requests"}}">
+      <div class="pending-table-header" role="row">
+        {{if .IsAdmin}}<div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "user"}}</span></div>{{end}}
+        <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "host"}}</span></div>
+        <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "code"}}</span></div>
+        <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
+        <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
       {{range .Pending}}
-      <div class="pending-table-row">
-        {{if $.IsAdmin}}<div class="gtcol"><span class="pill user">{{.Username}}</span></div>{{end}}
-        <div class="gtcol"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}</div>
-        <div class="gtcol"><span class="row-code" style="display:inline">{{.Code}}</span></div>
-        <div class="gtcol"><span style="font-size:0.8125rem;color:var(--text-2)">{{.ExpiresIn}}</span></div>
-        <div class="gtcol pending-table-actions">
+      <div class="pending-table-row" role="row">
+        {{if $.IsAdmin}}<div class="gtcol" role="cell"><span class="pill user">{{.Username}}</span></div>{{end}}
+        <div class="gtcol" role="cell"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}</div>
+        <div class="gtcol" role="cell"><span class="row-code" style="display:inline">{{.Code}}</span></div>
+        <div class="gtcol" role="cell"><span style="font-size:0.8125rem;color:var(--text-2)">{{.ExpiresIn}}</span></div>
+        <div class="gtcol pending-table-actions" role="cell">
           {{if or (not .AdminRequired) $.IsAdmin}}
           <form method="POST" action="/api/challenges/approve">
             <input type="hidden" name="challenge_id" value="{{.ID}}">
@@ -1071,16 +1071,16 @@ const dashboardHTML = `<!DOCTYPE html>
 
 
     {{if .IsAdmin}}
-    <div class="sessions-table" id="sessions-table" data-prefilter-user="{{.FilterUser}}" data-prefilter-host="{{.FilterHost}}">
-      <div class="sessions-table-header">
-        <div class="gtcol gtcol-suser" style="gap:10px;align-items:center;flex-wrap:wrap">
+    <div class="sessions-table" id="sessions-table" data-prefilter-user="{{.FilterUser}}" data-prefilter-host="{{.FilterHost}}" role="table" aria-label="{{call .T "sessions"}}">
+      <div class="sessions-table-header" role="row">
+        <div class="gtcol gtcol-suser" role="columnheader" style="gap:10px;align-items:center;flex-wrap:wrap">
           <button type="button" class="filter-toggle-btn" id="sessions-admin-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <span class="col-sort-link">{{call .T "user"}}</span>
           <div class="toggle-wrap" id="just-mine-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div>
         </div>
-        <div class="gtcol gtcol-shost"><span class="col-sort-link">{{call .T "host"}}</span></div>
-        <div class="gtcol gtcol-sremaining"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
-        <div class="gtcol gtcol-sactions"><span class="col-sort-link">{{call .T "action"}}</span></div>
+        <div class="gtcol gtcol-shost" role="columnheader"><span class="col-sort-link">{{call .T "host"}}</span></div>
+        <div class="gtcol gtcol-sremaining" role="columnheader"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
+        <div class="gtcol gtcol-sactions" role="columnheader"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
       <div class="sessions-table-filter" id="sessions-admin-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="suser" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -1089,11 +1089,11 @@ const dashboardHTML = `<!DOCTYPE html>
         <div style="display:flex;justify-content:flex-end;align-items:center;padding:0 6px"><button type="button" class="filter-clear-btn" id="sessions-admin-clear">{{call .T "clear_filter"}}</button></div>
       </div>
       {{range .AllSessions}}
-      <div class="sessions-table-row">
-        <div class="gtcol gtcol-suser"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
-        <div class="gtcol gtcol-shost"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
-        <div class="gtcol gtcol-sremaining"><span class="row-sub" style="font-size:0.8125rem">{{.Remaining}}</span></div>
-        <div class="gtcol gtcol-sactions" style="gap:6px;flex-wrap:nowrap;align-items:center;">
+      <div class="sessions-table-row" role="row">
+        <div class="gtcol gtcol-suser" role="cell"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
+        <div class="gtcol gtcol-shost" role="cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
+        <div class="gtcol gtcol-sremaining" role="cell"><span class="row-sub" style="font-size:0.8125rem">{{.Remaining}}</span></div>
+        <div class="gtcol gtcol-sactions" role="cell" style="gap:6px;flex-wrap:nowrap;align-items:center;">
           <div class="elevate-wrap">
             <button type="button" class="saction-btn saction-primary elevate-toggle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "extend"}}<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>
             <form method="POST" action="/api/sessions/extend" class="elevate-menu">
@@ -1196,14 +1196,14 @@ const dashboardHTML = `<!DOCTYPE html>
     })();
     </script>
     {{else}}
-    <div class="sessions-table sessions-table--user" id="user-sessions-table">
-      <div class="sessions-table-header">
-        <div class="gtcol gtcol-shost" style="gap:8px;align-items:center">
+    <div class="sessions-table sessions-table--user" id="user-sessions-table" role="table" aria-label="{{call .T "sessions"}}">
+      <div class="sessions-table-header" role="row">
+        <div class="gtcol gtcol-shost" role="columnheader" style="gap:8px;align-items:center">
           <button type="button" class="filter-toggle-btn" id="user-sessions-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <span class="col-sort-link">{{call .T "host"}}</span>
         </div>
-        <div class="gtcol gtcol-sremaining"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
-        <div class="gtcol gtcol-sactions"><span class="col-sort-link">{{call .T "action"}}</span></div>
+        <div class="gtcol gtcol-sremaining" role="columnheader"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
+        <div class="gtcol gtcol-sactions" role="columnheader"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
       <div class="sessions-table-filter" id="user-sessions-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="shost" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -1211,10 +1211,10 @@ const dashboardHTML = `<!DOCTYPE html>
         <div></div>
       </div>
       {{range .HostAccess}}{{if .Active}}
-      <div class="sessions-table-row">
-        <div class="gtcol gtcol-shost"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
-        <div class="gtcol gtcol-sremaining"><span class="row-sub" style="font-size:0.8125rem">{{.Remaining}}</span></div>
-        <div class="gtcol gtcol-sactions" style="gap:6px;flex-wrap:nowrap;align-items:center;">
+      <div class="sessions-table-row" role="row">
+        <div class="gtcol gtcol-shost" role="cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
+        <div class="gtcol gtcol-sremaining" role="cell"><span class="row-sub" style="font-size:0.8125rem">{{.Remaining}}</span></div>
+        <div class="gtcol gtcol-sactions" role="cell" style="gap:6px;flex-wrap:nowrap;align-items:center;">
           <div class="elevate-wrap">
             <button type="button" class="saction-btn saction-primary elevate-toggle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "extend"}}<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>
             <form method="POST" action="/api/sessions/extend" class="elevate-menu">
@@ -1325,7 +1325,7 @@ const historyPageHTML = `<!DOCTYPE html>
   <title>{{call .T "history"}} - {{call .T "app_name"}}</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="240">
+  <!-- auto-refresh removed: use SSE or fetch-based refresh instead to avoid resetting unsaved state -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none'%3E%3Ccircle cx='14' cy='5' r='3.5' fill='%23a855f7'/%3E%3Cline x1='14' y1='8.5' x2='14' y2='13' stroke='%23a855f7' stroke-width='2'/%3E%3Cline x1='14' y1='13' x2='7' y2='18' stroke='%23a855f7' stroke-width='2'/%3E%3Cline x1='14' y1='13' x2='21' y2='18' stroke='%23a855f7' stroke-width='2'/%3E%3Ccircle cx='7' cy='21' r='3.5' fill='%23a855f7'/%3E%3Ccircle cx='21' cy='21' r='3.5' fill='%23a855f7'/%3E%3Cline x1='14' y1='13' x2='14' y2='18' stroke='%23a855f7' stroke-width='2'/%3E%3Ccircle cx='14' cy='21' r='3.5' fill='%23a855f7'/%3E%3C/svg%3E">
   <style>` + sharedCSS + navCSS + `
     .history-action.approved { color: var(--success); }
@@ -1517,13 +1517,13 @@ const historyPageHTML = `<!DOCTYPE html>
     {{end}}
 
     {{if .History}}
-    <div class="history-gtable" id="history-gtable">
-      <div class="history-gtable-header">
-        <div class="gtcol gtcol-htime" style="gap:8px;align-items:center"><button type="button" class="filter-toggle-btn" id="history-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><a href="/history?sort=timestamp&order={{if eq .Sort "timestamp"}}{{if eq .Order "desc"}}asc{{else}}desc{{end}}{{else}}desc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "timestamp"}} active{{end}}">{{call .T "time"}}{{if eq .Sort "timestamp"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
-        <div class="gtcol gtcol-haction"><a href="/history?sort=action&order={{if eq .Sort "action"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "action"}} active{{end}}">{{call .T "action"}}{{if eq .Sort "action"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
-        {{if .IsAdmin}}<div class="gtcol gtcol-huser" style="gap:8px;align-items:center"><a href="/history?sort=user&order={{if eq .Sort "user"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "user"}} active{{end}}">{{call .T "user"}}{{if eq .Sort "user"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a><div class="toggle-wrap" id="history-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>{{end}}
-        <div class="gtcol gtcol-hhost"><a href="/history?sort=hostname&order={{if eq .Sort "hostname"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "hostname"}} active{{end}}">{{call .T "host"}}{{if eq .Sort "hostname"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
-        <div class="gtcol gtcol-hcode"><a href="/history?sort=code&order={{if eq .Sort "code"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "code"}} active{{end}}">{{call .T "code"}}{{if eq .Sort "code"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+    <div class="history-gtable" id="history-gtable" role="table" aria-label="{{call .T "history"}}">
+      <div class="history-gtable-header" role="row">
+        <div class="gtcol gtcol-htime" role="columnheader" style="gap:8px;align-items:center"><button type="button" class="filter-toggle-btn" id="history-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><a href="/history?sort=timestamp&order={{if eq .Sort "timestamp"}}{{if eq .Order "desc"}}asc{{else}}desc{{end}}{{else}}desc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "timestamp"}} active{{end}}">{{call .T "time"}}{{if eq .Sort "timestamp"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+        <div class="gtcol gtcol-haction" role="columnheader"><a href="/history?sort=action&order={{if eq .Sort "action"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "action"}} active{{end}}">{{call .T "action"}}{{if eq .Sort "action"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+        {{if .IsAdmin}}<div class="gtcol gtcol-huser" role="columnheader" style="gap:8px;align-items:center"><a href="/history?sort=user&order={{if eq .Sort "user"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "user"}} active{{end}}">{{call .T "user"}}{{if eq .Sort "user"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a><div class="toggle-wrap" id="history-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>{{end}}
+        <div class="gtcol gtcol-hhost" role="columnheader"><a href="/history?sort=hostname&order={{if eq .Sort "hostname"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "hostname"}} active{{end}}">{{call .T "host"}}{{if eq .Sort "hostname"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+        <div class="gtcol gtcol-hcode" role="columnheader"><a href="/history?sort=code&order={{if eq .Sort "code"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "code"}} active{{end}}">{{call .T "code"}}{{if eq .Sort "code"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
       </div>
       <div class="history-gtable-filter" id="history-filter-row" style="display:none" data-prefilter-host="{{.HostFilter}}" data-prefilter-user="{{.UserFilter}}" data-prefilter-action="{{.ActionFilter}}">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="htime" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -1533,16 +1533,16 @@ const historyPageHTML = `<!DOCTYPE html>
         <div style="display:flex;justify-content:flex-end;align-items:center;padding:0 6px"><button type="button" class="filter-clear-btn" id="history-filter-clear">{{call .T "clear_filter"}}</button></div>
       </div>
       {{range .History}}
-      <div class="history-gtable-row">
-        <div class="gtcol gtcol-htime">
+      <div class="history-gtable-row" role="row">
+        <div class="gtcol gtcol-htime" role="cell">
           <span style="font-size:0.8125rem">{{.FormattedTime}} <span class="time-ago" style="font-size:0.75rem;color:var(--text-3)">({{.TimeAgo}})</span></span>
         </div>
-        <div class="gtcol gtcol-haction" style="align-items:center;flex-wrap:wrap;gap:3px">
+        <div class="gtcol gtcol-haction" role="cell" style="align-items:center;flex-wrap:wrap;gap:3px">
           <span class="history-action {{.Action}}" style="font-size:0.8125rem">{{.ActionLabel}}{{if .Actor}} <span class="history-actor">({{call $.T "by"}} {{.Actor}})</span>{{end}}</span>
         </div>
-        {{if $.IsAdmin}}<div class="gtcol gtcol-huser" style="align-items:center">{{if .Username}}<a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a>{{end}}</div>{{end}}
-        <div class="gtcol gtcol-hhost" style="align-items:center">{{if .Hostname}}<a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}</div>
-        <div class="gtcol gtcol-hcode" style="font-family:monospace;font-size:0.8125rem;color:var(--text-2);align-items:center">{{if .Code}}{{.Code}}{{end}}</div>
+        {{if $.IsAdmin}}<div class="gtcol gtcol-huser" role="cell" style="align-items:center">{{if .Username}}<a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a>{{end}}</div>{{end}}
+        <div class="gtcol gtcol-hhost" role="cell" style="align-items:center">{{if .Hostname}}<a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}</div>
+        <div class="gtcol gtcol-hcode" role="cell" style="font-family:monospace;font-size:0.8125rem;color:var(--text-2);align-items:center">{{if .Code}}{{.Code}}{{end}}</div>
       </div>
       {{end}}
     </div>
@@ -1579,7 +1579,7 @@ const adminPageHTML = `<!DOCTYPE html>
   <title>{{if .AdminTab}}{{.AdminTab}} - {{end}}{{call .T "admin"}} - {{call .T "app_name"}}</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="240">
+  <!-- auto-refresh removed: use SSE or fetch-based refresh instead to avoid resetting unsaved form data -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none'%3E%3Ccircle cx='14' cy='5' r='3.5' fill='%23a855f7'/%3E%3Cline x1='14' y1='8.5' x2='14' y2='13' stroke='%23a855f7' stroke-width='2'/%3E%3Cline x1='14' y1='13' x2='7' y2='18' stroke='%23a855f7' stroke-width='2'/%3E%3Cline x1='14' y1='13' x2='21' y2='18' stroke='%23a855f7' stroke-width='2'/%3E%3Ccircle cx='7' cy='21' r='3.5' fill='%23a855f7'/%3E%3Ccircle cx='21' cy='21' r='3.5' fill='%23a855f7'/%3E%3Cline x1='14' y1='13' x2='14' y2='18' stroke='%23a855f7' stroke-width='2'/%3E%3Ccircle cx='14' cy='21' r='3.5' fill='%23a855f7'/%3E%3C/svg%3E">
   <style>` + sharedCSS + navCSS + `
     .search-bar { margin-bottom: 16px; }
@@ -2150,11 +2150,14 @@ const adminPageHTML = `<!DOCTYPE html>
       if(form)form.addEventListener('submit',function(){submitted=true;});
 
       /* ── Prevent double-submission ───────────────────────────────────── */
-      document.querySelectorAll('.config-save-btn').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          setTimeout(function(){btn.disabled=true;btn.textContent='Saving…';},0);
+      (function(){
+        var configForm=document.querySelector('form[action="/admin/config"]');
+        if(!configForm)return;
+        configForm.addEventListener('submit',function(e){
+          var btn=e.submitter||configForm.querySelector('.config-save-btn:focus')||configForm.querySelector('.config-save-btn');
+          if(btn){btn.disabled=true;btn.textContent='Saving…';}
         });
-      });
+      })();
 
       /* ── Nav interception ────────────────────────────────────────────── */
       function dirtyNames(){
@@ -2220,14 +2223,14 @@ const adminPageHTML = `<!DOCTYPE html>
 
     {{else if eq .AdminTab "users"}}
     {{if .Users}}
-    <div class="users-table" id="users-table">
-      <div class="users-table-header">
-        <div class="gtcol gtcol-uname" style="gap:8px;align-items:center">
+    <div class="users-table" id="users-table" role="table" aria-label="{{call .T "users"}}">
+      <div class="users-table-header" role="row">
+        <div class="gtcol gtcol-uname" role="columnheader" style="gap:8px;align-items:center">
           <button type="button" class="filter-toggle-btn" id="users-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <a href="/admin/users?sort=name&dir={{if and (eq .UserSort "name") (eq .UserDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .UserSort "name"}} active{{end}}">{{call .T "user"}}{{if eq .UserSort "name"}} {{if eq .UserDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
         </div>
-        <div class="gtcol gtcol-ugroups"><span class="col-sort-link">{{call .T "groups"}}</span></div>
-        <div class="gtcol gtcol-uactions"><span class="col-sort-link">{{call .T "action"}}</span></div>
+        <div class="gtcol gtcol-ugroups" role="columnheader"><span class="col-sort-link">{{call .T "groups"}}</span></div>
+        <div class="gtcol gtcol-uactions" role="columnheader"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
       <div class="users-table-filter" id="users-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="uname" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -2235,12 +2238,12 @@ const adminPageHTML = `<!DOCTYPE html>
         <div style="display:flex;justify-content:flex-end;align-items:center;padding:0 6px"><button type="button" class="filter-clear-btn" id="users-clear">{{call .T "clear_filter"}}</button></div>
       </div>
       {{range .Users}}
-      <div class="users-table-row">
-        <div class="gtcol gtcol-uname"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
-        <div class="gtcol gtcol-ugroups">
+      <div class="users-table-row" role="row">
+        <div class="gtcol gtcol-uname" role="cell"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
+        <div class="gtcol gtcol-ugroups" role="cell">
           <div class="pill-cell">{{if .Groups}}{{range .Groups}}<a href="/admin/groups#group-{{.Name}}" class="group-badge group-badge-link">{{.Name}}</a>{{end}}{{end}}</div>
         </div>
-        <div class="gtcol gtcol-uactions" style="gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end;">
+        <div class="gtcol gtcol-uactions" role="cell" style="gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end;">
           {{if gt .ActiveSessions 0}}<a href="/?user={{.Username}}" class="saction-btn saction-sessions saction-primary"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{{call $.T "sessions"}} ({{.ActiveSessions}})</a>{{end}}
           <a href="/access?user={{.Username}}" class="saction-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>{{call $.T "access"}}</a>
           <a href="/history?user={{.Username}}" class="saction-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "history"}}</a>
@@ -2412,22 +2415,22 @@ const adminPageHTML = `<!DOCTYPE html>
 
     {{else if eq .AdminTab "groups"}}
     {{if .Groups}}
-    <div class="groups-table" id="groups-table">
-      <div class="groups-table-header">
-        <div class="gtcol gtcol-name" style="gap:8px;align-items:center">
+    <div class="groups-table" id="groups-table" role="table" aria-label="{{call .T "groups"}}">
+      <div class="groups-table-header" role="row">
+        <div class="gtcol gtcol-name" role="columnheader" style="gap:8px;align-items:center">
           <button type="button" class="filter-toggle-btn" id="groups-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <a href="/admin/groups?sort=name&dir={{if and (eq .GroupSort "name") (eq .GroupDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .GroupSort "name"}} active{{end}}">{{call .T "group"}}{{if eq .GroupSort "name"}} {{if eq .GroupDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
         </div>
-        <div class="gtcol gtcol-cmds">
+        <div class="gtcol gtcol-cmds" role="columnheader">
           <a href="/admin/groups?sort=commands&dir={{if and (eq .GroupSort "commands") (eq .GroupDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .GroupSort "commands"}} active{{end}}">{{call .T "commands"}}{{if eq .GroupSort "commands"}} {{if eq .GroupDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
         </div>
-        <div class="gtcol gtcol-hosts">
+        <div class="gtcol gtcol-hosts" role="columnheader">
           <a href="/admin/groups?sort=hosts&dir={{if and (eq .GroupSort "hosts") (eq .GroupDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .GroupSort "hosts"}} active{{end}}">{{call .T "hosts"}}{{if eq .GroupSort "hosts"}} {{if eq .GroupDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
         </div>
-        <div class="gtcol gtcol-members">
+        <div class="gtcol gtcol-members" role="columnheader">
           <a href="/admin/groups?sort=members&dir={{if and (eq .GroupSort "members") (eq .GroupDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .GroupSort "members"}} active{{end}}">{{call .T "members"}}{{if eq .GroupSort "members"}} {{if eq .GroupDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
         </div>
-        <div class="gtcol gtcol-runas">
+        <div class="gtcol gtcol-runas" role="columnheader">
           <a href="/admin/groups?sort=runas&dir={{if and (eq .GroupSort "runas") (eq .GroupDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .GroupSort "runas"}} active{{end}}">{{call .T "sudo_run_as"}}{{if eq .GroupSort "runas"}} {{if eq .GroupDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
         </div>
       </div>
@@ -2441,21 +2444,21 @@ const adminPageHTML = `<!DOCTYPE html>
       <div class="groups-list">
       {{range .Groups}}
       <div class="group-wrapper">
-      <div class="groups-table-row" id="group-{{.Name}}">
-        <div class="gtcol gtcol-name" style="gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between">
+      <div class="groups-table-row" id="group-{{.Name}}" role="row">
+        <div class="gtcol gtcol-name" role="cell" style="gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between">
           <a href="/admin/groups#group-{{.Name}}" class="group-badge group-badge-link">{{.Name}}</a>
           {{if $.CanEditClaims}}<button type="button" class="claims-toggle-btn" style="margin-left:auto" data-claims-target="gclaims-{{.GroupID}}"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px;vertical-align:-1px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>Claims <span class="claims-chevron">▾</span></button>{{end}}
         </div>
-        <div class="gtcol gtcol-cmds">
+        <div class="gtcol gtcol-cmds" role="cell">
           <div class="pill-cell">{{if .AllCmds}}<span class="pill cmd">{{call $.T "all_commands"}}</span>{{else}}{{range .CmdList}}<span class="pill cmd">{{.}}</span>{{end}}{{end}}</div>
         </div>
-        <div class="gtcol gtcol-hosts">
+        <div class="gtcol gtcol-hosts" role="cell">
           <div class="pill-cell">{{if .AllHosts}}<span class="summary-chip all" style="background:var(--host-bg);color:var(--host-fg);border-color:var(--host-fg)">{{call $.T "all_hosts"}}</span>{{else}}{{range .HostList}}<a href="/history?hostname={{.}}" class="pill host">{{.}}</a>{{end}}{{end}}</div>
         </div>
-        <div class="gtcol gtcol-members">
+        <div class="gtcol gtcol-members" role="cell">
           <div class="pill-cell">{{range .Members}}<a href="/access?user={{.}}" class="group-badge group-badge-link">{{.}}</a>{{end}}{{if not .Members}}<span class="row-sub" style="font-size:0.8125rem">{{call $.T "no_members"}}</span>{{end}}</div>
         </div>
-        <div class="gtcol gtcol-runas">
+        <div class="gtcol gtcol-runas" role="cell">
           {{if and .SudoRunAs (ne .SudoRunAs "root")}}<span class="pill cmd">{{.SudoRunAs}}</span>{{else}}<span class="row-sub" style="font-size:0.8125rem">root</span>{{end}}
         </div>
       </div>
@@ -2602,16 +2605,16 @@ const adminPageHTML = `<!DOCTYPE html>
 
     {{else if eq .AdminTab "hosts"}}
     {{if .Hosts}}
-    <div class="hosts-table" id="hosts-table">
-      <div class="hosts-table-header">
-        <div class="gtcol gtcol-hhost" style="gap:10px;align-items:center;flex-wrap:wrap">
+    <div class="hosts-table" id="hosts-table" role="table" aria-label="{{call .T "hosts"}}">
+      <div class="hosts-table-header" role="row">
+        <div class="gtcol gtcol-hhost" role="columnheader" style="gap:10px;align-items:center;flex-wrap:wrap">
           <button type="button" class="filter-toggle-btn" id="hosts-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
           <a href="/admin/hosts?sort=hostname{{if .GroupFilter}}&group={{.GroupFilter}}{{end}}&dir={{if and (eq .HostSort "hostname") (eq .HostDir "asc")}}desc{{else}}asc{{end}}" class="col-sort-link{{if eq .HostSort "hostname"}} active{{end}}">{{call .T "host"}}{{if eq .HostSort "hostname"}} {{if eq .HostDir "asc"}}↑{{else}}↓{{end}}{{end}}</a>
           {{if .AllGroups}}<form method="GET" action="/admin/hosts" style="display:inline;margin:0"><select name="group" class="col-filter-select" aria-label="{{call .T "aria_filter_group"}}"><option value="">{{call .T "all_groups"}}</option>{{range .AllGroups}}<option value="{{.}}" {{if eq . $.GroupFilter}}selected{{end}}>{{.}}</option>{{end}}</select></form>{{end}}
           {{if .GroupFilter}}<a href="/admin/hosts" style="font-size:0.75rem;color:var(--text-3)">{{call .T "clear_filter"}}</a>{{end}}
         </div>
-        <div class="gtcol gtcol-hbreakglass"><span class="col-sort-link">{{call .T "breakglass"}}</span></div>
-        <div class="gtcol gtcol-hactions" style="align-items:center;flex-wrap:wrap;gap:8px">
+        <div class="gtcol gtcol-hbreakglass" role="columnheader"><span class="col-sort-link">{{call .T "breakglass"}}</span></div>
+        <div class="gtcol gtcol-hactions" role="columnheader" style="align-items:center;flex-wrap:wrap;gap:8px">
           <span class="col-sort-link">{{call .T "action"}}</span>
           {{if .HasEscrowedHosts}}<form method="POST" action="/api/hosts/rotate-all" style="display:inline;margin:0"><input type="hidden" name="username" value="{{.Username}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="saction-btn saction-rotate-all" data-confirm="{{call .T "confirm_rotate_all"}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>{{call .T "rotate_all"}}</button></form>{{end}}
         </div>
@@ -2622,17 +2625,17 @@ const adminPageHTML = `<!DOCTYPE html>
         <div style="display:flex;justify-content:flex-end;align-items:center;padding:0 6px"><button type="button" class="filter-clear-btn" id="hosts-clear">{{call .T "clear_filter"}}</button></div>
       </div>
       {{range .Hosts}}
-      <div class="hosts-table-row">
-        <div class="gtcol gtcol-hhost" style="flex-wrap:wrap;gap:4px;align-items:center">
+      <div class="hosts-table-row" role="row">
+        <div class="gtcol gtcol-hhost" role="cell" style="flex-wrap:wrap;gap:4px;align-items:center">
           <a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{if .Group}}<span class="host-group">{{.Group}}</span>{{end}}
         </div>
-        <div class="gtcol gtcol-hbreakglass">
+        <div class="gtcol gtcol-hbreakglass" role="cell">
           {{if .Escrowed}}
             <span style="font-size:0.8125rem;color:{{if .EscrowExpired}}var(--danger){{else}}var(--success){{end}}">{{if .EscrowExpired}}{{call $.T "breakglass_expired"}}{{else}}{{call $.T "breakglass_escrowed"}}{{end}}<span style="color:var(--text-3);font-weight:400"> ({{.EscrowAge}} {{call $.T "ago"}})</span></span>
             {{if .EscrowLink}}<a href="{{.EscrowLink}}" target="_blank" class="btn btn-sm" style="margin-top:4px">{{call $.T "view"}}</a>{{end}}
           {{end}}
         </div>
-        <div class="gtcol gtcol-hactions" style="gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end">
+        <div class="gtcol gtcol-hactions" role="cell" style="gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end">
           {{if gt .ActiveSessionCount 0}}<a href="/?host={{.Hostname}}" class="saction-btn saction-sessions saction-primary"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{{call $.T "sessions"}} ({{.ActiveSessionCount}})</a>{{end}}
           {{if .EscrowRevealable}}<button type="button" class="saction-btn reveal-password-btn" data-hostname="{{.Hostname}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-ts="{{$.CSRFTs}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>{{call $.T "reveal"}}</button>{{end}}
           <a href="/history?hostname={{.Hostname}}" class="saction-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "history"}}</a>
@@ -3540,15 +3543,15 @@ const accessPageHTML = `<!DOCTYPE html>
     {{range .Flashes}}<div class="banner banner-success" role="alert">{{.}}</div>{{end}}
 
     {{if and .IsAdmin .AllPendingQueue}}
-    <div class="pending-table pending-table--admin" style="margin-bottom:20px">
-      <div class="pending-table-header"><div>{{call .T "user"}}</div><div>{{call .T "host"}}</div><div>{{call .T "code"}}</div><div>{{call .T "expires_in"}}</div><div style="text-align:right">{{call .T "action"}}</div></div>
+    <div class="pending-table pending-table--admin" style="margin-bottom:20px" role="table" aria-label="{{call .T "pending_requests"}}">
+      <div class="pending-table-header" role="row"><div role="columnheader">{{call .T "user"}}</div><div role="columnheader">{{call .T "host"}}</div><div role="columnheader">{{call .T "code"}}</div><div role="columnheader">{{call .T "expires_in"}}</div><div role="columnheader" style="text-align:right">{{call .T "action"}}</div></div>
       {{range .AllPendingQueue}}
-      <div class="pending-table-row">
-        <div><span class="pill user">{{.Username}}</span></div>
-        <div><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
-        <div><span class="code">{{.Code}}</span></div>
-        <div>{{.ExpiresIn}}</div>
-        <div style="text-align:right;display:flex;gap:6px;justify-content:flex-end">
+      <div class="pending-table-row" role="row">
+        <div role="cell"><span class="pill user">{{.Username}}</span></div>
+        <div role="cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
+        <div role="cell"><span class="code">{{.Code}}</span></div>
+        <div role="cell">{{.ExpiresIn}}</div>
+        <div role="cell" style="text-align:right;display:flex;gap:6px;justify-content:flex-end">
           <form method="POST" action="/api/challenges/approve" class="saction-form">
             <input type="hidden" name="username" value="{{$.Username}}">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
@@ -3570,12 +3573,12 @@ const accessPageHTML = `<!DOCTYPE html>
     {{end}}
 
     {{if .IsAdmin}}
-    <div class="access-table access-table--admin" id="access-table" data-prefilter-user="{{.FilterUser}}">
-      <div class="access-table-header">
-        <div class="gtcol gtcol-auser" style="gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="filter-toggle-btn" id="access-admin-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><span class="col-sort-link">{{call .T "user"}}</span><div class="toggle-wrap" id="access-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>
-        <div class="gtcol"><span class="col-sort-link">{{call .T "hosts"}}</span></div>
-        <div class="gtcol" style="gap:10px;align-items:center;flex-wrap:wrap"><span class="col-sort-link">{{call .T "sessions"}}</span><div class="toggle-wrap" id="access-active-only-toggle" role="switch" aria-checked="false" tabindex="0"><span>{{call .T "active_only"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>
-        <div class="gtcol"></div>
+    <div class="access-table access-table--admin" id="access-table" data-prefilter-user="{{.FilterUser}}" role="table" aria-label="{{call .T "access"}}">
+      <div class="access-table-header" role="row">
+        <div class="gtcol gtcol-auser" role="columnheader" style="gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="filter-toggle-btn" id="access-admin-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><span class="col-sort-link">{{call .T "user"}}</span><div class="toggle-wrap" id="access-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>
+        <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "hosts"}}</span></div>
+        <div class="gtcol" role="columnheader" style="gap:10px;align-items:center;flex-wrap:wrap"><span class="col-sort-link">{{call .T "sessions"}}</span><div class="toggle-wrap" id="access-active-only-toggle" role="switch" aria-checked="false" tabindex="0"><span>{{call .T "active_only"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>
+        <div class="gtcol" role="columnheader"></div>
       </div>
       <div class="access-table-filter" id="access-admin-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="auser" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -3585,11 +3588,11 @@ const accessPageHTML = `<!DOCTYPE html>
       </div>
       {{range .AllUserGroups}}
       <div class="access-user-group" data-username="{{.Username}}" data-active-count="{{.ActiveCount}}" data-hostnames="{{range .Hosts}}{{.Hostname}} {{end}}">
-        <div class="access-user-row">
-          <div class="gtcol gtcol-auser"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
-          <div class="gtcol"><div class="pill-cell">{{range .Hosts}}<a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}</div></div>
-          <div class="gtcol"><div class="pill-cell">{{if .ActiveCount}}{{range .Hosts}}{{if .Active}}<a href="/?host={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}{{end}}{{end}}</div></div>
-          <div class="gtcol"><span class="access-expand-icon">&#9654;</span></div>
+        <div class="access-user-row" role="row">
+          <div class="gtcol gtcol-auser" role="cell"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
+          <div class="gtcol" role="cell"><div class="pill-cell">{{range .Hosts}}<a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}</div></div>
+          <div class="gtcol" role="cell"><div class="pill-cell">{{if .ActiveCount}}{{range .Hosts}}{{if .Active}}<a href="/?host={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}{{end}}{{end}}</div></div>
+          <div class="gtcol" role="cell"><span class="access-expand-icon">&#9654;</span></div>
         </div>
         <div class="access-host-rows">
           <div class="access-host-header">
@@ -3652,12 +3655,12 @@ const accessPageHTML = `<!DOCTYPE html>
     </div>
     <div class="pagination-bar" id="access-pagination"></div>
     {{else}}
-    <div class="access-table" id="access-table">
-      <div class="access-table-header">
-        <div class="gtcol gtcol-ahost"><span class="col-sort-link">{{call .T "host"}}</span></div>
-        <div class="gtcol gtcol-aperms"><span class="col-sort-link">{{call .T "commands"}}</span></div>
-        <div class="gtcol gtcol-asession"><span class="col-sort-link">{{call .T "sessions"}}</span></div>
-        <div class="gtcol gtcol-aactions"><span class="col-sort-link">{{call .T "action"}}</span></div>
+    <div class="access-table" id="access-table" role="table" aria-label="{{call .T "access"}}">
+      <div class="access-table-header" role="row">
+        <div class="gtcol gtcol-ahost" role="columnheader"><span class="col-sort-link">{{call .T "host"}}</span></div>
+        <div class="gtcol gtcol-aperms" role="columnheader"><span class="col-sort-link">{{call .T "commands"}}</span></div>
+        <div class="gtcol gtcol-asession" role="columnheader"><span class="col-sort-link">{{call .T "sessions"}}</span></div>
+        <div class="gtcol gtcol-aactions" role="columnheader"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
       <div class="access-table-filter">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="ahost" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -3666,17 +3669,17 @@ const accessPageHTML = `<!DOCTYPE html>
         <div></div>
       </div>
       {{range .HostAccess}}
-      <div class="access-table-row" data-active="{{if .Active}}1{{else}}0{{end}}">
-        <div class="gtcol gtcol-ahost"><div class="pill-cell"><span class="pill host">{{.Hostname}}</span></div></div>
-        <div class="gtcol gtcol-aperms">
+      <div class="access-table-row" role="row" data-active="{{if .Active}}1{{else}}0{{end}}">
+        <div class="gtcol gtcol-ahost" role="cell"><div class="pill-cell"><span class="pill host">{{.Hostname}}</span></div></div>
+        <div class="gtcol gtcol-aperms" role="cell">
           <div class="pill-cell">{{if .AllCmds}}<span class="pill cmd">{{call $.T "all_commands"}}</span>{{else}}{{range .Commands}}<span class="pill cmd">{{.}}</span>{{end}}{{end}}</div>
         </div>
-        <div class="gtcol gtcol-asession">
+        <div class="gtcol gtcol-asession" role="cell">
           {{if .Active}}
             <span class="access-status-pill">{{call $.T "active"}} <span class="access-status-time">({{.Remaining}})</span></span>
           {{end}}
         </div>
-        <div class="gtcol gtcol-aactions" style="gap:6px;flex-wrap:wrap;align-items:center">
+        <div class="gtcol gtcol-aactions" role="cell" style="gap:6px;flex-wrap:wrap;align-items:center">
           <div class="elevate-wrap">
             <button type="button" class="saction-btn saction-primary elevate-toggle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>{{call $.T "elevate"}}<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>
             <form method="POST" action="/api/hosts/elevate" class="elevate-menu">

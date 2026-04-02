@@ -49,12 +49,20 @@ type cachedToken struct {
 }
 
 // NewTokenCache creates a new token cache.
-func NewTokenCache(cacheDir, issuer, clientID string) *TokenCache {
+// Returns an error if issuer or clientID are empty, as both are required for
+// OIDC token verification and an empty value would only be caught at first use.
+func NewTokenCache(cacheDir, issuer, clientID string) (*TokenCache, error) {
+	if issuer == "" {
+		return nil, fmt.Errorf("token cache: issuer must not be empty")
+	}
+	if clientID == "" {
+		return nil, fmt.Errorf("token cache: clientID must not be empty")
+	}
 	return &TokenCache{
 		CacheDir: cacheDir,
 		Issuer:   issuer,
 		ClientID: clientID,
-	}
+	}, nil
 }
 
 // Check validates a cached token for the given username.
@@ -306,26 +314,26 @@ func (tc *TokenCache) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, e
 	tc.verifierMu.Lock()
 	defer tc.verifierMu.Unlock()
 
-	// Re-initialize when the entry is expired/unset AND we don't yet have a
-	// working verifier (first call, or previous attempt failed).
+	// Re-initialize whenever the TTL has expired (first call, after a failure's
+	// 5-minute retry window, or after a success's 24-hour refresh window).
+	// The nil-guard was intentionally removed: without it the 24-hour TTL
+	// actually fires and re-fetches JWKS / re-creates the verifier as intended.
 	if tc.verifierExpiry.IsZero() || time.Now().After(tc.verifierExpiry) {
-		if tc.verifier == nil {
-			// Inject the hardened client so oidc.NewProvider uses it for the
-			// discovery and initial JWKS fetch.
-			initCtx := context.WithValue(context.Background(), oauth2.HTTPClient, oidcDiscoveryClient)
+		// Inject the hardened client so oidc.NewProvider uses it for the
+		// discovery and initial JWKS fetch.
+		initCtx := context.WithValue(context.Background(), oauth2.HTTPClient, oidcDiscoveryClient)
 
-			provider, err := oidc.NewProvider(initCtx, tc.Issuer)
-			if err != nil {
-				tc.verifierErr = fmt.Errorf("discovering OIDC provider: %w", err)
-				tc.verifier = nil
-				// Short TTL on failure so we retry after a temporary outage.
-				tc.verifierExpiry = time.Now().Add(5 * time.Minute)
-			} else {
-				tc.verifier = provider.Verifier(&oidc.Config{ClientID: tc.ClientID})
-				tc.verifierErr = nil
-				// Long TTL on success; JWKS refresh is handled internally by go-oidc.
-				tc.verifierExpiry = time.Now().Add(24 * time.Hour)
-			}
+		provider, err := oidc.NewProvider(initCtx, tc.Issuer)
+		if err != nil {
+			tc.verifierErr = fmt.Errorf("discovering OIDC provider: %w", err)
+			tc.verifier = nil
+			// Short TTL on failure so we retry after a temporary outage.
+			tc.verifierExpiry = time.Now().Add(5 * time.Minute)
+		} else {
+			tc.verifier = provider.Verifier(&oidc.Config{ClientID: tc.ClientID})
+			tc.verifierErr = nil
+			// Long TTL on success; JWKS refresh is handled internally by go-oidc.
+			tc.verifierExpiry = time.Now().Add(24 * time.Hour)
 		}
 	}
 

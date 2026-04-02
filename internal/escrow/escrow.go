@@ -63,8 +63,17 @@ type EscrowStorer interface {
 }
 
 // DeriveEscrowKey derives a 32-byte AES key from rawKey using HKDF-SHA256.
-func DeriveEscrowKey(rawKey string) ([]byte, error) {
-	h := hkdf.New(sha256.New, []byte(rawKey), []byte("identree-escrow-salt-v1"), []byte("identree-breakglass-v1"))
+// salt is the raw (already-decoded) salt bytes for HKDF key diversification.
+// When salt is nil or empty, the legacy static salt "identree-escrow-salt-v1" is
+// used for backward compatibility — callers should log a warning in that case.
+// BREAKING CHANGE: switching from no salt (empty) to a configured salt invalidates
+// all existing escrow ciphertexts; clients must re-enroll (re-rotate break-glass
+// passwords) after this change.
+func DeriveEscrowKey(rawKey string, salt []byte) ([]byte, error) {
+	if len(salt) == 0 {
+		salt = []byte("identree-escrow-salt-v1")
+	}
+	h := hkdf.New(sha256.New, []byte(rawKey), salt, []byte("identree-breakglass-v1"))
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(h, key); err != nil {
 		return nil, err
@@ -106,7 +115,9 @@ func (b *localEscrowBackend) Store(_ context.Context, hostname, password, _ stri
 		return "", "", fmt.Errorf("local escrow: generate nonce: %w", err)
 	}
 	// Seal appends ciphertext+tag to nonce, producing nonce||ciphertext||tag.
-	blob := gcm.Seal(nonce, nonce, []byte(password), nil)
+	// hostname is passed as Additional Authenticated Data (AAD) so that a
+	// ciphertext sealed for one host cannot be replayed against another.
+	blob := gcm.Seal(nonce, nonce, []byte(password), []byte(hostname))
 	b.storer.StoreEscrowCiphertext(hostname, base64.StdEncoding.EncodeToString(blob))
 	return "", "", nil
 }
@@ -136,7 +147,8 @@ func (b *localEscrowBackend) Retrieve(_ context.Context, hostname, _, _ string) 
 	if len(blob) < ns {
 		return "", fmt.Errorf("local escrow: blob too short")
 	}
-	plaintext, err := gcm.Open(nil, blob[:ns], blob[ns:], nil)
+	// hostname is the AAD that was bound during Seal; it must match exactly.
+	plaintext, err := gcm.Open(nil, blob[:ns], blob[ns:], []byte(hostname))
 	if err != nil {
 		return "", fmt.Errorf("local escrow: decrypt failed (wrong key?)")
 	}
