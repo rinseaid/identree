@@ -235,10 +235,16 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate hostname to prevent log injection (hostname is optional, empty is OK)
-	if req.Hostname != "" && !validHostname.MatchString(req.Hostname) {
-		http.Error(w, "invalid hostname format", http.StatusBadRequest)
-		return
+	// Validate hostname to prevent log injection (hostname is optional, empty is OK).
+	// Normalize to lowercase and strip any trailing dot before all downstream checks
+	// so that admin approval patterns (e.g. *.prod) can never be bypassed via
+	// case manipulation (WEB01.PROD) or FQDN trailing dots (web01.prod.).
+	if req.Hostname != "" {
+		req.Hostname = strings.ToLower(strings.TrimSuffix(req.Hostname, "."))
+		if !validHostname.MatchString(req.Hostname) {
+			http.Error(w, "invalid hostname format", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Authenticate: try global shared secret, then per-host secret from registry.

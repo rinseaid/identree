@@ -399,7 +399,8 @@ func recordBreakglassFailure() {
 		return // can't lock — fail open
 	}
 	// Re-read under lock, increment, truncate, and rewrite.
-	data, _ := io.ReadAll(f)
+	// Bound the read to 128 bytes — the counter file is always a small integer + timestamp.
+	data, _ := io.ReadAll(io.LimitReader(f, 128))
 	var count int64
 	fmt.Sscanf(string(data), "%d", &count)
 	count++
@@ -456,6 +457,7 @@ func AuthenticateBreakglass(username, hashFilePath string) error {
 	if err != nil {
 		return fmt.Errorf("reading password: %w", err)
 	}
+	defer clear(password) // zero plaintext after bcrypt comparison
 
 	// Load and validate hash file
 	hash, err :=ReadBreakglassHash(hashFilePath)

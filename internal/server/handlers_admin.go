@@ -372,7 +372,11 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tsInt, err := strconv.ParseInt(csrfTs, 10, 64)
-		if err != nil || time.Since(time.Unix(tsInt, 0)).Abs() > 5*time.Minute {
+		if err != nil {
+			revokeErrorPage(w, r, http.StatusForbidden, "form_expired", "form_expired_message")
+			return
+		}
+		if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > 5*time.Minute {
 			revokeErrorPage(w, r, http.StatusForbidden, "form_expired", "form_expired_message")
 			return
 		}
@@ -544,7 +548,9 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_ADMIN_APPROVAL_HOSTS":            strings.Join(cfg.AdminApprovalHosts, ", "),
 		"IDENTREE_NOTIFY_BACKEND":                  cfg.NotifyBackend,
 		"IDENTREE_NOTIFY_URL":                      cfg.NotifyURL,
-		"IDENTREE_NOTIFY_COMMAND":                  cfg.NotifyCommand,
+		// IDENTREE_NOTIFY_COMMAND intentionally excluded: it contains a shell command
+		// path that may reveal internal infrastructure and runs as the server process.
+		// It is env-var only (not admin-UI writable) and must not be shown in the UI.
 		"IDENTREE_NOTIFY_TIMEOUT":                  formatDuration(cfg.NotifyTimeout),
 		"IDENTREE_ESCROW_BACKEND":                  string(cfg.EscrowBackend),
 		"IDENTREE_ESCROW_URL":                      cfg.EscrowURL,
@@ -663,6 +669,16 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 		// crash on the next startup.
 		if v == string(config.EscrowBackendLocal) && cfg.EscrowEncryptionKey == "" {
 			return fmt.Errorf("IDENTREE_ESCROW_BACKEND = \"local\" requires IDENTREE_ESCROW_ENCRYPTION_KEY to be set as an environment variable")
+		}
+	}
+	// URL scheme validation: reject non-http(s) values to prevent SSRF.
+	for _, key := range []string{
+		"IDENTREE_NOTIFY_URL", "IDENTREE_ESCROW_URL", "IDENTREE_ESCROW_WEB_URL",
+	} {
+		if v := values[key]; v != "" {
+			if !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
+				return fmt.Errorf("%s must start with http:// or https://", key)
+			}
 		}
 	}
 	if v := values["IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"]; v != "" {

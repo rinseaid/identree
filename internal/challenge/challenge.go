@@ -1062,10 +1062,10 @@ func (s *ChallengeStore) RemoveUser(username string) {
 			delete(s.oneTapUsed, id)
 		}
 	}
-	s.totalPending -= s.pendingByUser[username]
-	if s.totalPending < 0 {
-		s.totalPending = 0
-	}
+	// pendingByUser[username] is already zero at this point because decPending
+	// in the loop above decrements it to zero and deletes the key. The subtraction
+	// is a no-op but is removed to avoid confusion and prevent a future regression
+	// if decPending's behaviour changes.
 	delete(s.pendingByUser, username)
 	// Revoke all grace sessions for this user
 	prefix := username + "@"

@@ -162,7 +162,7 @@ func (s *Server) setFlashCookie(w http.ResponseWriter, flash string) {
 		Path:     "/",
 		MaxAge:   10,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 	}
 	if strings.HasPrefix(s.cfg.ExternalURL, "https://") {
 		cookie.Secure = true

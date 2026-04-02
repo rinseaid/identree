@@ -535,6 +535,15 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if cfg.LDAPBindPassword != "" && cfg.LDAPBindDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BIND_PASSWORD is set but IDENTREE_LDAP_BIND_DN is empty; both must be configured together")
 	}
+	if cfg.LDAPBindDN != "" && cfg.LDAPBindPassword == "" {
+		return nil, fmt.Errorf("IDENTREE_LDAP_BIND_DN is set but IDENTREE_LDAP_BIND_PASSWORD is empty; both must be configured together")
+	}
+
+	// Warn if UID and GID bases overlap: UPG GIDs equal UIDs, so overlapping
+	// bases cause UPG entries to collide with PocketID group GIDs.
+	if cfg.LDAPEnabled && cfg.LDAPUIDBase == cfg.LDAPGIDBase {
+		slog.Warn("IDENTREE_LDAP_UID_BASE and IDENTREE_LDAP_GID_BASE are identical — UPG gidNumbers will collide with PocketID group gidNumbers; set IDENTREE_LDAP_GID_BASE above the UID range")
+	}
 
 	// Validate LDAPSudoNoAuthenticate
 	switch cfg.LDAPSudoNoAuthenticate {

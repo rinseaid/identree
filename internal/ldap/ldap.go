@@ -25,6 +25,11 @@ import (
 // to prevent memory exhaustion from extremely large directories.
 const maxLDAPSearchResults = 10000
 
+// validUsernameRe matches usernames accepted by the server (consistent with
+// server.validUsername). Used to skip PocketID users whose names contain
+// characters that would be unsafe in LDAP DN values or sudoUser attributes.
+var validUsernameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
+
 // sshKeyClaimRe matches sshPublicKey, sshPublicKey1, sshPublicKey2, etc.
 var sshKeyClaimRe = regexp.MustCompile(`^sshPublicKey\d*$`)
 
@@ -34,7 +39,7 @@ var sshKeyPrefixRe = regexp.MustCompile(`^(ssh-rsa|ssh-ed25519|ssh-dss|ecdsa-sha
 // isValidLDAPAttrValue returns false if the value contains null bytes or newlines,
 // which are invalid in LDAP attribute values and could corrupt directory entries.
 func isValidLDAPAttrValue(v string) bool {
-	return !strings.ContainsAny(v, "\x00\n\r")
+	return !strings.ContainsAny(v, "\x00\n\r\t")
 }
 
 // LDAPServer embeds an RFC 4519 LDAP server.
@@ -282,7 +287,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 	for _, u := range dir.Users {
 		// Validate core user fields before placing them in LDAP attributes.
 		// Null bytes and newlines would corrupt directory entries.
-		if !isValidLDAPAttrValue(u.Username) {
+		if !isValidLDAPAttrValue(u.Username) || !validUsernameRe.MatchString(u.Username) {
 			slog.Warn("ldap: skipping user with invalid characters in username", "user", sanitize.ForTerminal(u.Username))
 			continue
 		}
@@ -395,13 +400,21 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			"accountStatus":    {accountStatus},
 		}
 
+		// For disabled accounts, set shadowExpire=1 so that standard LDAP clients
+		// (sssd, nslcd, pam_ldap) block access. accountStatus=inactive is a
+		// non-standard attribute; shadowExpire is the RFC 2307 standard mechanism.
+		if u.Disabled {
+			attrs["shadowExpire"] = []string{"1"}
+		}
+
 		// Populate host attribute from accessHosts claim for pam_access.
 		if hosts, ok := userHosts[u.Username]; ok && len(hosts) > 0 {
 			attrs["host"] = hosts
 		}
 
-		// Add SSH public keys if present.
-		if len(sshKeys) > 0 {
+		// Add SSH public keys only for enabled accounts — disabled users must not
+		// be able to authenticate via SSH keys even if their keys are still stored.
+		if len(sshKeys) > 0 && !u.Disabled {
 			attrs["objectClass"] = append(attrs["objectClass"], "ldapPublicKey")
 			attrs["sshPublicKey"] = sshKeys
 		}
@@ -824,6 +837,13 @@ var dangerousSudoOptions = map[string]bool{
 	"!log_input": true, "!noexec": true, "!use_pty": true,
 	"!closefrom": true, "!authenticate": true, "authenticate": true,
 	"!syslog": true, "!pam_session": true,
+	// These options change which password is prompted for, potentially
+	// bypassing the user's own authentication requirement:
+	"rootpw": true, "targetpw": true, "runaspw": true,
+	// Displays typed passwords in plaintext:
+	"visiblepw": true,
+	// Without arguments, spawns an interactive shell from a restricted command:
+	"shell_noargs": true,
 }
 
 // dangerousSudoOptionPrefixes are prefixes of sudo options that are blocked.

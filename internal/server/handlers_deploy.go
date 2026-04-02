@@ -376,7 +376,14 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	flusher, canFlush := w.(http.Flusher)
 
+	// Clear the server-level WriteTimeout for this streaming connection so
+	// long-running deploys are not killed at 60s. Mirrors handleSSEEvents.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	sent := 0 // bytes already sent
+	keepalive := time.NewTimer(30 * time.Second)
+	defer keepalive.Stop()
 	for {
 		data, done, failed, notify := job.snapshot()
 
@@ -416,12 +423,13 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 			// new data available; loop
 		case <-r.Context().Done():
 			return
-		case <-time.After(30 * time.Second):
+		case <-keepalive.C:
 			// keepalive comment
 			fmt.Fprintf(w, ": keepalive\n\n")
 			if canFlush {
 				flusher.Flush()
 			}
+			keepalive.Reset(30 * time.Second)
 		}
 	}
 }

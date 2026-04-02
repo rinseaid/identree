@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -51,6 +53,12 @@ func (r *HostRegistry) IsEnabled() bool {
 	return len(r.hosts) > 0
 }
 
+// normalizeHostname lowercases a hostname and strips any trailing dot so that
+// registry lookups and admin-approval patterns are case-insensitive and FQDN-safe.
+func normalizeHostname(h string) string {
+	return strings.ToLower(strings.TrimSuffix(h, "."))
+}
+
 // ValidateHost checks if a hostname is registered and the secret matches.
 // Returns true if validation passes. When the registry is empty (no hosts
 // registered), returns true for backward compatibility.
@@ -60,7 +68,7 @@ func (r *HostRegistry) ValidateHost(hostname, secret string) bool {
 	if len(r.hosts) == 0 {
 		return true // no hosts registered = backward compat
 	}
-	host, ok := r.hosts[hostname]
+	host, ok := r.hosts[normalizeHostname(hostname)]
 	if !ok {
 		return false
 	}
@@ -95,7 +103,7 @@ func (r *HostRegistry) IsUserAuthorized(hostname, username string) bool {
 	if len(r.hosts) == 0 {
 		return true
 	}
-	host, ok := r.hosts[hostname]
+	host, ok := r.hosts[normalizeHostname(hostname)]
 	if !ok {
 		return false
 	}
@@ -123,7 +131,7 @@ func (r *HostRegistry) RegisteredHosts() []string {
 func (r *HostRegistry) GetHost(hostname string) (users []string, group string, registeredAt time.Time, ok bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	host, exists := r.hosts[hostname]
+	host, exists := r.hosts[normalizeHostname(hostname)]
 	if !exists {
 		return nil, "", time.Time{}, false
 	}
@@ -149,11 +157,15 @@ func (r *HostRegistry) HostsForUser(username string) []string {
 	return result
 }
 
+// validGroupName is the allowed character set for host group labels.
+var validGroupName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
+
 // AddHost registers a new host with a generated secret.
 // Returns the secret so the admin can configure the host.
 func (r *HostRegistry) AddHost(hostname string, users []string, group string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	hostname = normalizeHostname(hostname)
 	if _, exists := r.hosts[hostname]; exists {
 		return "", fmt.Errorf("host %q is already registered", hostname)
 	}
@@ -161,6 +173,9 @@ func (r *HostRegistry) AddHost(hostname string, users []string, group string) (s
 		if u != "*" && !validUsername.MatchString(u) {
 			return "", fmt.Errorf("invalid username %q in users list", u)
 		}
+	}
+	if group != "" && !validGroupName.MatchString(group) {
+		return "", fmt.Errorf("invalid group name %q (must match ^[a-zA-Z0-9._-]{1,64}$)", group)
 	}
 	secret, err := generateHostSecret()
 	if err != nil {
@@ -181,6 +196,7 @@ func (r *HostRegistry) AddHost(hostname string, users []string, group string) (s
 func (r *HostRegistry) RemoveHost(hostname string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	hostname = normalizeHostname(hostname)
 	if _, exists := r.hosts[hostname]; !exists {
 		return fmt.Errorf("host %q is not registered", hostname)
 	}
@@ -195,7 +211,7 @@ func (r *HostRegistry) RemoveHost(hostname string) error {
 func (r *HostRegistry) RotateSecret(hostname string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	host, exists := r.hosts[hostname]
+	host, exists := r.hosts[normalizeHostname(hostname)]
 	if !exists {
 		return "", fmt.Errorf("host %q is not registered", hostname)
 	}
@@ -235,11 +251,16 @@ func (r *HostRegistry) load() {
 	// key or special-character key; the empty-string key would cause IsEnabled()
 	// to return true and ValidateAnyHost to accept an attacker-controlled secret.
 	for hostname, host := range hosts {
+		normalized := normalizeHostname(hostname)
 		if host == nil {
 			slog.Warn("host registry contains nil entry, skipping", "hostname", hostname)
 			delete(hosts, hostname)
-		} else if !validHostname.MatchString(hostname) {
+		} else if !validHostname.MatchString(normalized) {
 			slog.Warn("host registry contains invalid hostname key, skipping", "hostname", hostname)
+			delete(hosts, hostname)
+		} else if normalized != hostname {
+			// Migrate legacy mixed-case or trailing-dot hostnames to canonical form.
+			hosts[normalized] = host
 			delete(hosts, hostname)
 		}
 	}
