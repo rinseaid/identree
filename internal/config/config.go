@@ -371,6 +371,15 @@ func LoadServerConfig() (*ServerConfig, error) {
 		cfg.ChallengeTTL = 600 * time.Second
 	}
 
+	// Normalize LDAPUIDBase/GIDBase: 0 means "unset" (e.g. stored in a legacy TOML
+	// config from when the default was 0); reset to the safe default of 200000.
+	if cfg.LDAPUIDBase <= 0 {
+		cfg.LDAPUIDBase = 200000
+	}
+	if cfg.LDAPGIDBase <= 0 {
+		cfg.LDAPGIDBase = 200000
+	}
+
 	// Clamp GracePeriod: negative values are nonsensical — treat as 0 (disabled).
 	if cfg.GracePeriod < 0 {
 		cfg.GracePeriod = 0
