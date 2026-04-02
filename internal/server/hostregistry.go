@@ -76,12 +76,15 @@ func (r *HostRegistry) ValidateAnyHost(secret string) bool {
 	if len(r.hosts) == 0 {
 		return true
 	}
+	// Iterate all hosts before returning to avoid a timing side-channel that
+	// would reveal the position of a matching host in the registry.
+	found := false
 	for _, host := range r.hosts {
 		if subtleCompare(host.Secret, secret) {
-			return true
+			found = true
 		}
 	}
-	return false
+	return found
 }
 
 // IsUserAuthorized checks if a username is allowed on a host.
