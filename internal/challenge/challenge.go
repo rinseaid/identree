@@ -421,6 +421,9 @@ func (s *ChallengeStore) SetIDToken(id string, rawIDToken string) {
 	if !ok {
 		return
 	}
+	if c.Status != StatusApproved {
+		return
+	}
 	c.RawIDToken = rawIDToken
 }
 
@@ -1095,7 +1098,12 @@ func (s *ChallengeStore) reapLoop() {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("ERROR: panic in challenge reaper (recovered): %v", r)
-			// Restart the reaper after a brief delay
+			// Only restart if Stop() has not been called.
+			select {
+			case <-s.stopCh:
+				return
+			default:
+			}
 			time.Sleep(5 * time.Second)
 			go s.reapLoop()
 		}

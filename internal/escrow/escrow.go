@@ -702,7 +702,7 @@ func (b *bitwardenBackend) Retrieve(ctx context.Context, _, itemID, _ string) (s
 	if err != nil {
 		return "", fmt.Errorf("bitwarden: auth: %w", err)
 	}
-	respData, err := doJSONRequest(ctx, b.client, "GET", b.apiURL+"/secrets/"+itemID, nil, "Bearer "+accessToken)
+	respData, err := doJSONRequest(ctx, b.client, "GET", b.apiURL+"/secrets/"+url.PathEscape(itemID), nil, "Bearer "+accessToken)
 	if err != nil {
 		return "", fmt.Errorf("bitwarden: get secret: %w", err)
 	}
@@ -757,7 +757,7 @@ func (b *bitwardenBackend) getToken(ctx context.Context) (string, error) {
 }
 
 func (b *bitwardenBackend) findSecret(ctx context.Context, orgID, key, auth string) (string, error) {
-	path := fmt.Sprintf("%s/organizations/%s/secrets?search=%s", b.apiURL, orgID, url.QueryEscape(key))
+	path := fmt.Sprintf("%s/organizations/%s/secrets?search=%s", b.apiURL, url.PathEscape(orgID), url.QueryEscape(key))
 	respData, err := doJSONRequest(ctx, b.client, "GET", path, nil, auth)
 	if err != nil {
 		return "", err
