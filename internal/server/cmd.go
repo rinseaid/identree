@@ -294,11 +294,16 @@ func runServer() {
 		defer close(shutdownDone)
 		sig := <-sigCh
 		slog.Info("shutting down", "signal", sig)
-		// Second signal forces immediate exit
+		// Second signal forces immediate exit; cancelled when shutdown completes normally.
+		shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 		go func() {
-			<-sigCh
-			slog.Info("forced exit")
-			os.Exit(1)
+			select {
+			case <-sigCh:
+				slog.Info("forced exit")
+				os.Exit(1)
+			case <-shutdownCtx.Done():
+				return
+			}
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -311,6 +316,7 @@ func runServer() {
 		srv.WaitForNotifications(5 * time.Second)
 		srv.store.SaveState()
 		srv.Stop()
+		shutdownCancel()
 	}()
 
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {

@@ -325,7 +325,7 @@ const breakglassFailurePath = "/var/run/identree-breakglass-failures"
 // readFailureCounter reads and validates the failure counter file.
 // Returns (0, nil) if the file doesn't exist, is malformed, or fails security checks.
 // This fails-open (allows attempts) on any read error — rate limiting is defense-in-depth.
-func readFailureCounter() (count int, lastFail time.Time) {
+func readFailureCounter() (count int64, lastFail time.Time) {
 	f, err := os.OpenFile(breakglassFailurePath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return 0, time.Time{}
@@ -371,12 +371,12 @@ func checkBreakglassRateLimit() error {
 		return nil // allow first 3 attempts without delay
 	}
 	// Exponential backoff: 2^(count-3) seconds, capped at 300s
-	delaySec := 1 << min(count-3, 8) // max 256s
+	delaySec := int64(1) << min(count-3, 8) // max 256s
 	if delaySec > 300 {
 		delaySec = 300
 	}
 	if time.Since(lastFail) < time.Duration(delaySec)*time.Second {
-		return fmt.Errorf("too many failed break-glass attempts — try again in %ds", delaySec-int(time.Since(lastFail).Seconds()))
+		return fmt.Errorf("too many failed break-glass attempts — try again in %ds", delaySec-int64(time.Since(lastFail).Seconds()))
 	}
 	return nil
 }
@@ -634,6 +634,9 @@ func RotateBreakglass(cfg *config.ClientConfig, force, quiet bool) (plaintext st
 func EscrowPassword(cfg *config.ClientConfig, hostname, password string, quiet bool) error {
 	if cfg.ServerURL == "" {
 		return fmt.Errorf("IDENTREE_SERVER_URL not configured")
+	}
+	if strings.HasPrefix(cfg.ServerURL, "http://") {
+		return fmt.Errorf("refusing to escrow break-glass password over plaintext HTTP; use https://")
 	}
 
 	payload := map[string]string{

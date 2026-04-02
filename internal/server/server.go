@@ -75,6 +75,7 @@ type Server struct {
 	deployJobs map[string]*deployJob
 	deployMu   sync.Mutex
 	deployRL   *deployRateLimiter
+	loginRL    *loginRateLimiter
 
 	// Recently-removed users: excluded from PocketID merge until cleared.
 	removedUsers   map[string]time.Time
@@ -161,6 +162,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		sseClients:    make(map[string][]chan string),
 		deployJobs:    make(map[string]*deployJob),
 		deployRL:      newDeployRateLimiter(),
+		loginRL:       newLoginRateLimiter(),
 		removedUsers:  make(map[string]time.Time),
 		ldapRefreshCh:  make(chan struct{}, 1),
 		oidcHTTPClient: oidcHTTPClient,

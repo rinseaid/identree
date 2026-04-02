@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rinseaid/identree/internal/randutil"
 )
 
 // sessionCookieName is the name of the signed session cookie.
@@ -21,19 +23,26 @@ const sessionCookieTTL = 30 * time.Minute
 
 // setSessionCookie sets a signed session cookie on the response.
 // role should be "admin" or "user".
+// Cookie format: username:role:ts:nonce:sig (5 parts)
+// The nonce is a random 16-char hex string that makes each issued token unique.
 func (s *Server) setSessionCookie(w http.ResponseWriter, username, role string) {
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	nonce, err := randutil.Hex(8)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-	mac.Write([]byte("session:" + username + ":" + role + ":" + ts))
+	mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
 	sig := hex.EncodeToString(mac.Sum(nil))
-	value := username + ":" + role + ":" + ts + ":" + sig
+	value := username + ":" + role + ":" + ts + ":" + nonce + ":" + sig
 	cookie := &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    value,
 		Path:     "/",
 		MaxAge:   int(sessionCookieTTL.Seconds()),
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 	}
 	if strings.HasPrefix(s.cfg.ExternalURL, "https://") {
 		cookie.Secure = true
@@ -50,14 +59,17 @@ func (s *Server) getSessionUser(r *http.Request) string {
 	if err != nil {
 		return ""
 	}
-	// Only accept the 4-part format: username:role:ts:sig
-	parts := strings.SplitN(cookie.Value, ":", 4)
-	if len(parts) == 4 {
-		username, role, ts, sig := parts[0], parts[1], parts[2], parts[3]
+	// Only accept the 5-part format: username:role:ts:nonce:sig
+	parts := strings.SplitN(cookie.Value, ":", 5)
+	if len(parts) == 5 {
+		username, role, ts, nonce, sig := parts[0], parts[1], parts[2], parts[3], parts[4]
 		if !validUsername.MatchString(username) {
 			return ""
 		}
 		if role != "admin" && role != "user" {
+			return ""
+		}
+		if !isHex(nonce) || len(nonce) != 16 {
 			return ""
 		}
 		tsInt, err := strconv.ParseInt(ts, 10, 64)
@@ -68,7 +80,7 @@ func (s *Server) getSessionUser(r *http.Request) string {
 			return ""
 		}
 		mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-		mac.Write([]byte("session:" + username + ":" + role + ":" + ts))
+		mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
 		expected := hex.EncodeToString(mac.Sum(nil))
 		if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
 			return ""
@@ -79,7 +91,7 @@ func (s *Server) getSessionUser(r *http.Request) string {
 }
 
 // getSessionRole returns the role embedded in the session cookie: "admin" or "user".
-// Returns "user" if the cookie uses the legacy format or if the role is not "admin".
+// Returns "user" if the cookie is invalid or expired.
 func (s *Server) getSessionRole(r *http.Request) string {
 	if s.cfg.SharedSecret == "" {
 		return "user"
@@ -88,13 +100,17 @@ func (s *Server) getSessionRole(r *http.Request) string {
 	if err != nil {
 		return "user"
 	}
-	parts := strings.SplitN(cookie.Value, ":", 4)
-	if len(parts) == 4 {
-		username, role, ts, sig := parts[0], parts[1], parts[2], parts[3]
+	// Only accept the 5-part format: username:role:ts:nonce:sig
+	parts := strings.SplitN(cookie.Value, ":", 5)
+	if len(parts) == 5 {
+		username, role, ts, nonce, sig := parts[0], parts[1], parts[2], parts[3], parts[4]
 		if !validUsername.MatchString(username) {
 			return "user"
 		}
 		if role != "admin" && role != "user" {
+			return "user"
+		}
+		if !isHex(nonce) || len(nonce) != 16 {
 			return "user"
 		}
 		tsInt, err := strconv.ParseInt(ts, 10, 64)
@@ -105,7 +121,7 @@ func (s *Server) getSessionRole(r *http.Request) string {
 			return "user"
 		}
 		mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-		mac.Write([]byte("session:" + username + ":" + role + ":" + ts))
+		mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
 		expected := hex.EncodeToString(mac.Sum(nil))
 		if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
 			return "user"

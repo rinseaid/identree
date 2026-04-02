@@ -157,6 +157,11 @@ func (r *HostRegistry) AddHost(hostname string, users []string, group string) (s
 	if _, exists := r.hosts[hostname]; exists {
 		return "", fmt.Errorf("host %q is already registered", hostname)
 	}
+	for _, u := range users {
+		if u != "*" && !validUsername.MatchString(u) {
+			return "", fmt.Errorf("invalid username %q in users list", u)
+		}
+	}
 	secret, err := generateHostSecret()
 	if err != nil {
 		return "", fmt.Errorf("generating secret: %w", err)
@@ -275,6 +280,12 @@ func (r *HostRegistry) saveLocked() {
 		slog.Error("creating temp host registry file", "err", err)
 		return
 	}
+	if err := syscall.Fchmod(int(tmp.Fd()), 0600); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		slog.Error("setting host registry permissions", "err", err)
+		return
+	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
@@ -291,11 +302,6 @@ func (r *HostRegistry) saveLocked() {
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		slog.Error("closing host registry temp file", "err", err)
-		return
-	}
-	if err := os.Chmod(tmpName, 0600); err != nil {
-		os.Remove(tmpName)
-		slog.Error("setting host registry permissions", "err", err)
 		return
 	}
 	if err := os.Rename(tmpName, r.filePath); err != nil {

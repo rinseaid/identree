@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -18,6 +19,54 @@ import (
 // oidcExchangeTimeout limits how long we wait for the IdP token exchange.
 // Prevents a slow/malicious IdP from holding goroutines indefinitely.
 const oidcExchangeTimeout = 15 * time.Second
+
+// loginRateWindow / loginRateMax control per-IP rate limiting on the
+// sessions/login endpoint to prevent nonce pool exhaustion.
+const (
+	loginRateWindow = 60 * time.Second
+	loginRateMax    = 10 // max initiations per IP per window
+)
+
+// loginRateLimiter is a sliding-window per-IP rate limiter for the login endpoint.
+type loginRateLimiter struct {
+	mu    sync.Mutex
+	seen  map[string][]time.Time // IP → timestamps of recent requests
+}
+
+func newLoginRateLimiter() *loginRateLimiter {
+	return &loginRateLimiter{seen: make(map[string][]time.Time)}
+}
+
+// allow returns true if the given IP has not exceeded loginRateMax requests
+// in the past loginRateWindow, and records the attempt.
+func (l *loginRateLimiter) allow(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-loginRateWindow)
+	// Prune old timestamps for this IP
+	times := l.seen[ip]
+	j := 0
+	for _, t := range times {
+		if t.After(cutoff) {
+			times[j] = t
+			j++
+		}
+	}
+	times = times[:j]
+	if len(times) >= loginRateMax {
+		l.seen[ip] = times
+		return false
+	}
+	l.seen[ip] = append(times, now)
+	// Prune IPs not seen in the last window to prevent unbounded map growth.
+	for k, ts := range l.seen {
+		if k != ip && (len(ts) == 0 || ts[len(ts)-1].Before(cutoff)) {
+			delete(l.seen, k)
+		}
+	}
+	return true
+}
 
 // handleOIDCCallback processes the OIDC callback after Pocket ID authentication.
 // Only handles the sessions-based OIDC flow (state prefix "sessions:").
@@ -58,6 +107,12 @@ const sessionsTokenTTL = 30 * time.Minute
 func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Per-IP rate limit: prevent a single client from exhausting the nonce pool.
+	if !s.loginRL.allow(remoteAddr(r)) {
+		http.Error(w, "too many requests — try again later", http.StatusTooManyRequests)
 		return
 	}
 

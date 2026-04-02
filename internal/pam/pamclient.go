@@ -198,6 +198,8 @@ func (p *PAMClient) Authenticate(username string) error {
 				return fmt.Errorf("authentication failed — check identree configuration")
 			case httpErr.StatusCode >= 500:
 				return fmt.Errorf("authentication server error — contact your admin")
+			default:
+				return fmt.Errorf("creating challenge: server returned %d", httpErr.StatusCode)
 			}
 		}
 		return fmt.Errorf("creating challenge: %w", err)
@@ -453,10 +455,16 @@ func applyClientConfig(p *PAMClient, challenge *challengeResponse) {
 			p.cfg.PollInterval = d
 		}
 	}
+	if p.cfg.PollInterval != 0 && p.cfg.PollInterval < time.Second {
+		p.cfg.PollInterval = time.Second
+	}
 	if challenge.ClientConfig.Timeout != "" {
 		if d, err := time.ParseDuration(challenge.ClientConfig.Timeout); err == nil {
 			p.cfg.Timeout = d
 		}
+	}
+	if p.cfg.Timeout != 0 && p.cfg.Timeout < 5*time.Second {
+		p.cfg.Timeout = 5 * time.Second
 	}
 	if challenge.ClientConfig.BreakglassEnabled != nil {
 		p.cfg.BreakglassEnabled = *challenge.ClientConfig.BreakglassEnabled

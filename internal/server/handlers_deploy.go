@@ -262,8 +262,11 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid ssh_user", http.StatusBadRequest)
 		return
 	}
-	if req.Port <= 0 || req.Port > 65535 {
+	if req.Port == 0 {
 		req.Port = 22
+	} else if req.Port < 1 || req.Port > 65535 {
+		http.Error(w, "invalid port", http.StatusBadRequest)
+		return
 	}
 	if req.PrivateKey == "" {
 		http.Error(w, "private_key required", http.StatusBadRequest)
@@ -313,7 +316,11 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if req.SSHUser != "root" {
 		sudoPrefix = "sudo "
 	}
-	remoteCmd := fmt.Sprintf("SHARED_SECRET=%s %sbash", shellQuote(s.cfg.SharedSecret), sudoPrefix)
+	remoteCmd := fmt.Sprintf("%sbash", sudoPrefix)
+	// Inject SHARED_SECRET via stdin (the install script) so it does not
+	// appear in the remote process list (ps aux).
+	secretExport := fmt.Sprintf("export SHARED_SECRET=%s\n", shellQuote(s.cfg.SharedSecret))
+	installScript = append([]byte(secretExport), installScript...)
 
 	go func() {
 		defer func() { <-deploySemaphore }()
@@ -498,8 +505,11 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hostname required", http.StatusBadRequest)
 		return
 	}
-	if req.Port <= 0 || req.Port > 65535 {
+	if req.Port == 0 {
 		req.Port = 22
+	} else if req.Port < 1 || req.Port > 65535 {
+		http.Error(w, "invalid port", http.StatusBadRequest)
+		return
 	}
 	if req.SSHUser == "" {
 		req.SSHUser = "root"

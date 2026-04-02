@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rinseaid/identree/internal/sanitize"
 )
 
 var sshKeyClaimRe = regexp.MustCompile(`^sshPublicKey\d*$`)
@@ -221,29 +223,29 @@ func (c *PocketIDClient) fetchGroupData() (*pocketIDData, error) {
 
 	for _, g := range allGroups {
 		if !validAdminIDPattern.MatchString(g.ID) {
-			slog.Warn("pocketid: skipping group with invalid ID", "group", g.Name, "id", g.ID)
+			slog.Warn("pocketid: skipping group with invalid ID", "group", sanitize.ForTerminal(g.Name), "id", g.ID)
 			failed = append(failed, g.Name)
 			continue
 		}
 		url := fmt.Sprintf("%s/api/user-groups/%s", c.baseURL, g.ID)
 		resp, err := c.apiGet(url)
 		if err != nil {
-			slog.Warn("pocketid: fetching group details failed", "group", g.Name, "err", err)
+			slog.Warn("pocketid: fetching group details failed", "group", sanitize.ForTerminal(g.Name), "err", err)
 			failed = append(failed, g.Name)
 			continue
 		}
 
 		var group pocketIDGroup
 		if err := json.Unmarshal(resp, &group); err != nil {
-			slog.Warn("pocketid: parsing group details failed", "group", g.Name, "err", err)
+			slog.Warn("pocketid: parsing group details failed", "group", sanitize.ForTerminal(g.Name), "err", err)
 			failed = append(failed, g.Name)
 			continue
 		}
 
-		// Parse custom claims into permissions
+		// Parse custom claims into permissions; strip null bytes to prevent LDAP injection.
 		claims := make(map[string]string)
 		for _, cl := range group.CustomClaims {
-			claims[cl.Key] = cl.Value
+			claims[cl.Key] = strings.ReplaceAll(cl.Value, "\x00", "")
 		}
 
 		info := GroupInfo{
@@ -342,7 +344,7 @@ func (c *PocketIDClient) apiGet(url string) ([]byte, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, sanitize.ForTerminal(string(body)))
 	}
 
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
@@ -460,19 +462,19 @@ func (c *PocketIDClient) AllAdminGroups() ([]PocketIDAdminGroup, error) {
 	var failed []string
 	for _, meta := range phase1 {
 		if !validAdminIDPattern.MatchString(meta.ID) {
-			slog.Warn("pocketid: skipping group with invalid ID format", "name", meta.Name, "id", meta.ID)
+			slog.Warn("pocketid: skipping group with invalid ID format", "name", sanitize.ForTerminal(meta.Name), "id", meta.ID)
 			continue
 		}
 		groupURL := fmt.Sprintf("%s/api/user-groups/%s", c.baseURL, meta.ID)
 		body, err := c.apiGet(groupURL)
 		if err != nil {
-			slog.Warn("pocketid: failed to fetch group", "name", meta.Name, "err", err)
+			slog.Warn("pocketid: failed to fetch group", "name", sanitize.ForTerminal(meta.Name), "err", err)
 			failed = append(failed, meta.Name)
 			continue
 		}
 		var g pocketIDGroup
 		if err := json.Unmarshal(body, &g); err != nil {
-			slog.Warn("pocketid: failed to parse group", "name", meta.Name, "err", err)
+			slog.Warn("pocketid: failed to parse group", "name", sanitize.ForTerminal(meta.Name), "err", err)
 			failed = append(failed, meta.Name)
 			continue
 		}
@@ -659,7 +661,7 @@ func (c *PocketIDClient) apiPut(urlStr string, payload any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, sanitize.ForTerminal(string(body)))
 	}
 	// Drain the body so the connection can be reused.
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))

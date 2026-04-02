@@ -398,6 +398,26 @@ func LoadServerConfig() (*ServerConfig, error) {
 		cfg.LDAPRefreshInterval = time.Second
 	}
 
+	// Clamp DefaultPageSize to a sane range.
+	if cfg.DefaultPageSize < 1 {
+		cfg.DefaultPageSize = 15
+	}
+	if cfg.DefaultPageSize > 500 {
+		cfg.DefaultPageSize = 500
+	}
+
+	// Clamp ClientPollInterval: a positive but sub-second value would cause a
+	// tight polling loop on clients. Zero means "no override" and is left alone.
+	if cfg.ClientPollInterval > 0 && cfg.ClientPollInterval < time.Second {
+		cfg.ClientPollInterval = time.Second
+	}
+
+	// Clamp ClientBreakglassRotationDays: 0 means "no override"; negative is
+	// nonsensical; cap at a reasonable upper bound.
+	if cfg.ClientBreakglassRotationDays < 0 {
+		cfg.ClientBreakglassRotationDays = 0
+	}
+
 	// Load escrow auth secret from file if EscrowAuthSecretFile is set and EscrowAuthSecret is empty.
 	if cfg.EscrowAuthSecretFile != "" && cfg.EscrowAuthSecret == "" {
 		for _, seg := range strings.Split(cfg.EscrowAuthSecretFile, "/") {
@@ -438,6 +458,31 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if cfg.LDAPEnabled && cfg.LDAPBaseDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN is required when LDAP is enabled")
 	}
+	if len(cfg.LDAPBaseDN) > 512 {
+		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN must not exceed 512 characters")
+	}
+
+	// Validate LDAPDefaultShell: must be an absolute path and must not contain
+	// shell metacharacters that could be misinterpreted by a shell or LDAP client.
+	if cfg.LDAPDefaultShell != "" {
+		if !strings.HasPrefix(cfg.LDAPDefaultShell, "/") {
+			return nil, fmt.Errorf("IDENTREE_LDAP_DEFAULT_SHELL must be an absolute path (start with /)")
+		}
+		if strings.ContainsAny(cfg.LDAPDefaultShell, " \t\n\r;|&$`'\"\\<>(){}*?[]") {
+			return nil, fmt.Errorf("IDENTREE_LDAP_DEFAULT_SHELL contains invalid characters")
+		}
+	}
+
+	// EscrowCommand and EscrowBackend are mutually exclusive.
+	if cfg.EscrowCommand != "" && cfg.EscrowBackend != "" {
+		return nil, fmt.Errorf("IDENTREE_ESCROW_COMMAND and IDENTREE_ESCROW_BACKEND are mutually exclusive; set only one")
+	}
+
+	// EscrowEncryptionKey must be at least 16 characters when using the local backend.
+	if cfg.EscrowBackend == EscrowBackendLocal && len(cfg.EscrowEncryptionKey) < 16 {
+		return nil, fmt.Errorf("IDENTREE_ESCROW_ENCRYPTION_KEY must be at least 16 characters when using the local escrow backend")
+	}
+
 	if cfg.EscrowBackend == EscrowBackendVault && cfg.EscrowPath != "" {
 		for _, seg := range strings.Split(cfg.EscrowPath, "/") {
 			if seg == ".." || seg == "." {
@@ -598,6 +643,11 @@ func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 	// Clamp PollInterval: 0 or negative would cause a tight loop.
 	if cfg.PollInterval < time.Second {
 		cfg.PollInterval = 2 * time.Second
+	}
+
+	// Clamp BreakglassRotationDays: negative values are nonsensical.
+	if cfg.BreakglassRotationDays < 1 {
+		cfg.BreakglassRotationDays = 90
 	}
 
 	return cfg, nil

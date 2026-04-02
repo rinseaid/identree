@@ -23,6 +23,7 @@ import (
 
 var sshKeyClaimPattern = regexp.MustCompile(`^sshPublicKey\d*$`)
 var validAdminIDPattern = regexp.MustCompile(`^[a-fA-F0-9-]{1,128}$`)
+var validLoginShellPattern = regexp.MustCompile(`^/[a-zA-Z0-9/_.-]+$`)
 
 // liveUpdateKeys are env keys applied immediately by applyLiveConfigUpdates — no restart needed.
 var liveUpdateKeys = map[string]bool{
@@ -1712,12 +1713,32 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// sudoClaimKeys are the group claims that carry sudo policy; validated below.
+	sudoClaimKeys := map[string]bool{
+		"sudoCommands":   true,
+		"sudoHosts":      true,
+		"sudoRunAsUser":  true,
+		"sudoRunAsGroup": true,
+		"sudoOptions":    true,
+	}
+
 	// Add non-empty form values for managed keys.
 	for _, k := range editableGroupClaims {
 		v := strings.TrimSpace(r.FormValue(k))
-		if v != "" {
-			claims = append(claims, pocketid.Claim{Key: k, Value: v})
+		if v == "" {
+			continue
 		}
+		if sudoClaimKeys[k] {
+			if len(v) > 4096 {
+				http.Error(w, k+" exceeds maximum length of 4096 characters", http.StatusBadRequest)
+				return
+			}
+			if strings.ContainsAny(v, "\x00\n\r") {
+				http.Error(w, k+" contains invalid characters (null byte, newline, or carriage return)", http.StatusBadRequest)
+				return
+			}
+		}
+		claims = append(claims, pocketid.Claim{Key: k, Value: v})
 	}
 
 	if err := s.pocketIDClient.PutGroupClaims(groupID, claims); err != nil {
@@ -1782,15 +1803,47 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 
 	// Add simple POSIX claims from form (empty value = omit/delete the claim).
 	for _, k := range editableUserClaims {
-		if v := strings.TrimSpace(r.FormValue(k)); v != "" {
-			claims = append(claims, pocketid.Claim{Key: k, Value: v})
+		v := strings.TrimSpace(r.FormValue(k))
+		if v == "" {
+			continue
 		}
+		switch k {
+		case "loginShell":
+			if len(v) > 256 {
+				http.Error(w, "loginShell exceeds maximum length of 256 characters", http.StatusBadRequest)
+				return
+			}
+			if !validLoginShellPattern.MatchString(v) {
+				http.Error(w, "loginShell must start with / and contain only alphanumeric characters, /, _, ., or -", http.StatusBadRequest)
+				return
+			}
+		case "homeDirectory":
+			if len(v) > 256 {
+				http.Error(w, "homeDirectory exceeds maximum length of 256 characters", http.StatusBadRequest)
+				return
+			}
+			if !strings.HasPrefix(v, "/") {
+				http.Error(w, "homeDirectory must be an absolute path starting with /", http.StatusBadRequest)
+				return
+			}
+			for _, seg := range strings.Split(v, "/") {
+				if seg == ".." {
+					http.Error(w, "homeDirectory must not contain .. path segments", http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		claims = append(claims, pocketid.Claim{Key: k, Value: v})
 	}
 
 	// Add SSH keys from form (ssh_keys[] repeated field); number them sequentially.
 	if err := r.ParseForm(); err == nil {
 		keyIdx := 0
 		for _, k := range r.Form["ssh_keys"] {
+			if keyIdx >= 50 {
+				http.Error(w, "too many SSH keys: maximum is 50", http.StatusBadRequest)
+				return
+			}
 			k = strings.TrimSpace(k)
 			if k == "" {
 				continue

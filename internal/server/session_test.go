@@ -27,12 +27,14 @@ func newTestServer(sharedSecret string) *Server {
 
 // makeCookie builds and returns a properly signed pam_session cookie value for
 // the given username, role, and timestamp using the supplied shared secret.
+// Uses a fixed nonce for test determinism.
 func makeCookie(secret, username, role string, ts int64) string {
 	tsStr := fmt.Sprintf("%d", ts)
+	nonce := "abcdef1234567890" // fixed 16-char hex nonce for tests
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte("session:" + username + ":" + role + ":" + tsStr))
+	mac.Write([]byte("session:" + username + ":" + role + ":" + tsStr + ":" + nonce))
 	sig := hex.EncodeToString(mac.Sum(nil))
-	return username + ":" + role + ":" + tsStr + ":" + sig
+	return username + ":" + role + ":" + tsStr + ":" + nonce + ":" + sig
 }
 
 // requestWithCookie returns an *http.Request carrying the named cookie with value.
@@ -47,7 +49,7 @@ func TestGetSessionUser(t *testing.T) {
 	const secret = "test-secret-abc123"
 	s := newTestServer(secret)
 
-	t.Run("valid 4-part cookie returns username", func(t *testing.T) {
+	t.Run("valid 5-part cookie returns username", func(t *testing.T) {
 		ts := time.Now().Unix()
 		cookieVal := makeCookie(secret, "alice", "user", ts)
 		req := requestWithCookie(sessionCookieName, cookieVal)
@@ -78,17 +80,17 @@ func TestGetSessionUser(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy 3-part format returns empty string", func(t *testing.T) {
-		// Pre-security-fix format: username:ts:sig (no role field).
+	t.Run("legacy 4-part format returns empty string", func(t *testing.T) {
+		// Old format without nonce: username:role:ts:sig (4 parts).
 		tsStr := fmt.Sprintf("%d", time.Now().Unix())
 		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write([]byte("session:alice:" + tsStr))
+		mac.Write([]byte("session:alice:user:" + tsStr))
 		sig := hex.EncodeToString(mac.Sum(nil))
-		cookieVal := "alice:" + tsStr + ":" + sig
+		cookieVal := "alice:user:" + tsStr + ":" + sig
 		req := requestWithCookie(sessionCookieName, cookieVal)
 		got := s.getSessionUser(req)
 		if got != "" {
-			t.Errorf("expected empty string for legacy 3-part cookie, got %q", got)
+			t.Errorf("expected empty string for legacy 4-part cookie, got %q", got)
 		}
 	})
 

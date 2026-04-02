@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,12 +23,20 @@ import (
 // TokenCache manages cached OIDC id_tokens on the PAM client machine.
 // Tokens are stored at <CacheDir>/<username> with root-only permissions.
 // On cache hit, the token is verified locally via JWKS (one network call
-// to the issuer). On miss or failure, the caller falls through to the
-// full device flow.
+// to the issuer on first use; go-oidc caches JWKS internally after that).
+// On miss or failure, the caller falls through to the full device flow.
 type TokenCache struct {
 	CacheDir string
 	Issuer   string
 	ClientID string
+
+	// providerOnce guards lazy initialization of verifier.
+	// go-oidc caches JWKS keys internally on the *oidc.Provider; caching the
+	// verifier here means we pay the two HTTP round-trips (OIDC discovery +
+	// JWKS fetch) at most once per process lifetime instead of on every Check.
+	providerOnce sync.Once
+	verifier     *oidc.IDTokenVerifier
+	verifierErr  error
 }
 
 // cachedToken is the on-disk format for a cached OIDC token.
@@ -236,26 +245,42 @@ func (tc *TokenCache) ModTime(username string) (time.Time, error) {
 	return info.ModTime(), nil
 }
 
-// getVerifier creates an OIDC verifier for local JWT validation.
-// Fetches JWKS from the issuer's discovery endpoint using a hardened HTTP client
-// (no redirect following, no proxy, bounded timeout) to prevent SSRF.
-func (tc *TokenCache) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, error) {
-	discoveryClient := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			Proxy: nil, // never use proxy env vars
-		},
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, discoveryClient)
+// oidcDiscoveryClient is the hardened HTTP client used for OIDC provider
+// discovery. It disables proxy env vars and redirect following to prevent SSRF.
+// It is intentionally package-level so it is shared across all TokenCache
+// instances and allocated exactly once.
+var oidcDiscoveryClient = &http.Client{
+	Timeout: 5 * time.Second,
+	Transport: &http.Transport{
+		Proxy: nil, // never use proxy env vars
+	},
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
-	provider, err := oidc.NewProvider(ctx, tc.Issuer)
-	if err != nil {
-		return nil, fmt.Errorf("discovering OIDC provider: %w", err)
+// getVerifier returns the cached OIDC verifier, initializing it on first call.
+// The verifier (and the *oidc.Provider it wraps) is created once per TokenCache
+// lifetime; go-oidc caches JWKS keys on the provider, so subsequent calls only
+// pay for key-set refresh when keys actually rotate, not a full discovery round-trip.
+func (tc *TokenCache) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, error) {
+	tc.providerOnce.Do(func() {
+		// Inject the hardened client so oidc.NewProvider uses it for the
+		// discovery and initial JWKS fetch.
+		initCtx := context.WithValue(context.Background(), oauth2.HTTPClient, oidcDiscoveryClient)
+
+		provider, err := oidc.NewProvider(initCtx, tc.Issuer)
+		if err != nil {
+			tc.verifierErr = fmt.Errorf("discovering OIDC provider: %w", err)
+			return
+		}
+		tc.verifier = provider.Verifier(&oidc.Config{ClientID: tc.ClientID})
+	})
+
+	if tc.verifierErr != nil {
+		return nil, tc.verifierErr
 	}
-	return provider.Verifier(&oidc.Config{ClientID: tc.ClientID}), nil
+	return tc.verifier, nil
 }
 
 // decodeJWTSegment decodes a base64url-encoded JWT segment.

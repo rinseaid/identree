@@ -74,9 +74,13 @@ func DeriveEscrowKey(rawKey string) ([]byte, error) {
 
 // NewLocalEscrowBackend returns a Backend that encrypts passwords with
 // AES-256-GCM and stores/retrieves them via the provided EscrowStorer.
-// key must be 32 bytes (use DeriveEscrowKey).
+// key must be 32 bytes (use DeriveEscrowKey). A private copy of key is made
+// so that the caller's key material and the backend's copy can be zeroed
+// independently.
 func NewLocalEscrowBackend(key []byte, storer EscrowStorer) Backend {
-	return &localEscrowBackend{key: key, storer: storer}
+	keyCopy := make([]byte, len(key))
+	copy(keyCopy, key)
+	return &localEscrowBackend{key: keyCopy, storer: storer}
 }
 
 type localEscrowBackend struct {
@@ -85,6 +89,7 @@ type localEscrowBackend struct {
 }
 
 func (b *localEscrowBackend) Store(_ context.Context, hostname, password, _ string) (string, string, error) {
+	defer clear(b.key)
 	block, err := aes.NewCipher(b.key)
 	if err != nil {
 		return "", "", fmt.Errorf("local escrow: create cipher: %w", err)
@@ -104,6 +109,7 @@ func (b *localEscrowBackend) Store(_ context.Context, hostname, password, _ stri
 }
 
 func (b *localEscrowBackend) Retrieve(_ context.Context, hostname, _, _ string) (string, error) {
+	defer clear(b.key)
 	encoded, ok := b.storer.GetEscrowCiphertext(hostname)
 	if !ok {
 		return "", fmt.Errorf("local escrow: no ciphertext stored for %q", hostname)
@@ -813,7 +819,7 @@ func (b *infisicalBackend) Store(ctx context.Context, hostname, password, vault 
 		environment = "prod"
 	}
 
-	secretName := "BREAKGLASS_" + strings.ToUpper(strings.ReplaceAll(hostname, "-", "_"))
+	secretName := "BREAKGLASS_" + strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(hostname))
 	auth := "Bearer " + token
 
 	// Try to update existing secret first; create if not found.
@@ -829,7 +835,10 @@ func (b *infisicalBackend) Store(ctx context.Context, hostname, password, vault 
 
 	_, err = doJSONRequest(ctx, b.client, "PATCH", updateURL, payload, auth)
 	if err != nil {
-		// Secret likely doesn't exist yet; create it
+		if !strings.HasPrefix(err.Error(), "HTTP 404:") {
+			return "", "", fmt.Errorf("infisical: store secret: %w", err)
+		}
+		// Secret doesn't exist yet; create it
 		createURL := fmt.Sprintf("%s/api/v3/secrets/raw/%s?workspaceId=%s&environment=%s&secretPath=/",
 			b.baseURL, url.PathEscape(secretName), url.QueryEscape(workspaceID), url.QueryEscape(environment))
 		_, err2 := doJSONRequest(ctx, b.client, "POST", createURL, payload, auth)
@@ -846,7 +855,7 @@ func (b *infisicalBackend) Retrieve(ctx context.Context, hostname, _, _ string) 
 	if err != nil {
 		return "", fmt.Errorf("infisical: auth: %w", err)
 	}
-	secretName := "BREAKGLASS_" + strings.ToUpper(strings.ReplaceAll(hostname, "-", "_"))
+	secretName := "BREAKGLASS_" + strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(hostname))
 	workspaceID, environment, _ := strings.Cut(b.projectEnv, "/")
 	if environment == "" {
 		environment = "prod"
