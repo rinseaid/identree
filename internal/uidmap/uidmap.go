@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
+
+	"github.com/rinseaid/identree/internal/config"
 )
 
 // maxUIDMapBytes is the maximum size of a uid map file we will load into memory.
@@ -58,7 +61,7 @@ func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
 			NextGID: firstGID,
 		},
 	}
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if os.IsNotExist(err) {
 		return m, nil
 	}
@@ -66,6 +69,19 @@ func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
 		return nil, fmt.Errorf("uidmap: open %s: %w", path, err)
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("uidmap: stat %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("uidmap: %s is not a regular file", path)
+	}
+	if mode := info.Mode().Perm(); mode&0022 != 0 {
+		return nil, fmt.Errorf("uidmap: %s is group/world writable (mode %04o)", path, mode)
+	}
+	if uid, ok := config.FileOwnerUID(info); ok && uid != 0 {
+		return nil, fmt.Errorf("uidmap: %s is not owned by root (uid=%d)", path, uid)
+	}
 	data, err := io.ReadAll(io.LimitReader(f, maxUIDMapBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("uidmap: read %s: %w", path, err)
@@ -186,11 +202,16 @@ func (m *UIDMap) flushLocked() error {
 	if err != nil {
 		return fmt.Errorf("uidmap: marshal: %w", err)
 	}
-	// Write to a temp file, sync, and rename for atomicity + durability.
-	tmp := m.path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	// Write to a temp file (unique name), sync, and rename for atomicity + durability.
+	f, err := os.CreateTemp(filepath.Dir(m.path), ".uidmap-tmp-*")
 	if err != nil {
-		return fmt.Errorf("uidmap: open %s: %w", tmp, err)
+		return fmt.Errorf("uidmap: create temp: %w", err)
+	}
+	tmp := f.Name()
+	if err := os.Chmod(tmp, 0600); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("uidmap: chmod temp: %w", err)
 	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()

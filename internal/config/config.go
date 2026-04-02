@@ -451,6 +451,11 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if cfg.WebhookSecret != "" && len(cfg.WebhookSecret) < 32 {
 		return nil, fmt.Errorf("IDENTREE_WEBHOOK_SECRET must be at least 32 characters when set")
 	}
+	for i, key := range cfg.APIKeys {
+		if len(key) < 32 {
+			return nil, fmt.Errorf("IDENTREE_API_KEYS entry %d must be at least 32 characters", i+1)
+		}
+	}
 	if cfg.ExternalURL == "" {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL is required")
 	}
@@ -459,6 +464,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 	if strings.ContainsAny(cfg.ExternalURL, `"'<>`) {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL contains invalid characters (must not contain quotes or angle brackets)")
+	}
+	if cfg.DevLoginEnabled && strings.HasPrefix(cfg.ExternalURL, "https://") {
+		return nil, fmt.Errorf("IDENTREE_DEV_LOGIN must not be enabled when IDENTREE_EXTERNAL_URL is https:// — this bypass must never be used in production")
 	}
 	if cfg.LDAPEnabled && cfg.LDAPBaseDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN is required when LDAP is enabled")

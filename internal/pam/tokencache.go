@@ -188,13 +188,21 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 		return fmt.Errorf("marshaling cache data: %w", err)
 	}
 
-	// Atomic write: temp file + rename (same pattern as writeBreakglassFile)
+	// Atomic write: temp file + rename (same pattern as writeBreakglassFile).
+	// Permissions are set immediately after CreateTemp, before any data is written,
+	// so the id_token is never world-readable even transiently.
 	tmp, err := os.CreateTemp(tc.CacheDir, ".token-tmp-*")
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
 	tmpName := tmp.Name()
 
+	// Tighten permissions before writing any sensitive data.
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("setting permissions: %w", err)
+	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
@@ -208,12 +216,6 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		return fmt.Errorf("closing temp file: %w", err)
-	}
-
-	// Set permissions before rename (root-owned, 0600)
-	if err := os.Chmod(tmpName, 0600); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("setting permissions: %w", err)
 	}
 
 	// Atomic rename

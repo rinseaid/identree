@@ -150,8 +150,7 @@ func (s *Server) handleDeployPubkey(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if s.verifyJSONAdminAuth(w, r) == "" {
 		return
 	}
 	var req struct {
@@ -216,9 +215,8 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Admin session check
-	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	// Admin session + CSRF check
+	if s.verifyJSONAdminAuth(w, r) == "" {
 		return
 	}
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
@@ -441,8 +439,7 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
-		http.Error(w, "admin required", http.StatusForbidden)
+	if s.verifyJSONAdminAuth(w, r) == "" {
 		return
 	}
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
@@ -463,7 +460,7 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	adminUser := s.getSessionUser(r)
+	adminUser := s.getSessionUser(r) // already validated by verifyJSONAdminAuth above
 	s.store.RemoveHost(req.Hostname)
 	_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
 	s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
@@ -480,8 +477,7 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
-		http.Error(w, "admin required", http.StatusForbidden)
+	if s.verifyJSONAdminAuth(w, r) == "" {
 		return
 	}
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {

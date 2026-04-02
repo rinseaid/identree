@@ -248,9 +248,11 @@ func (s *Server) WaitForNotifications(timeout time.Duration) {
 		s.notifyWg.Wait()
 		close(done)
 	}()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
 	select {
 	case <-done:
-	case <-time.After(timeout):
+	case <-t.C:
 		slog.Warn("NOTIFY timed out waiting for notifications", "timeout", timeout)
 	}
 }

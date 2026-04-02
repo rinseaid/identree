@@ -3,9 +3,11 @@ package sudorules
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 )
 
 // SudoRule defines sudo permissions for a named group.
@@ -36,10 +38,25 @@ type Store struct {
 // If the file does not exist an empty store is returned without error.
 func NewStore(path string) (*Store, error) {
 	s := &Store{path: path, rules: []SudoRule{}}
-	data, err := os.ReadFile(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if os.IsNotExist(err) {
 		return s, nil
 	}
+	if err != nil {
+		return nil, fmt.Errorf("sudorules: open %s: %w", path, err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("sudorules: stat %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("sudorules: %s is not a regular file", path)
+	}
+	if mode := info.Mode().Perm(); mode&0022 != 0 {
+		return nil, fmt.Errorf("sudorules: %s is group/world writable (mode %04o)", path, mode)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 4<<20)) // 4 MiB limit
 	if err != nil {
 		return nil, fmt.Errorf("sudorules: read %s: %w", path, err)
 	}

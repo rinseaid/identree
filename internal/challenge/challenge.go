@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -1110,7 +1111,9 @@ func (s *ChallengeStore) flushDirty() {
 func (s *ChallengeStore) reapLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("panic in challenge reaper (recovered)", "panic", r)
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
+			slog.Error("panic in challenge reaper (recovered)", "panic", r, "stack", string(buf[:n]))
 			// Only restart if Stop() has not been called.
 			select {
 			case <-s.stopCh:

@@ -880,8 +880,10 @@ var dangerousSudoOptions = map[string]bool{
 	"shell_noargs": true,
 }
 
-// dangerousSudoOptionPrefixes are prefixes of sudo options that are blocked.
-var dangerousSudoOptionPrefixes = []string{
+// dangerousSudoOptionPrefixesRaw are the human-readable prefix list.
+// normalizedDangerousPrefixes is pre-computed at init() time to avoid
+// per-call normalization in the hot LDAP path.
+var dangerousSudoOptionPrefixesRaw = []string{
 	"env_keep+=ld_preload", "env_keep+=ld_library_path", "env_keep+=pythonpath",
 	"env_keep+=perl5lib", "env_keep+=rubylib", "env_keep+=node_path",
 	"env_keep+=classpath", "env_keep+=gopath", "env_keep+=bash_env",
@@ -895,6 +897,18 @@ var dangerousSudoOptionPrefixes = []string{
 	"env_keep+=bashopts", "env_keep+=cdpath", "env_keep+=globignore",
 	"env_keep+=_java_options", "secure_path", "mailerpath", "logfile",
 	"lecture_file", "timestamp_timeout", "env_check+=", "env_delete+=",
+}
+
+// normalizedDangerousPrefixes is dangerousSudoOptionPrefixesRaw with each
+// entry pre-normalized once at package init, avoiding per-call allocation
+// in the LDAP hot path.
+var normalizedDangerousPrefixes []string
+
+func init() {
+	normalizedDangerousPrefixes = make([]string, len(dangerousSudoOptionPrefixesRaw))
+	for i, p := range dangerousSudoOptionPrefixesRaw {
+		normalizedDangerousPrefixes[i] = strings.ToLower(normalizeSudoOption(p))
+	}
 }
 
 // hasSudoClaims returns true if the group has any sudo-related custom claims.
@@ -947,8 +961,8 @@ func isSafeSudoOption(opt string) bool {
 	if dangerousSudoOptions[normalized] {
 		return false
 	}
-	for _, prefix := range dangerousSudoOptionPrefixes {
-		if strings.HasPrefix(normalized, strings.ToLower(normalizeSudoOption(prefix))) {
+	for _, prefix := range normalizedDangerousPrefixes {
+		if strings.HasPrefix(normalized, prefix) {
 			return false
 		}
 	}

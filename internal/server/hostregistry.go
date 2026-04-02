@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -234,11 +235,30 @@ func generateHostSecret() (string, error) {
 }
 
 func (r *HostRegistry) load() {
-	data, err := os.ReadFile(r.filePath)
+	f, err := os.OpenFile(r.filePath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			slog.Warn("cannot read host registry", "path", r.filePath, "err", err)
 		}
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		slog.Warn("cannot stat host registry", "path", r.filePath, "err", err)
+		return
+	}
+	if !info.Mode().IsRegular() {
+		slog.Warn("host registry is not a regular file, skipping", "path", r.filePath)
+		return
+	}
+	if mode := info.Mode().Perm(); mode&0022 != 0 {
+		slog.Warn("host registry is group/world writable, skipping", "path", r.filePath, "mode", fmt.Sprintf("%04o", mode))
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 16<<20)) // 16 MiB limit
+	if err != nil {
+		slog.Warn("cannot read host registry", "path", r.filePath, "err", err)
 		return
 	}
 	var hosts map[string]*RegisteredHost

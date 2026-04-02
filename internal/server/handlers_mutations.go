@@ -30,7 +30,7 @@ func safeRedirectDest(raw string) string {
 	if err != nil {
 		return "/"
 	}
-	if !strings.HasPrefix(decoded, "/") || strings.HasPrefix(decoded, "//") || strings.ContainsAny(decoded, "?#\\") {
+	if !strings.HasPrefix(decoded, "/") || strings.HasPrefix(decoded, "//") || strings.ContainsAny(decoded, "?#\\\n\r\x00") {
 		return "/"
 	}
 	return decoded

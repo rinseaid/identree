@@ -286,3 +286,45 @@ func (s *Server) verifyFormAuth(w http.ResponseWriter, r *http.Request) string {
 
 	return username
 }
+
+// verifyJSONAdminAuth validates a CSRF-protected JSON API call for admin-only endpoints.
+// Reads CSRF token and timestamp from X-CSRF-Token / X-CSRF-Ts headers (not form fields)
+// since JSON requests cannot include form values. Returns the username on success or writes
+// an HTTP error and returns "" on failure.
+func (s *Server) verifyJSONAdminAuth(w http.ResponseWriter, r *http.Request) string {
+	username := s.getSessionUser(r)
+	if username == "" || s.getSessionRole(r) != "admin" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return ""
+	}
+
+	if s.cfg.SharedSecret == "" {
+		http.Error(w, "server misconfiguration", http.StatusInternalServerError)
+		return ""
+	}
+
+	csrfToken := r.Header.Get("X-CSRF-Token")
+	csrfTs := r.Header.Get("X-CSRF-Ts")
+	if csrfToken == "" || csrfTs == "" {
+		http.Error(w, "missing CSRF headers", http.StatusForbidden)
+		return ""
+	}
+
+	tsInt, err := strconv.ParseInt(csrfTs, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid CSRF timestamp", http.StatusForbidden)
+		return ""
+	}
+	if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > 5*time.Minute {
+		http.Error(w, "CSRF token expired", http.StatusForbidden)
+		return ""
+	}
+
+	expected := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(csrfToken)) != 1 {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return ""
+	}
+
+	return username
+}

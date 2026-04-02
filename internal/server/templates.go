@@ -802,6 +802,10 @@ const pendingBarHTML = `{{if .Pending}}
 </div>
 <script nonce="{{.CSPNonce}}">
 document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('pending-modal');if(m)m.classList.remove('open');}});
+// Wire confirmation dialogs for ALL saction-confirm buttons (including single-challenge reject).
+document.querySelectorAll('.saction-confirm').forEach(function(btn){
+  btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+});
 (function(){
   var pm=document.getElementById('pending-modal');
   if(pm){
@@ -812,9 +816,6 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=docum
       var first=focusable[0],last=focusable[focusable.length-1];
       if(e.shiftKey){if(document.activeElement===first){e.preventDefault();last.focus();}}
       else{if(document.activeElement===last){e.preventDefault();first.focus();}}
-    });
-    document.querySelectorAll('.saction-confirm').forEach(function(btn){
-      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
     });
   }
 })();
@@ -1651,6 +1652,7 @@ const adminPageHTML = `<!DOCTYPE html>
     if(tz){var d=new Date();d.setTime(d.getTime()+86400000);document.cookie='pam_tz='+tz+';path=/;expires='+d.toUTCString()+';SameSite=Lax';}
   }
   var _t={copied:'{{call .T "copied"}}',deployOk:'{{call .T "deploy_success"}}',deployFailed:'{{call .T "deploy_failed"}}',requestFailed:'{{call .T "request_failed"}}',clipboardEmpty:'{{call .T "clipboard_empty"}}',clipboardError:'{{call .T "clipboard_error"}}',loadingUsers:'{{call .T "deploy_user_loading"}}',unavailable:'{{call .T "deploy_user_unavailable"}}',deployRun:'{{call .T "deploy_run"}}',starting:'{{call .T "deploy_starting"}}',hostRequired:'{{call .T "host_required"}}',keyRequired:'{{call .T "key_required"}}',connLost:'{{call .T "connection_lost"}}',deployForbidden:'{{call .T "deploy_forbidden"}}'};
+  var _csrf={'X-CSRF-Token':'{{.CSRFToken}}','X-CSRF-Ts':'{{.CSRFTs}}'};
   document.addEventListener('DOMContentLoaded',function(){
     // Auto-dismiss success banners after 5 seconds
     document.querySelectorAll('.banner-success').forEach(function(el){
@@ -1742,7 +1744,7 @@ const adminPageHTML = `<!DOCTYPE html>
     function deployValidateKey(pem){
       document.getElementById('deploy-key-validating').style.display='';
       document.getElementById('deploy-key-invalid').style.display='none';
-      fetch('/api/deploy/pubkey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({private_key:pem})})
+      fetch('/api/deploy/pubkey',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},_csrf),body:JSON.stringify({private_key:pem})})
       .then(function(r){
         if(!r.ok){return r.text().then(function(t){throw new Error(t||r.statusText);});}
         return r.json();
@@ -1868,7 +1870,7 @@ const adminPageHTML = `<!DOCTYPE html>
         errEl.style.display='none';
         deploySubmitBtn.disabled=true;
         deploySubmitBtn.textContent=_t.starting;
-        fetch('/api/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hostname:host,port:port,ssh_user:sshUser,private_key:deployPrivKey,pocketid_user:pocketidUser})})
+        fetch('/api/deploy',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},_csrf),body:JSON.stringify({hostname:host,port:port,ssh_user:sshUser,private_key:deployPrivKey,pocketid_user:pocketidUser})})
         .then(function(r){
           if(!r.ok){if(r.status===403){throw new Error(_t.deployForbidden);}return r.text().then(function(t){throw new Error(t||r.statusText);});}
           return r.json();
@@ -3106,7 +3108,7 @@ const adminPageHTML = `<!DOCTYPE html>
         payload.remove_files=removeFiles;
         removeConfirmBtn.disabled=true;
         removeConfirmBtn.textContent='Removing\u2026';
-        fetch('/api/deploy/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+        fetch('/api/deploy/remove',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},_csrf),body:JSON.stringify(payload)})
           .then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error(t);});return r.json();})
           .then(function(data){
             document.getElementById('remove-form-area').style.display='none';
@@ -3132,7 +3134,7 @@ const adminPageHTML = `<!DOCTYPE html>
       } else {
         removeConfirmBtn.disabled=true;
         removeConfirmBtn.textContent='Removing\u2026';
-        fetch('/api/hosts/remove-host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+        fetch('/api/hosts/remove-host',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},_csrf),body:JSON.stringify(payload)})
           .then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error(t);});return r.json();})
           .then(function(){
             document.getElementById('remove-form-area').style.display='none';
