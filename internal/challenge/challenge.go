@@ -412,21 +412,6 @@ func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 	return nil
 }
 
-// SetIDToken stores the raw OIDC id_token on an approved challenge.
-// Called after approval so the PAM client can cache the token locally.
-func (s *ChallengeStore) SetIDToken(id string, rawIDToken string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, ok := s.challenges[id]
-	if !ok {
-		return
-	}
-	if c.Status != StatusApproved {
-		return
-	}
-	c.RawIDToken = rawIDToken
-}
-
 // Deny marks a challenge as denied.
 func (s *ChallengeStore) Deny(id string) error {
 	s.mu.Lock()

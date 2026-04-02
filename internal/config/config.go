@@ -391,6 +391,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if cfg.SharedSecret == "" {
 		return nil, fmt.Errorf("IDENTREE_SHARED_SECRET is required")
 	}
+	if len(cfg.SharedSecret) < 16 {
+		return nil, fmt.Errorf("IDENTREE_SHARED_SECRET must be at least 16 characters")
+	}
 	if cfg.ExternalURL == "" {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL is required")
 	}
@@ -402,6 +405,13 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 	if cfg.LDAPEnabled && cfg.LDAPBaseDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN is required when LDAP is enabled")
+	}
+	if cfg.EscrowBackend == EscrowBackendVault && cfg.EscrowPath != "" {
+		for _, seg := range strings.Split(cfg.EscrowPath, "/") {
+			if seg == ".." || seg == "." {
+				return nil, fmt.Errorf("IDENTREE_ESCROW_PATH must not contain path traversal sequences (.. or .)")
+			}
+		}
 	}
 
 	// Validate LDAPSudoNoAuthenticate

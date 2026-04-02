@@ -392,14 +392,16 @@ func (s *Server) handlePocketIDWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If a webhook secret is configured, validate the signature.
+	// Webhook secret is required; reject requests when none is configured.
 	// PocketID signs requests with HMAC-SHA256 in the X-Webhook-Signature header.
-	if s.cfg.WebhookSecret != "" {
-		sig := r.Header.Get("X-Webhook-Signature")
-		if !verifyWebhookSignature(r, s.cfg.WebhookSecret, sig) {
-			http.Error(w, "invalid signature", http.StatusForbidden)
-			return
-		}
+	if s.cfg.WebhookSecret == "" {
+		http.Error(w, "webhook not configured", http.StatusForbidden)
+		return
+	}
+	sig := r.Header.Get("X-Webhook-Signature")
+	if !verifyWebhookSignature(r, s.cfg.WebhookSecret, sig) {
+		http.Error(w, "invalid signature", http.StatusForbidden)
+		return
 	}
 
 	// Non-blocking send: if a refresh is already queued, drop the duplicate.

@@ -350,6 +350,9 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 		// Collect SSH public keys from claims.
 		var sshKeys []string
 		for _, cl := range u.CustomClaims {
+			if len(sshKeys) >= maxSSHKeys {
+				break
+			}
 			if sshKeyClaimRe.MatchString(cl.Key) && cl.Value != "" {
 				if !isValidLDAPAttrValue(cl.Value) || !sshKeyPrefixRe.MatchString(cl.Value) {
 					slog.Warn("ldap: ignoring malformed SSH public key claim", "user", u.Username, "claim", cl.Key)
@@ -891,6 +894,9 @@ func validSudoCommand(cmd string) bool {
 // maxClaimItems caps the number of comma-separated items accepted from a single
 // OIDC claim to prevent resource exhaustion from a pathologically large claim.
 const maxClaimItems = 500
+
+// maxSSHKeys caps the number of SSH public key claims collected per user.
+const maxSSHKeys = 100
 
 // splitClaim splits a comma-separated claim value into trimmed, non-empty values.
 func splitClaim(claims map[string]string, key string) []string {

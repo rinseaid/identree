@@ -234,7 +234,7 @@ func TestMatchesFilter(t *testing.T) {
 		{"NOT no match", "(!(uid=bob))", true},
 		{"NOT match", "(!(uid=alice))", false},
 		{"case insensitive value", "(UID=ALICE)", true},
-		{"malformed filter", "((bad", true}, // malformed passes through
+		{"malformed filter", "((bad", false}, // malformed: fail closed
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -424,14 +424,14 @@ func TestLdapSubstringMatch(t *testing.T) {
 func TestEvalFilterStr_BareAttr(t *testing.T) {
 	// bare attr=value (no parens)
 	attrs := map[string][]string{"uid": {"alice"}}
-	ok, rest := evalFilterStr("uid=alice", attrs)
+	ok, rest := evalFilterStr("uid=alice", attrs, 0)
 	if !ok || rest != "" {
 		t.Errorf("bare attr=value: got ok=%v rest=%q", ok, rest)
 	}
 }
 
 func TestEvalFilterStr_Empty(t *testing.T) {
-	ok, rest := evalFilterStr("", map[string][]string{})
+	ok, rest := evalFilterStr("", map[string][]string{}, 0)
 	if !ok || rest != "" {
 		t.Errorf("empty: got ok=%v rest=%q", ok, rest)
 	}
@@ -439,7 +439,7 @@ func TestEvalFilterStr_Empty(t *testing.T) {
 
 func TestEvalAnd_NoParens(t *testing.T) {
 	// evalAnd with content that doesn't start with ( — should return true immediately
-	result := evalAnd("uid=alice", map[string][]string{"uid": {"alice"}})
+	result := evalAnd("uid=alice", map[string][]string{"uid": {"alice"}}, 0)
 	if !result {
 		t.Error("evalAnd with no-paren content should return true")
 	}
@@ -447,16 +447,16 @@ func TestEvalAnd_NoParens(t *testing.T) {
 
 func TestEvalOr_NoParens(t *testing.T) {
 	// evalOr with content that doesn't start with ( — should return false (no match found)
-	result := evalOr("uid=alice", map[string][]string{"uid": {"alice"}})
+	result := evalOr("uid=alice", map[string][]string{"uid": {"alice"}}, 0)
 	if result {
 		t.Error("evalOr with no-paren content should return false (no term evaluated)")
 	}
 }
 
 func TestEvalSimple_NoEquals(t *testing.T) {
-	// expression without '=' should pass through as true
-	if !evalSimple("noequalssign", map[string][]string{}) {
-		t.Error("expected true for unparseable expression")
+	// expression without '=' is unparseable — fail closed
+	if evalSimple("noequalssign", map[string][]string{}) {
+		t.Error("expected false for unparseable expression (fail closed)")
 	}
 }
 
