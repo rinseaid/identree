@@ -328,6 +328,12 @@ func (r *HostRegistry) saveLocked() {
 	if err := os.Rename(tmpName, r.filePath); err != nil {
 		os.Remove(tmpName)
 		slog.Error("renaming host registry", "err", err)
+		return
+	}
+	// Sync the parent directory so the rename is durable on power loss.
+	if d, err := os.Open(filepath.Dir(r.filePath)); err == nil {
+		_ = d.Sync()
+		d.Close()
 	}
 }
 

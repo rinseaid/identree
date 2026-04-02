@@ -213,6 +213,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 		b, err := strconv.ParseBool(v)
 		if err != nil {
+			slog.Warn("config: invalid boolean value, using default", "key", key, "value", v, "default", def)
 			return def
 		}
 		return b
@@ -224,6 +225,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 		d, err := time.ParseDuration(v)
 		if err != nil {
+			slog.Warn("config: invalid duration value, using default", "key", key, "value", v, "default", def)
 			return def
 		}
 		return d
@@ -235,6 +237,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 		n, err := strconv.Atoi(v)
 		if err != nil {
+			slog.Warn("config: invalid integer value, using default", "key", key, "value", v, "default", def)
 			return def
 		}
 		return n

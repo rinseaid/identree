@@ -1488,6 +1488,11 @@ func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) bool 
 		slog.Error("renaming session state file", "err", err)
 		return false
 	}
+	// Sync the parent directory so the rename is durable on power loss.
+	if d, err := os.Open(filepath.Dir(s.persistPath)); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
 	return true
 }
 

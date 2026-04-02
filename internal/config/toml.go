@@ -321,6 +321,11 @@ func SaveTOMLConfig(path string, values map[string]string) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("renaming temp config file: %w", err)
 	}
+	// Sync the parent directory so the rename is durable on power loss.
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
 	return nil
 }
 

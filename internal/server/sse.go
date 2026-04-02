@@ -86,6 +86,10 @@ func (s *Server) broadcastSSE(username, event string) {
 // handleSSEEvents streams server-sent events for live dashboard updates.
 // GET /api/events
 func (s *Server) handleSSEEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	username := s.getSessionUser(r)
 	if username == "" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

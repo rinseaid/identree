@@ -191,6 +191,10 @@ func deriveEscrowLink(backend, escrowURL, escrowPath, itemID, vaultID, webURL, h
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	var failing []string
 

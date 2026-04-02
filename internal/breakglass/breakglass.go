@@ -246,6 +246,11 @@ func writeBreakglassFile(path, hash, hostname, passwordType string) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("renaming to target: %w", err)
 	}
+	// Sync the parent directory so the rename is durable on power loss.
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
 
 	return nil
 }

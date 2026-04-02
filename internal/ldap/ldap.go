@@ -205,16 +205,27 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 	}
 	ldapQueryTotal.WithLabelValues(queryBase).Inc()
 
+	// Effective limit: honour the client's SizeLimit up to the server's hard cap.
+	// SizeLimit == 0 means "no client limit"; server cap still applies.
+	limit := maxLDAPSearchResults
+	if msg.SizeLimit > 0 && int(msg.SizeLimit) < limit {
+		limit = int(msg.SizeLimit)
+	}
+
 	// Bridge mode: serve only ou=sudoers from the local rules store.
 	if s.sudoRules != nil {
+		var truncated bool
 		switch {
 		case scope == baseLower && msg.Scope == gldap.BaseObject:
 			s.sendRootDSE(w, req, base)
 		case scope == sudoersDN || strings.HasSuffix(scope, ","+sudoersDN):
-			s.searchSudoersFromStore(w, req, filter, base)
+			truncated = s.searchSudoersFromStore(w, req, filter, base, limit)
 		case scope == baseLower:
 			// Subtree from root in bridge mode — only serve sudoers.
-			s.searchSudoersFromStore(w, req, filter, base)
+			truncated = s.searchSudoersFromStore(w, req, filter, base, limit)
+		}
+		if truncated {
+			resp.SetResultCode(gldap.ResultSizeLimitExceeded)
 		}
 		return
 	}
@@ -229,24 +240,33 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		return
 	}
 
+	var truncated bool
 	switch {
 	case scope == baseLower && msg.Scope == gldap.BaseObject:
 		s.sendRootDSE(w, req, base)
 
 	case scope == peopleDN || strings.HasSuffix(scope, ","+peopleDN):
-		s.searchPeople(w, req, filter, dir, base)
+		truncated = s.searchPeople(w, req, filter, dir, base, limit)
 
 	case scope == groupsDN || strings.HasSuffix(scope, ","+groupsDN):
-		s.searchGroups(w, req, filter, dir, base)
+		truncated = s.searchGroups(w, req, filter, dir, base, limit)
 
 	case scope == sudoersDN || strings.HasSuffix(scope, ","+sudoersDN):
-		s.searchSudoers(w, req, filter, dir, base)
+		truncated = s.searchSudoers(w, req, filter, dir, base, limit)
 
 	case scope == baseLower:
-		// Subtree from root — serve everything
-		s.searchPeople(w, req, filter, dir, base)
-		s.searchGroups(w, req, filter, dir, base)
-		s.searchSudoers(w, req, filter, dir, base)
+		// Subtree from root — serve everything. Note: SizeLimit is applied
+		// per sub-search; aggregate may exceed msg.SizeLimit in practice.
+		truncated = s.searchPeople(w, req, filter, dir, base, limit)
+		if !truncated {
+			truncated = s.searchGroups(w, req, filter, dir, base, limit)
+		}
+		if !truncated {
+			truncated = s.searchSudoers(w, req, filter, dir, base, limit)
+		}
+	}
+	if truncated {
+		resp.SetResultCode(gldap.ResultSizeLimitExceeded)
 	}
 }
 
@@ -263,7 +283,8 @@ func (s *LDAPServer) sendRootDSE(w *gldap.ResponseWriter, req *gldap.Request, ba
 }
 
 // searchPeople sends posixAccount + shadowAccount entries.
-func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, base string) {
+// Returns true if the result set was truncated by limit.
+func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, base string, limit int) bool {
 	peopleDN := "ou=people," + base
 
 	// OU container
@@ -427,18 +448,20 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
-		if sent >= maxLDAPSearchResults {
-			slog.Warn("ldap: searchPeople result cap reached, truncating response", "limit", maxLDAPSearchResults)
-			break
+		if sent >= limit {
+			slog.Warn("ldap: searchPeople result cap reached, truncating response", "limit", limit)
+			return true
 		}
 		entry := req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs))
 		w.Write(entry)
 		sent++
 	}
+	return false
 }
 
 // searchGroups sends posixGroup entries for PocketID groups and User Private Groups.
-func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, base string) {
+// Returns true if the result set was truncated by limit.
+func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, base string, limit int) bool {
 	groupsDN := "ou=groups," + base
 	peopleDN := "ou=people," + base
 
@@ -491,9 +514,9 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
-		if sent >= maxLDAPSearchResults {
-			slog.Warn("ldap: searchGroups result cap reached, truncating response", "limit", maxLDAPSearchResults)
-			return
+		if sent >= limit {
+			slog.Warn("ldap: searchGroups result cap reached, truncating response", "limit", limit)
+			return true
 		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
 		sent++
@@ -519,13 +542,14 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
-		if sent >= maxLDAPSearchResults {
-			slog.Warn("ldap: searchGroups (UPG) result cap reached, truncating response", "limit", maxLDAPSearchResults)
-			return
+		if sent >= limit {
+			slog.Warn("ldap: searchGroups (UPG) result cap reached, truncating response", "limit", limit)
+			return true
 		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
 		sent++
 	}
+	return false
 }
 
 // searchSudoers emits sudoRole entries for groups that have sudo-related custom claims.
@@ -539,7 +563,8 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 //
 // A group is emitted only if it has at least one sudo-related claim and all
 // required fields pass validation. Security validation mirrors glauth-pocketid.
-func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, base string) {
+// Returns true if the result set was truncated by limit.
+func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, base string, limit int) bool {
 	sudoersDN := "ou=sudoers," + base
 
 	ouAttrs := map[string][]string{
@@ -643,19 +668,21 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
-		if sent >= maxLDAPSearchResults {
-			slog.Warn("ldap: searchSudoers result cap reached, truncating response", "limit", maxLDAPSearchResults)
-			break
+		if sent >= limit {
+			slog.Warn("ldap: searchSudoers result cap reached, truncating response", "limit", limit)
+			return true
 		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
 		sent++
 	}
+	return false
 }
 
 // searchSudoersFromStore emits sudoRole entries from the bridge-mode rules store.
 // sudoUser is set to %groupname (LDAP group membership syntax for sudoers) since
 // individual usernames are not known in bridge mode.
-func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.Request, filter, base string) {
+// Returns true if the result set was truncated by limit.
+func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.Request, filter, base string, limit int) bool {
 	sudoersDN := "ou=sudoers," + base
 
 	ouAttrs := map[string][]string{
@@ -770,13 +797,14 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
-		if sent >= maxLDAPSearchResults {
-			slog.Warn("ldap: searchSudoersFromStore result cap reached, truncating response", "limit", maxLDAPSearchResults)
-			break
+		if sent >= limit {
+			slog.Warn("ldap: searchSudoersFromStore result cap reached, truncating response", "limit", limit)
+			return true
 		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
 		sent++
 	}
+	return false
 }
 
 // splitComma splits a comma-separated string into trimmed non-empty values.

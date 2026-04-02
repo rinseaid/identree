@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -208,6 +209,11 @@ func (m *UIDMap) flushLocked() error {
 	if err := os.Rename(tmp, m.path); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("uidmap: rename to %s: %w", m.path, err)
+	}
+	// Sync the parent directory so the rename is durable on power loss.
+	if d, err := os.Open(filepath.Dir(m.path)); err == nil {
+		_ = d.Sync()
+		d.Close()
 	}
 	m.dirty = false
 	return nil

@@ -163,5 +163,10 @@ func (s *Store) flush() error {
 		os.Remove(tmp)
 		return fmt.Errorf("sudorules: rename to %s: %w", s.path, err)
 	}
+	// Sync the parent directory so the rename is durable on power loss.
+	if d, err := os.Open(filepath.Dir(s.path)); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
 	return nil
 }

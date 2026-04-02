@@ -222,6 +222,11 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("renaming to target: %w", err)
 	}
+	// Sync the parent directory so the rename is durable on power loss.
+	if d, err := os.Open(tc.CacheDir); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
 
 	return nil
 }
