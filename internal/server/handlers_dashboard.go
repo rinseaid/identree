@@ -59,6 +59,10 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 // Only registered when IDENTREE_DEV_LOGIN=true. Never use in production.
 // GET /dev/login?user=alice&role=admin
 func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.DevLoginEnabled {
+		http.NotFound(w, r)
+		return
+	}
 	user := r.URL.Query().Get("user")
 	role := r.URL.Query().Get("role")
 	if user == "" || !validUsername.MatchString(user) {
@@ -76,6 +80,10 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 // Only registered when IDENTREE_DEV_LOGIN=true. Never use in production.
 // POST /dev/seed-history  body: [{"username":"alice","action":"approved","hostname":"prod-web-01","actor":"testadmin","minutes_ago":90}]
 func (s *Server) handleDevSeedHistory(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.DevLoginEnabled {
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -103,6 +111,10 @@ func (s *Server) handleDevSeedHistory(w http.ResponseWriter, r *http.Request) {
 // Only registered when IDENTREE_DEV_LOGIN=true. Never use in production.
 // POST /dev/seed-session  body: {"username":"alice","hostname":"prod-web-01"}
 func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.DevLoginEnabled {
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

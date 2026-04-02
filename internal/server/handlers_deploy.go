@@ -421,7 +421,7 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.getSessionRole(r) != "admin" {
+	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
 		http.Error(w, "admin required", http.StatusForbidden)
 		return
 	}
@@ -456,7 +456,7 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.getSessionRole(r) != "admin" {
+	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
 		http.Error(w, "admin required", http.StatusForbidden)
 		return
 	}
