@@ -655,6 +655,7 @@ func (s *ChallengeStore) LogAction(username, action, hostname, code, actor strin
 // Disk writes are deferred to the 2-second flush timer rather than happening inline.
 func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor string, at time.Time) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	entry := ActionLogEntry{
 		Timestamp: at,
 		Action:    action,
@@ -672,7 +673,6 @@ func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor str
 		s.actionLog[username] = entries[len(entries)-maxActionLogPrune:]
 	}
 	s.dirty.Store(true)
-	s.mu.Unlock()
 }
 
 // ActionHistory returns the action log entries for a user, most recent first.

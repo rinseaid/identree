@@ -373,6 +373,11 @@ func LoadServerConfig() (*ServerConfig, error) {
 
 	// Load escrow auth secret from file if EscrowAuthSecretFile is set and EscrowAuthSecret is empty.
 	if cfg.EscrowAuthSecretFile != "" && cfg.EscrowAuthSecret == "" {
+		for _, seg := range strings.Split(cfg.EscrowAuthSecretFile, "/") {
+			if seg == ".." || seg == "." {
+				return nil, fmt.Errorf("IDENTREE_ESCROW_AUTH_SECRET_FILE must not contain path traversal sequences")
+			}
+		}
 		if data, err := os.ReadFile(cfg.EscrowAuthSecretFile); err == nil {
 			cfg.EscrowAuthSecret = strings.TrimSpace(string(data))
 		}
