@@ -123,6 +123,7 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 			defer func() { <-notifySemaphore }()
 		default:
 			notify.NotificationsTotal.WithLabelValues("skipped").Inc()
+			slog.Warn("NOTIFY skipped", "reason", "too many concurrent notifications", "event", nd.Event, "user", nd.Username)
 			return
 		}
 
@@ -143,6 +144,7 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 			return
 		}
 		notify.NotificationsTotal.WithLabelValues("sent").Inc()
+		slog.Info("NOTIFY sent", "event", nd.Event, "user", nd.Username, "host", nd.Hostname)
 	}()
 }
 

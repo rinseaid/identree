@@ -452,7 +452,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 			if len(parts) == 2 {
 				switch parts[0] {
 				case "config_saved":
-					flashes = append(flashes, "Configuration saved.")
+					flashes = append(flashes, t("config_saved"))
 				case "config_saved_restart":
 					if parts[1] != "" {
 						restartSections = strings.Split(parts[1], "|")

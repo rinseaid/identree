@@ -314,7 +314,7 @@
   "config": "Config",
   "save": "Save",
   "save_config": "Save configuration",
-  "config_saved": "Configuration saved. Some changes require a server restart to take effect.",
+  "config_saved": "Configuration saved.",
   "config_save_failed": "Failed to save configuration",
   "env_locked_note": "Fields locked by environment variable cannot be modified here.",
   "cfg_oidc": "OIDC Authentication",

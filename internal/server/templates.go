@@ -10,7 +10,6 @@ import (
 // templateFuncMap is the shared function map for all templates.
 var templateFuncMap = template.FuncMap{
 	"formatDuration": formatDuration,
-	"timeAgo":        timeAgo,
 	"formatTime":     formatTime,
 	"eqInt":          func(a, b int) bool { return a == b },
 	"add":            func(a, b int) int { return a + b },
@@ -408,7 +407,7 @@ const sharedCSS = `
       min-height: 34px;
     }
     .btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
-    .btn:disabled { opacity: 0.38; cursor: not-allowed; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
     .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
     .btn-primary:hover { background: var(--primary-h); border-color: var(--primary-h); color: var(--primary-fg); }
@@ -828,21 +827,6 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04") + " UTC"
 }
 
-
-// timeAgo formats a time as a human-readable relative string like "2m ago" or "1h ago".
-func timeAgo(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	}
-}
 
 // timeAgoI18n formats a time as a localized human-readable relative string.
 func timeAgoI18n(when time.Time, t func(string) string) string {

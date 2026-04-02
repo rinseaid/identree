@@ -414,6 +414,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			"loginShell":       {shell},
 			"gecos":            {fullName},
 			"shadowLastChange": {"0"},
+			"shadowMin":        {"0"},
 			"shadowMax":        {"99999"},
 			"shadowWarning":    {"7"},
 			"accountStatus":    {accountStatus},

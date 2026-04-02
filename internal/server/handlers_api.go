@@ -361,7 +361,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		"expires_in":       int(s.cfg.ChallengeTTL.Seconds()),
 	}
 	if s.cfg.NotifyBackend != "" {
-		resp["notification_sent"] = true
+		resp["notification_queued"] = true
 	}
 	if challenge.BreakglassRotateBefore != "" {
 		resp["rotate_breakglass_before"] = challenge.BreakglassRotateBefore
