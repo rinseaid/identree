@@ -20,6 +20,10 @@ type SudoRule struct {
 	Options    string `json:"options,omitempty"`    // comma-separated sudo options
 }
 
+// maxRules is the maximum number of sudo rules the store will hold.
+// Prevents unbounded memory growth and linear LDAP search performance degradation.
+const maxRules = 1000
+
 // Store persists sudo rules to a JSON file using atomic writes.
 // Safe for concurrent use.
 type Store struct {
@@ -58,19 +62,27 @@ func (s *Store) Rules() []SudoRule {
 }
 
 // Set replaces all rules atomically and persists to disk.
+// Returns an error if the new set exceeds the maximum rule count.
 func (s *Store) Set(rules []SudoRule) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(rules) > maxRules {
+		return fmt.Errorf("sudorules: cannot set %d rules: maximum is %d", len(rules), maxRules)
+	}
 	cp := make([]SudoRule, len(rules))
 	copy(cp, rules)
 	s.rules = cp
 	return s.flush()
 }
 
-// Add appends a new rule. Returns an error if a rule for that group already exists.
+// Add appends a new rule. Returns an error if a rule for that group already exists
+// or if the maximum rule count would be exceeded.
 func (s *Store) Add(rule SudoRule) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.rules) >= maxRules {
+		return fmt.Errorf("sudorules: maximum rule count (%d) reached; remove a rule before adding another", maxRules)
+	}
 	for _, r := range s.rules {
 		if r.Group == rule.Group {
 			return fmt.Errorf("sudorules: rule for group %q already exists", rule.Group)
@@ -128,6 +140,11 @@ func (s *Store) flush() error {
 		return fmt.Errorf("sudorules: create temp: %w", err)
 	}
 	tmp := f.Name()
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("sudorules: chmod %s: %w", tmp, err)
+	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		os.Remove(tmp)

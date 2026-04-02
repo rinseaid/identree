@@ -232,15 +232,15 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
     <p style="margin-top:16px"><a href="/" style="color:var(--primary);text-decoration:underline">%s</a></p>
   </div>
 </body>
-</html>`, lang, themeClass, t("terminal_approved"), sharedCSS,
+</html>`, lang, themeClass, template.HTMLEscapeString(t("terminal_approved")), sharedCSS,
 			template.HTMLEscapeString(challenge.Username), template.HTMLEscapeString(hostname),
 			actionURL,
 			template.HTMLEscapeString(username),
 			template.HTMLEscapeString(csrfToken),
 			template.HTMLEscapeString(csrfTs),
 			template.HTMLEscapeString(token),
-			t("approve"),
-			t("back_to_dashboard"))
+			template.HTMLEscapeString(t("approve")),
+			template.HTMLEscapeString(t("back_to_dashboard")))
 		return
 	}
 
@@ -307,10 +307,10 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
     <p style="margin-top:16px"><a href="/" style="color:var(--primary);text-decoration:underline">%s</a></p>
   </div>
 </body>
-</html>`, lang, themeClass, t("terminal_approved"), sharedCSS,
-		t("terminal_approved"),
-		t("approved_sudo_on"), template.HTMLEscapeString(hostname),
-		t("back_to_dashboard"))
+</html>`, lang, themeClass, template.HTMLEscapeString(t("terminal_approved")), sharedCSS,
+		template.HTMLEscapeString(t("terminal_approved")),
+		template.HTMLEscapeString(t("approved_sudo_on")), template.HTMLEscapeString(hostname),
+		template.HTMLEscapeString(t("back_to_dashboard")))
 }
 
 // handleRevokeSession processes session revocation from the success page.

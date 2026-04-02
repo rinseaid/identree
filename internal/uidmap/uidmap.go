@@ -3,9 +3,13 @@ package uidmap
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 )
+
+// maxUIDMapBytes is the maximum size of a uid map file we will load into memory.
+const maxUIDMapBytes = 64 << 20 // 64 MiB
 
 // UIDMap provides stable UID/GID assignments for PocketID users and groups.
 // Assignments are persisted to a JSON file so they survive restarts.
@@ -53,12 +57,20 @@ func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
 			NextGID: firstGID,
 		},
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return m, nil
 	}
 	if err != nil {
+		return nil, fmt.Errorf("uidmap: open %s: %w", path, err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxUIDMapBytes+1))
+	if err != nil {
 		return nil, fmt.Errorf("uidmap: read %s: %w", path, err)
+	}
+	if len(data) > maxUIDMapBytes {
+		return nil, fmt.Errorf("uidmap: %s exceeds maximum size of %d bytes", path, maxUIDMapBytes)
 	}
 	if err := json.Unmarshal(data, &m.data); err != nil {
 		return nil, fmt.Errorf("uidmap: parse %s: %w", path, err)
@@ -99,10 +111,16 @@ func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
 			m.data.NextUID = uid + 1
 		}
 	}
+	if m.data.NextUID > maxUID {
+		m.data.NextUID = maxUID + 1 // signals exhaustion to UID() without wrapping
+	}
 	for _, gid := range m.data.GIDs {
 		if gid >= m.data.NextGID {
 			m.data.NextGID = gid + 1
 		}
+	}
+	if m.data.NextGID > maxGID {
+		m.data.NextGID = maxGID + 1
 	}
 	return m, nil
 }
@@ -202,9 +220,17 @@ func (m *UIDMap) ImportLegacy(path string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	data, err := os.ReadFile(path)
+	lf, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("uidmap: import legacy %s: %w", path, err)
+	}
+	defer lf.Close()
+	data, err := io.ReadAll(io.LimitReader(lf, maxUIDMapBytes+1))
+	if err != nil {
+		return fmt.Errorf("uidmap: import legacy read %s: %w", path, err)
+	}
+	if len(data) > maxUIDMapBytes {
+		return fmt.Errorf("uidmap: import legacy file %s exceeds maximum size of %d bytes", path, maxUIDMapBytes)
 	}
 	var legacy uidMapData
 	if err := json.Unmarshal(data, &legacy); err != nil {

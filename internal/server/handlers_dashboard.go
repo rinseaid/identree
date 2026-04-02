@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -1509,16 +1510,12 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 		case "csv":
 			w.Header().Set("Content-Type", "text/csv")
 			w.Header().Set("Content-Disposition", "attachment; filename=identree-history.csv")
-			w.Write([]byte("username,timestamp,action,hostname,code,actor\n"))
+			cw := csv.NewWriter(w)
+			cw.Write([]string{"username", "timestamp", "action", "hostname", "code", "actor"})
 			for _, e := range allHistory {
-				fmt.Fprintf(w, "%s,%s,%s,%s,%s,%s\n",
-					e.Username,
-					e.Timestamp.Format(time.RFC3339),
-					e.Action,
-					e.Hostname,
-					e.Code,
-					e.Actor)
+				cw.Write([]string{e.Username, e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor})
 			}
+			cw.Flush()
 		case "json":
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Content-Disposition", "attachment; filename=identree-history.json")
@@ -1535,15 +1532,12 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 	case "csv":
 		w.Header().Set("Content-Type", "text/csv")
 		w.Header().Set("Content-Disposition", "attachment; filename=identree-history.csv")
-		w.Write([]byte("timestamp,action,hostname,code,actor\n"))
+		cw := csv.NewWriter(w)
+		cw.Write([]string{"timestamp", "action", "hostname", "code", "actor"})
 		for _, e := range history {
-			fmt.Fprintf(w, "%s,%s,%s,%s,%s\n",
-				e.Timestamp.Format(time.RFC3339),
-				e.Action,
-				e.Hostname,
-				e.Code,
-				e.Actor)
+			cw.Write([]string{e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor})
 		}
+		cw.Flush()
 	case "json":
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition", "attachment; filename=identree-history.json")

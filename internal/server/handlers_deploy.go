@@ -221,6 +221,10 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+		return
+	}
 
 	// Per-IP rate limit
 	callerIP := clientIP(r)
@@ -372,13 +376,14 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 		// Send any new bytes
 		if len(data) > sent {
 			newData := data[sent:]
-			// Emit line by line as SSE events for clean display
+			// Emit line by line as SSE events for clean display.
+			// Strip \r to prevent SSE field injection from CR-containing SSH output.
 			lines := strings.Split(string(newData), "\n")
 			for i, line := range lines {
 				if i == len(lines)-1 && line == "" {
 					break // trailing newline
 				}
-				fmt.Fprintf(w, "data: %s\n\n", line)
+				fmt.Fprintf(w, "data: %s\n\n", strings.TrimRight(line, "\r"))
 			}
 			sent = len(data)
 			if canFlush {
@@ -425,6 +430,10 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "admin required", http.StatusForbidden)
 		return
 	}
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	var req struct {
@@ -458,6 +467,10 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
 		http.Error(w, "admin required", http.StatusForbidden)
+		return
+	}
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
 		return
 	}
 

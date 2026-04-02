@@ -166,6 +166,7 @@ type ChallengeStore struct {
 	challenges         map[string]*Challenge // keyed by ID
 	byCode             map[string]string     // user_code -> ID
 	pendingByUser      map[string]int        // username -> count of pending non-expired challenges
+	totalPending       int                   // total across all users; used for the global cap
 	lastApproval       map[string]time.Time  // graceKey -> expiry time (for grace period)
 	revokeTokensBefore     map[string]time.Time  // username -> revocation timestamp
 	rotateBreakglassBefore map[string]time.Time  // hostname -> per-host rotate-before timestamp
@@ -291,8 +292,10 @@ func (s *ChallengeStore) Create(username, hostname, breakglassRotateBefore strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Rate limit: cap total challenges to prevent memory exhaustion DoS
-	if len(s.challenges) >= maxTotalChallenges {
+	// Rate limit: cap pending challenges to prevent memory exhaustion DoS.
+	// Counting only pending (not yet resolved) challenges ensures that a burst
+	// of approvals doesn't prevent new challenges while the reaper catches up.
+	if s.totalPending >= maxTotalChallenges {
 		return nil, fmt.Errorf("try again later: %w", ErrTooManyChallenges)
 	}
 
@@ -309,6 +312,7 @@ func (s *ChallengeStore) Create(username, hostname, breakglassRotateBefore strin
 	s.challenges[id] = c
 	s.byCode[code] = id
 	s.pendingByUser[username]++
+	s.totalPending++
 	return c, nil
 }
 
@@ -328,14 +332,20 @@ func (s *ChallengeStore) Get(id string) (Challenge, bool) {
 }
 
 // GetByCode retrieves a challenge by user code.
+// Both lookups are performed under a single lock to avoid a TOCTOU race
+// where reap() or RemoveUser() could delete the challenge between the two steps.
 func (s *ChallengeStore) GetByCode(code string) (Challenge, bool) {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
 	id, ok := s.byCode[code]
-	s.mu.RUnlock()
 	if !ok {
 		return Challenge{}, false
 	}
-	return s.Get(id)
+	c, ok := s.challenges[id]
+	if !ok || time.Now().After(c.ExpiresAt) {
+		return Challenge{}, false
+	}
+	return *c, true
 }
 
 // SetNonce stores the OIDC nonce on a challenge when the login flow begins.
@@ -977,6 +987,9 @@ func (s *ChallengeStore) RevokeTokensBefore(username string) time.Time {
 func (s *ChallengeStore) decPending(username string) {
 	if s.pendingByUser[username] > 0 {
 		s.pendingByUser[username]--
+		if s.totalPending > 0 {
+			s.totalPending--
+		}
 	}
 	if s.pendingByUser[username] == 0 {
 		delete(s.pendingByUser, username)
@@ -989,7 +1002,8 @@ func (s *ChallengeStore) decPending(username string) {
 func (s *ChallengeStore) ConsumeOneTap(challengeID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.challenges[challengeID]; !ok {
+	c, ok := s.challenges[challengeID]
+	if !ok || time.Now().After(c.ExpiresAt) {
 		return fmt.Errorf("challenge not found or expired")
 	}
 	if s.oneTapUsed[challengeID] {
@@ -1048,6 +1062,10 @@ func (s *ChallengeStore) RemoveUser(username string) {
 			delete(s.oneTapUsed, id)
 		}
 	}
+	s.totalPending -= s.pendingByUser[username]
+	if s.totalPending < 0 {
+		s.totalPending = 0
+	}
 	delete(s.pendingByUser, username)
 	// Revoke all grace sessions for this user
 	prefix := username + "@"
@@ -1096,6 +1114,12 @@ func (s *ChallengeStore) reapLoop() {
 			default:
 			}
 			time.Sleep(5 * time.Second)
+			// Re-check stopCh after the sleep: Stop() may have been called while we slept.
+			select {
+			case <-s.stopCh:
+				return
+			default:
+			}
 			go s.reapLoop()
 		}
 	}()

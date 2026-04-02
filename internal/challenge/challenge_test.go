@@ -108,8 +108,9 @@ func TestCreate(t *testing.T) {
 		s.mu.Lock()
 		for i := 0; i < maxTotalChallenges; i++ {
 			id := string(rune('a'+i%26)) + string(rune('a'+(i/26)%26)) + string(rune(i))
-			s.challenges[id] = &Challenge{ID: id, Username: "synthetic"}
+			s.challenges[id] = &Challenge{ID: id, Username: "synthetic", Status: StatusPending}
 		}
+		s.totalPending = maxTotalChallenges
 		s.mu.Unlock()
 
 		_, err := s.Create("frank", "host", "")

@@ -244,7 +244,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	// handleOneTap because their OIDC auth was stale. Now that they've
 	// re-authenticated, resume the one-tap approval flow.
 	if onetapCookie, err := r.Cookie("pam_onetap"); err == nil && onetapCookie.Value != "" {
-		http.SetCookie(w, &http.Cookie{Name: "pam_onetap", Value: "", Path: "/", MaxAge: -1, Secure: httpsOrigin})
+		http.SetCookie(w, &http.Cookie{Name: "pam_onetap", Value: "", Path: "/", MaxAge: -1, Secure: httpsOrigin, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		// Verify the one-tap token's challenge belongs to the authenticated user
 		parts := strings.SplitN(onetapCookie.Value, ".", 3)
 		if len(parts) == 3 {

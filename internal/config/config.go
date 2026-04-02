@@ -329,6 +329,11 @@ func LoadServerConfig() (*ServerConfig, error) {
 		cfg.APIURL = cfg.IssuerURL
 	}
 
+	// InstallURL defaults to ExternalURL so install scripts point to the right place.
+	if cfg.InstallURL == "" {
+		cfg.InstallURL = cfg.ExternalURL
+	}
+
 	// Parse escrow vault map
 	if raw := get("IDENTREE_ESCROW_VAULT_MAP"); raw != "" {
 		var m map[string]string
@@ -364,6 +369,19 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 	if cfg.ChallengeTTL > 600*time.Second {
 		cfg.ChallengeTTL = 600 * time.Second
+	}
+
+	// Clamp GracePeriod: negative values are nonsensical — treat as 0 (disabled).
+	if cfg.GracePeriod < 0 {
+		cfg.GracePeriod = 0
+	}
+	// Clamp OneTapMaxAge: zero or negative disables the recency check — default to 24h.
+	if cfg.OneTapMaxAge <= 0 {
+		cfg.OneTapMaxAge = 24 * time.Hour
+	}
+	// Clamp NotifyTimeout: a zero value means no timeout at all in http.Client.
+	if cfg.NotifyTimeout <= 0 {
+		cfg.NotifyTimeout = 15 * time.Second
 	}
 
 	// Clamp LDAPRefreshInterval: time.NewTicker panics if d <= 0.
@@ -417,6 +435,40 @@ func LoadServerConfig() (*ServerConfig, error) {
 				return nil, fmt.Errorf("IDENTREE_ESCROW_PATH must not contain path traversal sequences (.. or .)")
 			}
 		}
+	}
+
+	// URL scheme validation: fields used in outbound HTTP requests must start with http:// or https://.
+	for _, pair := range [][2]string{
+		{"IDENTREE_OIDC_ISSUER_URL", cfg.IssuerURL},
+		{"IDENTREE_OIDC_ISSUER_PUBLIC_URL", cfg.IssuerPublicURL},
+		{"IDENTREE_POCKETID_API_URL", cfg.APIURL},
+		{"IDENTREE_NOTIFY_URL", cfg.NotifyURL},
+		{"IDENTREE_ESCROW_URL", cfg.EscrowURL},
+		{"IDENTREE_ESCROW_WEB_URL", cfg.EscrowWebURL},
+	} {
+		if pair[1] != "" && !strings.HasPrefix(pair[1], "http://") && !strings.HasPrefix(pair[1], "https://") {
+			return nil, fmt.Errorf("%s must start with http:// or https://", pair[0])
+		}
+	}
+
+	// HostRegistryFile path traversal guard.
+	for _, seg := range strings.Split(cfg.HostRegistryFile, "/") {
+		if seg == ".." || seg == "." {
+			return nil, fmt.Errorf("IDENTREE_HOST_REGISTRY_FILE must not contain path traversal sequences")
+		}
+	}
+
+	// LDAPUIDBase/GIDBase must be >= 1000 to prevent collisions with system accounts (root is UID 0).
+	if cfg.LDAPEnabled && cfg.LDAPUIDBase < 1000 {
+		return nil, fmt.Errorf("IDENTREE_LDAP_UID_BASE must be >= 1000 (got %d); values below 1000 may collide with system UIDs", cfg.LDAPUIDBase)
+	}
+	if cfg.LDAPEnabled && cfg.LDAPGIDBase < 1000 {
+		return nil, fmt.Errorf("IDENTREE_LDAP_GID_BASE must be >= 1000 (got %d); values below 1000 may collide with system GIDs", cfg.LDAPGIDBase)
+	}
+
+	// Reject half-configured LDAP bind credentials.
+	if cfg.LDAPBindPassword != "" && cfg.LDAPBindDN == "" {
+		return nil, fmt.Errorf("IDENTREE_LDAP_BIND_PASSWORD is set but IDENTREE_LDAP_BIND_DN is empty; both must be configured together")
 	}
 
 	// Validate LDAPSudoNoAuthenticate

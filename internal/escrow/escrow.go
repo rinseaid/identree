@@ -472,9 +472,9 @@ func (b *hcVaultBackend) Store(ctx context.Context, hostname, password, vault st
 	mount, prefix, hasPrefix := strings.Cut(path, "/")
 	var kvPath string
 	if hasPrefix {
-		kvPath = fmt.Sprintf("/v1/%s/data/%s/%s", mount, prefix, url.PathEscape(hostname))
+		kvPath = fmt.Sprintf("/v1/%s/data/%s/%s", url.PathEscape(mount), url.PathEscape(prefix), url.PathEscape(hostname))
 	} else {
-		kvPath = fmt.Sprintf("/v1/%s/data/%s", mount, url.PathEscape(hostname))
+		kvPath = fmt.Sprintf("/v1/%s/data/%s", url.PathEscape(mount), url.PathEscape(hostname))
 	}
 
 	payload := map[string]interface{}{
@@ -496,9 +496,9 @@ func (b *hcVaultBackend) Retrieve(ctx context.Context, hostname, _, _ string) (s
 	mount, prefix, hasPrefix := strings.Cut(b.path, "/")
 	var kvPath string
 	if hasPrefix {
-		kvPath = fmt.Sprintf("/v1/%s/data/%s/%s", mount, prefix, url.PathEscape(hostname))
+		kvPath = fmt.Sprintf("/v1/%s/data/%s/%s", url.PathEscape(mount), url.PathEscape(prefix), url.PathEscape(hostname))
 	} else {
-		kvPath = fmt.Sprintf("/v1/%s/data/%s", mount, url.PathEscape(hostname))
+		kvPath = fmt.Sprintf("/v1/%s/data/%s", url.PathEscape(mount), url.PathEscape(hostname))
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", b.baseURL+kvPath, nil)
 	if err != nil {
