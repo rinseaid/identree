@@ -41,7 +41,7 @@ services:
       IDENTREE_POCKETID_API_URL: "http://pocketid:1411"
       IDENTREE_EXTERNAL_URL: "http://localhost:8090"
       IDENTREE_INSTALL_URL: "http://identree:8090"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-123"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-1234567890abc"
       IDENTREE_LDAP_ENABLED: "true"
       IDENTREE_LDAP_LISTEN_ADDR: ":3389"
       IDENTREE_LDAP_BASE_DN: "dc=test,dc=local"
@@ -82,7 +82,7 @@ services:
       LDAP_URI: "ldap://identree:3389"
       LDAP_BASE: "dc=test,dc=local"
       IDENTREE_SERVER_URL: "http://identree:8090"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-123"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-1234567890abc"
     cap_add:
       - NET_ADMIN
     command: ["sleep", "infinity"]

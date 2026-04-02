@@ -379,9 +379,15 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ip := remoteAddr(r)
+	if s.authFailRL.throttled(ip) {
+		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
+		return
+	}
 	if !s.verifyAPISecret(r) {
 		authFailures.Inc()
-		slog.Warn("AUTH_FAILURE invalid shared secret", "path", "GET /api/challenge/", "remote_addr", remoteAddr(r))
+		s.authFailRL.record(ip)
+		slog.Warn("AUTH_FAILURE invalid shared secret", "path", "GET /api/challenge/", "remote_addr", ip)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -458,9 +464,15 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	ip := remoteAddr(r)
+	if s.authFailRL.throttled(ip) {
+		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
+		return
+	}
 	if !s.verifyAPISecret(r) {
 		authFailures.Inc()
-		slog.Warn("AUTH_FAILURE grace-status invalid shared secret", "remote_addr", remoteAddr(r))
+		s.authFailRL.record(ip)
+		slog.Warn("AUTH_FAILURE grace-status invalid shared secret", "remote_addr", ip)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

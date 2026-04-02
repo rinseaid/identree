@@ -14,6 +14,7 @@ import (
 
 	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/notify"
+	"github.com/rinseaid/identree/internal/sanitize"
 )
 
 // notifyTimeout is the fallback timeout if cfg.NotifyTimeout is not set.
@@ -192,7 +193,7 @@ func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, sanitize.ForTerminal(string(respBody)))
 	}
 	return nil
 }

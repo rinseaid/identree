@@ -86,7 +86,7 @@ services:
       # Server
       IDENTREE_EXTERNAL_URL: "http://localhost:8094"
       IDENTREE_INSTALL_URL: "http://identree:8090"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-vault-escrow"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-vault-escrow1"
 
       # Bridge mode — lldap handles LDAP; identree handles PAM challenges
       IDENTREE_LDAP_ENABLED: "false"
@@ -148,7 +148,7 @@ services:
 
       # identree
       IDENTREE_SERVER_URL: "http://identree:8090"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-vault-escrow"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-vault-escrow1"
     cap_add:
       - NET_ADMIN
     command: ["sleep", "infinity"]

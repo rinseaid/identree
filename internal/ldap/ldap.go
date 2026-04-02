@@ -16,6 +16,7 @@ import (
 
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/pocketid"
+	"github.com/rinseaid/identree/internal/sanitize"
 	"github.com/rinseaid/identree/internal/sudorules"
 	"github.com/rinseaid/identree/internal/uidmap"
 )
@@ -282,7 +283,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 		// Validate core user fields before placing them in LDAP attributes.
 		// Null bytes and newlines would corrupt directory entries.
 		if !isValidLDAPAttrValue(u.Username) {
-			slog.Warn("ldap: skipping user with invalid characters in username", "user", u.Username)
+			slog.Warn("ldap: skipping user with invalid characters in username", "user", sanitize.ForTerminal(u.Username))
 			continue
 		}
 		if len(u.Username) > 64 {

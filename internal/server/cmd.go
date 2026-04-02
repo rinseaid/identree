@@ -282,7 +282,7 @@ func runServer() {
 		Handler:           srv,
 		ReadTimeout:       30 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      0, // disabled for SSE; per-handler timeouts used instead
+		WriteTimeout:      60 * time.Second, // SSE handler clears this per-connection
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    8192,
 	}

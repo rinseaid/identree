@@ -443,8 +443,8 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if cfg.SharedSecret == "" {
 		return nil, fmt.Errorf("IDENTREE_SHARED_SECRET is required")
 	}
-	if len(cfg.SharedSecret) < 16 {
-		return nil, fmt.Errorf("IDENTREE_SHARED_SECRET must be at least 16 characters")
+	if len(cfg.SharedSecret) < 32 {
+		return nil, fmt.Errorf("IDENTREE_SHARED_SECRET must be at least 32 characters")
 	}
 	if cfg.ExternalURL == "" {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL is required")
@@ -468,7 +468,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		if !strings.HasPrefix(cfg.LDAPDefaultShell, "/") {
 			return nil, fmt.Errorf("IDENTREE_LDAP_DEFAULT_SHELL must be an absolute path (start with /)")
 		}
-		if strings.ContainsAny(cfg.LDAPDefaultShell, " \t\n\r;|&$`'\"\\<>(){}*?[]") {
+		if strings.ContainsAny(cfg.LDAPDefaultShell, " \t\n\r\x00;|&$`'\"\\<>(){}*?[]!^%~@#") {
 			return nil, fmt.Errorf("IDENTREE_LDAP_DEFAULT_SHELL contains invalid characters")
 		}
 	}

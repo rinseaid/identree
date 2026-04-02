@@ -82,7 +82,7 @@ services:
       # Server
       IDENTREE_EXTERNAL_URL: "http://localhost:8093"
       IDENTREE_INSTALL_URL: "http://identree:8090"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-kanidm"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-kanidm-1234567"
 
       # Bridge mode — Kanidm serves LDAP; identree only handles PAM challenges
       IDENTREE_LDAP_ENABLED: "false"
@@ -138,7 +138,7 @@ services:
       STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
 
       IDENTREE_SERVER_URL: "http://identree:8090"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-kanidm"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-kanidm-1234567"
     cap_add:
       - NET_ADMIN
     command: ["sleep", "infinity"]

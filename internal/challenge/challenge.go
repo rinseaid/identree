@@ -1409,6 +1409,14 @@ func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) bool 
 		return false
 	}
 	tmpName := tmp.Name()
+	// Set permissions before writing so the file is never readable by others,
+	// even briefly (avoids a world-readable window if umask is 0).
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		log.Printf("ERROR: setting session state permissions: %v", err)
+		return false
+	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
@@ -1424,11 +1432,6 @@ func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) bool 
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		log.Printf("ERROR: closing session state temp file: %v", err)
-		return false
-	}
-	if err := os.Chmod(tmpName, 0600); err != nil {
-		os.Remove(tmpName)
-		log.Printf("ERROR: setting session state permissions: %v", err)
 		return false
 	}
 	if err := os.Rename(tmpName, s.persistPath); err != nil {

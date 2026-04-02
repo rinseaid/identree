@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -56,7 +57,9 @@ func (s *Server) unregisterSSE(username string, ch chan string) {
 }
 
 // broadcastSSE sends an event to all SSE channels for username and to admin subscribers.
+// Newlines are stripped from event to prevent SSE protocol injection.
 func (s *Server) broadcastSSE(username, event string) {
+	event = strings.NewReplacer("\n", "", "\r", "").Replace(event)
 	// Copy channel slices under the lock (fast), then release before sending
 	// to avoid holding the mutex while blocked on channel sends.
 	s.sseMu.RLock()
@@ -99,6 +102,11 @@ func (s *Server) handleSSEEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Clear the server-level WriteTimeout for this streaming connection so it
+	// can remain open indefinitely. All other handlers retain the 60s deadline.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
 
 	sseKey := username
 	if s.getSessionRole(r) == "admin" {

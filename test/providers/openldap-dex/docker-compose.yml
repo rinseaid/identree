@@ -58,7 +58,7 @@ services:
 
       IDENTREE_EXTERNAL_URL: "http://localhost:8097"
       IDENTREE_INSTALL_URL: "http://identree:8090"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-openldap-dex"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-openldap-dex1"
 
       IDENTREE_LDAP_ENABLED: "false"
       IDENTREE_ADMIN_GROUPS: "admins"
@@ -107,7 +107,7 @@ services:
       STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
 
       IDENTREE_SERVER_URL: "http://identree:8090"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-openldap-dex"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-openldap-dex1"
     cap_add:
       - NET_ADMIN
     command: ["sleep", "infinity"]
