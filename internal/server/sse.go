@@ -11,11 +11,32 @@ import (
 // The NUL byte prefix cannot appear in valid usernames, preventing collision.
 const sseAdminKey = "\x00admin"
 
+// maxSSEPerUser caps the number of concurrent SSE connections per user/key
+// to prevent memory exhaustion from a single client opening many connections.
+const maxSSEPerUser = 10
+
+// maxSSETotal caps the server-wide number of concurrent SSE connections.
+const maxSSETotal = 500
+
+// registerSSE allocates a new SSE channel for the given key (username or sseAdminKey).
+// Returns nil if the per-user or server-wide limit is exceeded.
 func (s *Server) registerSSE(username string) chan string {
-	ch := make(chan string, 64)
 	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+	// Enforce per-user limit.
+	if len(s.sseClients[username]) >= maxSSEPerUser {
+		return nil
+	}
+	// Enforce server-wide limit.
+	total := 0
+	for _, chans := range s.sseClients {
+		total += len(chans)
+	}
+	if total >= maxSSETotal {
+		return nil
+	}
+	ch := make(chan string, 64)
 	s.sseClients[username] = append(s.sseClients[username], ch)
-	s.sseMu.Unlock()
 	return ch
 }
 
@@ -84,6 +105,10 @@ func (s *Server) handleSSEEvents(w http.ResponseWriter, r *http.Request) {
 		sseKey = sseAdminKey
 	}
 	ch := s.registerSSE(sseKey)
+	if ch == nil {
+		http.Error(w, "too many connections", http.StatusTooManyRequests)
+		return
+	}
 	defer s.unregisterSSE(sseKey, ch)
 
 	fmt.Fprint(w, ": connected\n\n")

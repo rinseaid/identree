@@ -408,6 +408,10 @@ func (s *Server) handlePocketIDWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+		return
+	}
 
 	// Webhook secret is required; reject requests when none is configured.
 	// PocketID signs requests with HMAC-SHA256 in the X-Webhook-Signature header.

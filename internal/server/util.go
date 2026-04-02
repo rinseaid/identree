@@ -67,7 +67,7 @@ func truncateOutput(s string) string {
 // verifyWebhookSignature validates HMAC-SHA256 webhook signatures from PocketID.
 // Expected header format: "sha256=<hex>"
 func verifyWebhookSignature(r *http.Request, secret, sig string) bool {
-	if sig == "" {
+	if secret == "" || sig == "" {
 		return false
 	}
 	sig = strings.TrimPrefix(sig, "sha256=")

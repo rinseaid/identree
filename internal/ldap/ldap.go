@@ -20,6 +20,10 @@ import (
 	"github.com/rinseaid/identree/internal/uidmap"
 )
 
+// maxLDAPSearchResults caps the number of LDAP entries written per search request
+// to prevent memory exhaustion from extremely large directories.
+const maxLDAPSearchResults = 10000
+
 // sshKeyClaimRe matches sshPublicKey, sshPublicKey1, sshPublicKey2, etc.
 var sshKeyClaimRe = regexp.MustCompile(`^sshPublicKey\d*$`)
 
@@ -273,6 +277,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 	// Pre-compute host access restrictions from accessHosts claims.
 	userHosts := buildUserHostMap(dir.Groups, dir)
 
+	var sent int
 	for _, u := range dir.Users {
 		// Validate core user fields before placing them in LDAP attributes.
 		// Null bytes and newlines would corrupt directory entries.
@@ -403,8 +408,13 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
+		if sent >= maxLDAPSearchResults {
+			slog.Warn("ldap: searchPeople result cap reached, truncating response", "limit", maxLDAPSearchResults)
+			break
+		}
 		entry := req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs))
 		w.Write(entry)
+		sent++
 	}
 }
 
@@ -423,6 +433,7 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 	}
 
 	// PocketID groups
+	var sent int
 	for _, g := range dir.Groups {
 		if !isValidGroupName(g.Name) {
 			slog.Warn("ldap: skipping group with invalid name", "group", g.Name)
@@ -461,7 +472,12 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
+		if sent >= maxLDAPSearchResults {
+			slog.Warn("ldap: searchGroups result cap reached, truncating response", "limit", maxLDAPSearchResults)
+			return
+		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		sent++
 	}
 
 	// User Private Groups (one per user, GID == UID)
@@ -484,7 +500,12 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
+		if sent >= maxLDAPSearchResults {
+			slog.Warn("ldap: searchGroups (UPG) result cap reached, truncating response", "limit", maxLDAPSearchResults)
+			return
+		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		sent++
 	}
 }
 
@@ -512,6 +533,7 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 
 	noAuth := s.cfg.LDAPSudoNoAuthenticate
 
+	var sent int
 	for _, g := range dir.Groups {
 		if !isValidGroupName(g.Name) {
 			continue
@@ -602,7 +624,12 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
+		if sent >= maxLDAPSearchResults {
+			slog.Warn("ldap: searchSudoers result cap reached, truncating response", "limit", maxLDAPSearchResults)
+			break
+		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		sent++
 	}
 }
 
@@ -623,6 +650,7 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 	noAuth := s.cfg.LDAPSudoNoAuthenticate
 	rules := s.sudoRules.Rules()
 
+	var sent int
 	for _, rule := range rules {
 		if !isValidGroupName(rule.Group) {
 			continue
@@ -723,7 +751,12 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
+		if sent >= maxLDAPSearchResults {
+			slog.Warn("ldap: searchSudoersFromStore result cap reached, truncating response", "limit", maxLDAPSearchResults)
+			break
+		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		sent++
 	}
 }
 
