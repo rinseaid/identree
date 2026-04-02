@@ -1266,29 +1266,65 @@ func (s *ChallengeStore) loadState() {
 		log.Printf("WARNING: corrupt session state file %s: %v — starting fresh", s.persistPath, err)
 		return
 	}
+	const maxStateMapEntries = 100_000
+	const maxGraceSessionTTL = 90 * 24 * time.Hour   // grace sessions > 90 days in future are suspect
+	const maxRevokeTokensAge = 30 * 24 * time.Hour    // revoke timestamps > 30 days in future are suspect
+	const maxActionLogPerUser = 1000                  // cap per-user action log entries on load
+
 	now := time.Now()
+	ceiling := now.Add(maxGraceSessionTTL)
 	for key, expiry := range state.GraceSessions {
-		if now.Before(expiry) {
+		if now.Before(expiry) && expiry.Before(ceiling) {
 			s.lastApproval[key] = expiry
 		}
+		if len(s.lastApproval) >= maxStateMapEntries {
+			log.Printf("WARNING: grace_sessions map in state file exceeds %d entries — truncating", maxStateMapEntries)
+			break
+		}
 	}
+	revokeCeiling := now.Add(maxRevokeTokensAge)
 	for user, ts := range state.RevokeTokensBefore {
-		s.revokeTokensBefore[user] = ts
+		if ts.Before(revokeCeiling) {
+			s.revokeTokensBefore[user] = ts
+		}
+		if len(s.revokeTokensBefore) >= maxStateMapEntries {
+			log.Printf("WARNING: revoke_tokens_before map in state file exceeds %d entries — truncating", maxStateMapEntries)
+			break
+		}
 	}
 	for user, entries := range state.ActionLog {
+		if len(entries) > maxActionLogPerUser {
+			entries = entries[len(entries)-maxActionLogPerUser:]
+		}
 		s.actionLog[user] = entries
+		if len(s.actionLog) >= maxStateMapEntries {
+			log.Printf("WARNING: action_log map in state file exceeds %d entries — truncating", maxStateMapEntries)
+			break
+		}
 	}
 	for host, rec := range state.EscrowedHosts {
 		s.escrowedHosts[host] = rec
+		if len(s.escrowedHosts) >= maxStateMapEntries {
+			break
+		}
 	}
 	for host, ct := range state.EscrowedCiphertexts {
 		s.escrowedCiphertexts[host] = ct
+		if len(s.escrowedCiphertexts) >= maxStateMapEntries {
+			break
+		}
 	}
 	for host, ts := range state.RotateBreakglassBefore {
 		s.rotateBreakglassBefore[host] = ts
+		if len(s.rotateBreakglassBefore) >= maxStateMapEntries {
+			break
+		}
 	}
 	for user, ts := range state.LastOIDCAuth {
 		s.lastOIDCAuth[user] = ts
+		if len(s.lastOIDCAuth) >= maxStateMapEntries {
+			break
+		}
 	}
 	// oneTapUsed is intentionally NOT loaded from persisted state.
 	// Challenges are in-memory only and do not survive restarts, so any persisted

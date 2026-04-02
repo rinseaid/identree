@@ -34,7 +34,7 @@ func (s *Server) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	case "light":
 		http.SetCookie(w, &http.Cookie{Name: "identree_theme", Value: "light", Path: "/", MaxAge: 31536000, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure})
 	default: // "system" or anything else — delete cookie
-		http.SetCookie(w, &http.Cookie{Name: "identree_theme", Value: "", Path: "/", MaxAge: -1, Secure: secure})
+		http.SetCookie(w, &http.Cookie{Name: "identree_theme", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure})
 	}
 
 	dest := r.URL.Query().Get("from")
@@ -51,7 +51,7 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, Secure: strings.HasPrefix(s.cfg.ExternalURL, "https://")})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: strings.HasPrefix(s.cfg.ExternalURL, "https://")})
 	loginURL := s.baseURL + "/sessions/login"
 	http.Redirect(w, r, loginURL, http.StatusSeeOther)
 }
@@ -73,6 +73,7 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	if role != "admin" && role != "user" {
 		role = "user"
 	}
+	slog.Warn("DEV_LOGIN used — not for production", "user", user, "role", role, "remote_addr", remoteAddr(r))
 	s.setSessionCookie(w, user, role)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

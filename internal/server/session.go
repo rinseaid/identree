@@ -198,6 +198,11 @@ func getAvatar(r *http.Request) string {
 	if err != nil || c.Value == "" {
 		return ""
 	}
+	// Re-validate scheme on every read to block javascript:/data: cookies
+	// set by an attacker who can write arbitrary cookies.
+	if !strings.HasPrefix(c.Value, "https://") && !strings.HasPrefix(c.Value, "http://") {
+		return ""
+	}
 	return c.Value
 }
 

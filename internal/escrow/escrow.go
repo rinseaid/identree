@@ -89,8 +89,11 @@ type localEscrowBackend struct {
 }
 
 func (b *localEscrowBackend) Store(_ context.Context, hostname, password, _ string) (string, string, error) {
-	defer clear(b.key)
-	block, err := aes.NewCipher(b.key)
+	// Work with a local copy so clearing after use does not destroy b.key.
+	keyCopy := make([]byte, len(b.key))
+	copy(keyCopy, b.key)
+	defer clear(keyCopy)
+	block, err := aes.NewCipher(keyCopy)
 	if err != nil {
 		return "", "", fmt.Errorf("local escrow: create cipher: %w", err)
 	}
@@ -109,7 +112,10 @@ func (b *localEscrowBackend) Store(_ context.Context, hostname, password, _ stri
 }
 
 func (b *localEscrowBackend) Retrieve(_ context.Context, hostname, _, _ string) (string, error) {
-	defer clear(b.key)
+	// Work with a local copy so clearing after use does not destroy b.key.
+	keyCopy := make([]byte, len(b.key))
+	copy(keyCopy, b.key)
+	defer clear(keyCopy)
 	encoded, ok := b.storer.GetEscrowCiphertext(hostname)
 	if !ok {
 		return "", fmt.Errorf("local escrow: no ciphertext stored for %q", hostname)
@@ -118,7 +124,7 @@ func (b *localEscrowBackend) Retrieve(_ context.Context, hostname, _, _ string) 
 	if err != nil {
 		return "", fmt.Errorf("local escrow: decode ciphertext: %w", err)
 	}
-	block, err := aes.NewCipher(b.key)
+	block, err := aes.NewCipher(keyCopy)
 	if err != nil {
 		return "", fmt.Errorf("local escrow: create cipher: %w", err)
 	}
