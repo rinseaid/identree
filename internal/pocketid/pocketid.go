@@ -19,6 +19,11 @@ var sshKeyClaimRe = regexp.MustCompile(`^sshPublicKey\d*$`)
 // Prevents path traversal in per-group URL construction.
 var validAdminIDPattern = regexp.MustCompile(`^[a-fA-F0-9-]{1,128}$`)
 
+// maxPagesPerFetch caps the number of pagination pages fetched in a single
+// PocketID API sync to prevent resource exhaustion if the API returns a
+// pathologically large TotalPages value.
+const maxPagesPerFetch = 500 // 500 pages × 100 items = 50,000 entries max
+
 // PocketIDClient fetches user and group data from the Pocket ID REST API.
 type PocketIDClient struct {
 	baseURL string
@@ -203,7 +208,7 @@ func (c *PocketIDClient) fetchGroupData() (*pocketIDData, error) {
 			break
 		}
 		allGroups = append(allGroups, result.Data...)
-		if page >= result.Pagination.TotalPages || result.Pagination.TotalPages == 0 {
+		if page >= result.Pagination.TotalPages || result.Pagination.TotalPages == 0 || page >= maxPagesPerFetch {
 			break
 		}
 		page++
@@ -314,7 +319,7 @@ func (c *PocketIDClient) UsersWithSSHKeys() ([]SSHUser, error) {
 			}
 		}
 
-		if page >= result.Pagination.TotalPages || result.Pagination.TotalPages == 0 {
+		if page >= result.Pagination.TotalPages || result.Pagination.TotalPages == 0 || page >= maxPagesPerFetch {
 			break
 		}
 		page++
@@ -407,7 +412,7 @@ func (c *PocketIDClient) AllAdminUsers() ([]PocketIDAdminUser, error) {
 			return nil, fmt.Errorf("admin users parse: %w", err)
 		}
 		all = append(all, result.Data...)
-		if page >= result.Pagination.TotalPages || result.Pagination.TotalPages == 0 {
+		if page >= result.Pagination.TotalPages || result.Pagination.TotalPages == 0 || page >= maxPagesPerFetch {
 			break
 		}
 		page++
@@ -442,7 +447,7 @@ func (c *PocketIDClient) AllAdminGroups() ([]PocketIDAdminGroup, error) {
 			return nil, fmt.Errorf("admin groups parse: %w", err)
 		}
 		phase1 = append(phase1, result.Data...)
-		if page >= result.Pagination.TotalPages || result.Pagination.TotalPages == 0 {
+		if page >= result.Pagination.TotalPages || result.Pagination.TotalPages == 0 || page >= maxPagesPerFetch {
 			break
 		}
 		page++

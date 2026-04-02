@@ -280,6 +280,10 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			slog.Warn("ldap: skipping user with invalid characters in username", "user", u.Username)
 			continue
 		}
+		if len(u.Username) > 64 {
+			slog.Warn("ldap: skipping user with username exceeding 64 bytes", "user", u.Username[:32]+"...")
+			continue
+		}
 		firstName := u.FirstName
 		if !isValidLDAPAttrValue(firstName) {
 			slog.Warn("ldap: stripping invalid characters from firstName", "user", u.Username)
