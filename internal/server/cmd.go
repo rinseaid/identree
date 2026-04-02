@@ -23,6 +23,28 @@ import (
 	"github.com/rinseaid/identree/internal/uidmap"
 )
 
+func init() {
+	// Configure slog from IDENTREE_LOG_LEVEL (debug|info|warn|error, default: info).
+	level := slog.LevelInfo
+	v := strings.ToLower(os.Getenv("IDENTREE_LOG_LEVEL"))
+	switch v {
+	case "debug":
+		level = slog.LevelDebug
+	case "", "info":
+		level = slog.LevelInfo
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		// Invalid value: keep info level and warn below after handler is set.
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	if v != "" && v != "debug" && v != "info" && v != "warn" && v != "warning" && v != "error" {
+		slog.Warn("IDENTREE_LOG_LEVEL: unrecognised value, defaulting to info", "value", os.Getenv("IDENTREE_LOG_LEVEL"))
+	}
+}
+
 // version and commit are set at build time:
 //
 //	-ldflags "-X main.version=v0.1.0 -X main.commit=abc12345"
@@ -144,6 +166,17 @@ func runServer() {
 		os.Exit(1)
 	}
 
+	// Restore revoked nonces and admin-session revocations from the persisted store.
+	// This prevents signed-out session cookies from becoming valid again after a restart.
+	for nonce, revokedAt := range srv.store.LoadRevokedNonces() {
+		srv.revokedNoncesMu.Lock()
+		srv.revokedNonces[nonce] = revokedAt
+		srv.revokedNoncesMu.Unlock()
+	}
+	for username, revokedAt := range srv.store.LoadRevokedAdminSessions() {
+		srv.revokedAdminSessions.Store(username, revokedAt)
+	}
+
 	slog.Info("identree server starting",
 		"version", version,
 		"listen", cfg.ListenAddr,
@@ -187,6 +220,7 @@ func runServer() {
 
 	// Start LDAP server if enabled.
 	var ldapCancel context.CancelFunc
+	var ldapRefreshDone chan struct{} // closed when the LDAP refresh goroutine exits
 	if cfg.LDAPEnabled {
 		um, err := uidmap.NewUIDMap(cfg.LDAPUIDMapFile, cfg.LDAPUIDBase, cfg.LDAPGIDBase)
 		if err != nil {
@@ -242,7 +276,9 @@ func runServer() {
 
 		// Full mode: periodic refresh + webhook-triggered refresh.
 		if cfg.APIKey != "" {
+			ldapRefreshDone = make(chan struct{})
 			go func() {
+				defer close(ldapRefreshDone)
 				defer func() {
 					if r := recover(); r != nil {
 						buf := make([]byte, 64<<10)
@@ -348,6 +384,15 @@ func runServer() {
 		}
 		if ldapCancel != nil {
 			ldapCancel()
+		}
+		// Wait for the LDAP refresh goroutine to exit before saving state so
+		// that the final directory state is fully committed.
+		if ldapRefreshDone != nil {
+			select {
+			case <-ldapRefreshDone:
+			case <-time.After(5 * time.Second):
+				slog.Warn("ldap refresh goroutine did not stop within 5s — saving state anyway")
+			}
 		}
 		srv.WaitForNotifications(5 * time.Second)
 		srv.store.SaveState()

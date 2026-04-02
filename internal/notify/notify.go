@@ -36,6 +36,7 @@ type WebhookData struct {
 	ExpiresIn   int
 	Timestamp   string
 	Reason      string `json:"reason,omitempty"`
+	Actor       string `json:"actor,omitempty"`
 }
 
 // BestApprovalURL returns the one-tap URL if available, otherwise the dashboard URL.
@@ -52,6 +53,19 @@ func FormatWebhookRaw(d WebhookData) ([]byte, error) {
 	if event == "" {
 		event = "challenge_created"
 	}
+	if event == "test" {
+		payload := map[string]interface{}{
+			"event":     "test",
+			"message":   "Test notification from identree",
+			"username":  d.Username,
+			"hostname":  d.Hostname,
+			"timestamp": d.Timestamp,
+		}
+		if d.Actor != "" {
+			payload["actor"] = d.Actor
+		}
+		return json.Marshal(payload)
+	}
 	payload := map[string]interface{}{
 		"event":        event,
 		"username":     d.Username,
@@ -65,11 +79,21 @@ func FormatWebhookRaw(d WebhookData) ([]byte, error) {
 	if d.Reason != "" {
 		payload["reason"] = d.Reason
 	}
+	if d.Actor != "" {
+		payload["actor"] = d.Actor
+	}
 	return json.Marshal(payload)
 }
 
 // FormatWebhookApprise returns a payload suitable for an Apprise API endpoint.
 func FormatWebhookApprise(d WebhookData) ([]byte, error) {
+	if d.Event == "test" {
+		return json.Marshal(map[string]interface{}{
+			"title":  "Test notification from identree",
+			"body":   fmt.Sprintf("Test notification sent by %s at %s", d.Actor, d.Timestamp),
+			"format": "markdown",
+		})
+	}
 	body := fmt.Sprintf("**User:** %s\n**Host:** %s\n**Code:** `%s`\n**Expires:** %ds\n\n[Approve](%s)",
 		d.Username, d.Hostname, d.UserCode, d.ExpiresIn, d.BestApprovalURL())
 	return json.Marshal(map[string]interface{}{
@@ -81,6 +105,15 @@ func FormatWebhookApprise(d WebhookData) ([]byte, error) {
 
 // FormatWebhookDiscord returns a Discord webhook embed payload.
 func FormatWebhookDiscord(d WebhookData) ([]byte, error) {
+	if d.Event == "test" {
+		return json.Marshal(map[string]interface{}{
+			"embeds": []map[string]interface{}{{
+				"title":       "Test notification from identree",
+				"color":       3447003, // blue
+				"description": fmt.Sprintf("Test notification sent by %s at %s", d.Actor, d.Timestamp),
+			}},
+		})
+	}
 	return json.Marshal(map[string]interface{}{
 		"embeds": []map[string]interface{}{{
 			"title": "Sudo approval needed",
@@ -98,6 +131,10 @@ func FormatWebhookDiscord(d WebhookData) ([]byte, error) {
 
 // FormatWebhookSlack returns a Slack incoming-webhook payload.
 func FormatWebhookSlack(d WebhookData) ([]byte, error) {
+	if d.Event == "test" {
+		text := fmt.Sprintf("*Test notification from identree*\nSent by %s at %s", d.Actor, d.Timestamp)
+		return json.Marshal(map[string]string{"text": text})
+	}
 	text := fmt.Sprintf("*Sudo approval needed*\nUser: %s | Host: %s | Code: `%s` | Expires: %ds\n<%s|Approve>",
 		d.Username, d.Hostname, d.UserCode, d.ExpiresIn, d.BestApprovalURL())
 	return json.Marshal(map[string]string{"text": text})
@@ -106,6 +143,12 @@ func FormatWebhookSlack(d WebhookData) ([]byte, error) {
 // FormatWebhookNtfy returns a payload for an ntfy.sh server.
 // The topic is read from the URL path (e.g., https://ntfy.sh/mytopic), not the body.
 func FormatWebhookNtfy(d WebhookData) ([]byte, error) {
+	if d.Event == "test" {
+		return json.Marshal(map[string]interface{}{
+			"title":   "Test notification from identree",
+			"message": fmt.Sprintf("Sent by %s at %s", d.Actor, d.Timestamp),
+		})
+	}
 	return json.Marshal(map[string]interface{}{
 		"title":   "Sudo approval needed",
 		"message": fmt.Sprintf("User: %s\nHost: %s\nCode: %s\nExpires: %ds", d.Username, d.Hostname, d.UserCode, d.ExpiresIn),

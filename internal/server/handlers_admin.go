@@ -20,6 +20,7 @@ import (
 
 	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
+	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/pocketid"
 	"golang.org/x/crypto/ssh"
 )
@@ -573,6 +574,11 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		s.applyLiveConfigUpdates(values, username)
 
 		s.store.LogAction(username, challpkg.ActionConfigChanged, "", "", username)
+		s.sendEventNotification(notify.WebhookData{
+			Event:     "config_changed",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Actor:     username,
+		})
 
 		if len(restartSections) > 0 {
 			s.setFlashCookie(w, "config_saved_restart:"+strings.Join(restartSections, "|"))
@@ -2337,6 +2343,7 @@ func (s *Server) handleAdminTestNotification(w http.ResponseWriter, r *http.Requ
 		Hostname:  "test-host",
 		UserCode:  "TEST-001",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Actor:     actor,
 	}
 
 	if timeout <= 0 {

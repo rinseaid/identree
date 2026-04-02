@@ -88,10 +88,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "auth_state_unrecognized")
 }
 
-// cleanExpiredSessionNonces removes expired nonces (>5 min) from the map.
+// cleanExpiredSessionNonces removes expired nonces (>15 min) from the map.
 // Must be called under sessionNonceMu lock.
 func (s *Server) cleanExpiredSessionNonces() {
-	cutoff := time.Now().Add(-5 * time.Minute)
+	cutoff := time.Now().Add(-15 * time.Minute)
 	for nonce, created := range s.sessionNonces {
 		if created.Before(cutoff) {
 			delete(s.sessionNonces, nonce)
@@ -121,7 +121,7 @@ func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 
 	s.sessionNonceMu.Lock()
 	s.cleanExpiredSessionNonces()
-	if len(s.sessionNonces) > 1000 {
+	if len(s.sessionNonces) > 5000 {
 		s.sessionNonceMu.Unlock()
 		http.Error(w, "too many requests — try again later", http.StatusTooManyRequests)
 		return

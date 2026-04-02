@@ -296,11 +296,23 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 			// Prune revokedAdminSessions entries older than sessionCookieTTL.
 			// Any cookie issued before that point has already expired naturally.
 			s.revokedAdminSessions.Range(func(k, v any) bool {
-				if v.(time.Time).Before(cutoff) {
+				if revokedAt, ok := v.(time.Time); ok && revokedAt.Before(cutoff) {
 					s.revokedAdminSessions.Delete(k)
 				}
 				return true
 			})
+
+			// Prune usedEscrowTokens entries older than the escrow token TTL (10 minutes).
+			// This mirrors the inline lazy-prune in handleBreakglassEscrow but ensures
+			// entries are cleaned up even when no new tokens arrive.
+			escrowCutoff := time.Now().Add(-10 * time.Minute)
+			s.usedEscrowTokensMu.Lock()
+			for k, t := range s.usedEscrowTokens {
+				if t.Before(escrowCutoff) {
+					delete(s.usedEscrowTokens, k)
+				}
+			}
+			s.usedEscrowTokensMu.Unlock()
 		}
 	}()
 
@@ -330,6 +342,7 @@ func (s *Server) updateAdminRevocations(newAdminUsernames map[string]bool) {
 	for username := range s.prevAdminUsernames {
 		if !newAdminUsernames[username] {
 			s.revokedAdminSessions.Store(username, now)
+			s.store.PersistRevokedAdminSession(username, now)
 			slog.Info("admin role revoked for user removed from admin groups", "user", username)
 		}
 	}
@@ -448,14 +461,9 @@ func (s *Server) registerRoutes() {
 
 	// Misc
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	metricsHandler := promhttp.Handler()
-	s.mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		if !s.verifySharedSecret(r) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		metricsHandler.ServeHTTP(w, r)
-	})
+	// /metrics is unauthenticated — standard practice for Prometheus scraping.
+	// Restrict at the network/firewall level if exposure is a concern.
+	s.mux.Handle("/metrics", promhttp.Handler())
 	s.mux.HandleFunc("/theme", s.handleThemeToggle)
 	s.mux.HandleFunc("/signout", s.handleSignOut)
 	s.mux.HandleFunc("/install.sh", s.handleInstallScript)

@@ -359,6 +359,18 @@ func LoadServerConfig() (*ServerConfig, error) {
 		slog.Warn("IDENTREE_SESSION_STATE_FILE is not set — grace sessions, revocations, and audit log will be lost on restart")
 	}
 
+	// LDAP shell and home directory defaults.
+	if cfg.LDAPEnabled {
+		if cfg.LDAPDefaultShell == "" {
+			cfg.LDAPDefaultShell = "/bin/bash"
+			slog.Warn("IDENTREE_LDAP_DEFAULT_SHELL is not set — defaulting to /bin/bash")
+		}
+		if cfg.LDAPDefaultHome == "" {
+			cfg.LDAPDefaultHome = "/home/%s"
+			slog.Warn("IDENTREE_LDAP_DEFAULT_HOME is not set — defaulting to /home/%s")
+		}
+	}
+
 	// APIURL defaults to IssuerURL
 	if cfg.APIURL == "" {
 		cfg.APIURL = cfg.IssuerURL

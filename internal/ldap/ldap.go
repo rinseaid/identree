@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -212,15 +213,16 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 	// RFC 2696 SimplePagedResults — identree holds the full directory in memory
 	// and always returns results in a single pass, so paging is a no-op here.
 	// We detect and acknowledge the control so clients (SSSD in particular) do
-	// not treat the missing response control as an error. If gldap ever gains
-	// a first-class paged-response API this can be upgraded.
+	// not treat the missing response control as an error.
 	//
-	// Limitation: we do not return a paged-results response control in the
-	// SearchResultDone, which means some strict clients may log a warning.
-	// Returning all results in one response is RFC 2696-compliant for page 0
-	// (i.e. size == 0 means "I support paging but don't restrict the page now").
+	// RFC 2696 §3 requires the server to return a paging response control in the
+	// SearchResultDone. We return one with an empty cookie (indicating end of
+	// results) and total==0 (server does not track the total). This satisfies
+	// strict clients like SSSD that treat a missing response control as an error.
+	var hasPagingControl bool
 	for _, ctrl := range msg.Controls {
 		if ctrl.GetControlType() == gldap.ControlTypePaging {
+			hasPagingControl = true
 			if pc, ok := ctrl.(*gldap.ControlPaging); ok {
 				slog.Debug("ldap: SimplePagedResults control received — returning all results in one page",
 					"requested_page_size", pc.PagingSize)
@@ -230,6 +232,13 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 			// No break — log all controls for observability.
 		} else {
 			slog.Debug("ldap: unknown control received (ignored)", "oid", ctrl.GetControlType())
+		}
+	}
+	if hasPagingControl {
+		// Return a paging response control with empty cookie (end of results).
+		// PagingSize==0 in the response indicates no more pages.
+		if pc, err := gldap.NewControlPaging(0); err == nil {
+			resp.SetControls(pc)
 		}
 	}
 
@@ -305,23 +314,28 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		s.sendRootDSE(w, req, base)
 
 	case scope == peopleDN || strings.HasSuffix(scope, ","+peopleDN):
-		truncated = s.searchPeople(w, req, filter, msg.Attributes, dir, userHosts, base, limit)
+		truncated, _ = s.searchPeople(w, req, filter, msg.Attributes, dir, userHosts, base, limit)
 
 	case scope == groupsDN || strings.HasSuffix(scope, ","+groupsDN):
-		truncated = s.searchGroups(w, req, filter, msg.Attributes, dir, base, limit)
+		truncated, _ = s.searchGroups(w, req, filter, msg.Attributes, dir, base, limit)
 
 	case scope == sudoersDN || strings.HasSuffix(scope, ","+sudoersDN):
 		truncated = s.searchSudoers(w, req, filter, msg.Attributes, dir, base, limit)
 
 	case scope == baseLower:
-		// Subtree from root — serve everything. Note: SizeLimit is applied
-		// per sub-search; aggregate may exceed msg.SizeLimit in practice.
-		truncated = s.searchPeople(w, req, filter, msg.Attributes, dir, userHosts, base, limit)
-		if !truncated {
-			truncated = s.searchGroups(w, req, filter, msg.Attributes, dir, base, limit)
+		// Subtree from root — serve everything. The size limit is tracked
+		// cumulatively across all three branches so that the aggregate never
+		// exceeds the client's stated SizeLimit.
+		var n int
+		remaining := limit
+		truncated, n = s.searchPeople(w, req, filter, msg.Attributes, dir, userHosts, base, remaining)
+		remaining = decrementLimit(remaining, n)
+		if !truncated && remaining != 0 {
+			truncated, n = s.searchGroups(w, req, filter, msg.Attributes, dir, base, remaining)
+			remaining = decrementLimit(remaining, n)
 		}
-		if !truncated {
-			truncated = s.searchSudoers(w, req, filter, msg.Attributes, dir, base, limit)
+		if !truncated && remaining != 0 {
+			truncated = s.searchSudoers(w, req, filter, msg.Attributes, dir, base, remaining)
 		}
 	}
 	if truncated {
@@ -345,8 +359,9 @@ func (s *LDAPServer) sendRootDSE(w *gldap.ResponseWriter, req *gldap.Request, ba
 // userHosts is the precomputed username→[]host map from the last Refresh().
 // requestedAttrs is the client's Attributes list from the search message; used
 // to filter the response via filterAttrs.
-// Returns true if the result set was truncated by limit.
-func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, filter string, requestedAttrs []string, dir *pocketid.UserDirectory, userHosts map[string][]string, base string, limit int) bool {
+// Returns (truncated, count) where truncated is true if the result set was
+// capped by limit and count is the number of entries written.
+func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, filter string, requestedAttrs []string, dir *pocketid.UserDirectory, userHosts map[string][]string, base string, limit int) (bool, int) {
 	peopleDN := "ou=people," + base
 
 	// OU container
@@ -516,20 +531,21 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 		}
 		if sent >= limit {
 			slog.Warn("ldap: searchPeople result cap reached, truncating response", "limit", limit)
-			return true
+			return true, sent
 		}
 		entry := req.NewSearchResponseEntry(dn, gldap.WithAttributes(filterAttrs(attrs, requestedAttrs)))
 		w.Write(entry)
 		sent++
 	}
-	return false
+	return false, sent
 }
 
 // searchGroups sends posixGroup entries for PocketID groups and User Private Groups.
 // requestedAttrs is the client's Attributes list from the search message; used
 // to filter the response via filterAttrs.
-// Returns true if the result set was truncated by limit.
-func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, filter string, requestedAttrs []string, dir *pocketid.UserDirectory, base string, limit int) bool {
+// Returns (truncated, count) where truncated is true if the result set was
+// capped by limit and count is the number of entries written.
+func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, filter string, requestedAttrs []string, dir *pocketid.UserDirectory, base string, limit int) (bool, int) {
 	groupsDN := "ou=groups," + base
 	peopleDN := "ou=people," + base
 
@@ -588,7 +604,7 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 		}
 		if sent >= limit {
 			slog.Warn("ldap: searchGroups result cap reached, truncating response", "limit", limit)
-			return true
+			return true, sent
 		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(filterAttrs(attrs, requestedAttrs))))
 		sent++
@@ -618,12 +634,12 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 		}
 		if sent >= limit {
 			slog.Warn("ldap: searchGroups (UPG) result cap reached, truncating response", "limit", limit)
-			return true
+			return true, sent
 		}
 		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(filterAttrs(attrs, requestedAttrs))))
 		sent++
 	}
-	return false
+	return false, sent
 }
 
 // searchSudoers emits sudoRole entries for groups that have sudo-related custom claims.
@@ -740,6 +756,11 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 		if len(sudoOptions) > 0 {
 			attrs["sudoOption"] = sudoOptions
 		}
+
+		// sudoOrder ensures sudo applies rules in a deterministic order rather
+		// than relying on LDAP return order (which is undefined per RFC 4511).
+		// The index is 1-based and reflects the iteration order of dir.Groups.
+		attrs["sudoOrder"] = []string{strconv.Itoa(sent + 1)}
 
 		if !matchesFilter(filter, dn, attrs) {
 			continue
@@ -872,6 +893,11 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 			attrs["sudoOption"] = sudoOptions
 		}
 
+		// sudoOrder ensures sudo applies rules in a deterministic order rather
+		// than relying on LDAP return order (which is undefined per RFC 4511).
+		// The index is 1-based and reflects the iteration order of rules.
+		attrs["sudoOrder"] = []string{strconv.Itoa(sent + 1)}
+
 		if !matchesFilter(filter, dn, attrs) {
 			continue
 		}
@@ -883,6 +909,21 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 		sent++
 	}
 	return false
+}
+
+// decrementLimit subtracts used from the current limit and returns the new
+// remaining capacity. A limit of 0 means "unlimited" (no client SizeLimit was
+// set) and is returned unchanged. For positive limits the result is
+// max(0, limit-used); callers should stop dispatching further branches when
+// the return value is 0.
+func decrementLimit(limit, used int) int {
+	if limit == 0 {
+		return 0 // unlimited; never decrement
+	}
+	if remaining := limit - used; remaining > 0 {
+		return remaining
+	}
+	return 0
 }
 
 // splitComma splits a comma-separated string into trimmed non-empty values.

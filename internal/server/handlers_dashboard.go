@@ -82,9 +82,11 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 				parts := strings.SplitN(cookie.Value, ":", 5)
 				if len(parts) == 5 {
 					nonce := parts[3]
+					now := time.Now()
 					s.revokedNoncesMu.Lock()
-					s.revokedNonces[nonce] = time.Now()
+					s.revokedNonces[nonce] = now
 					s.revokedNoncesMu.Unlock()
+					s.store.PersistRevokedNonce(nonce, now)
 				}
 			}
 
@@ -152,6 +154,7 @@ func (s *Server) handleDevSeedHistory(w http.ResponseWriter, r *http.Request) {
 		MinutesAgo int    `json:"minutes_ago"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&entries); err != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck // best-effort drain for keep-alive
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
@@ -183,7 +186,12 @@ func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Hostname string `json:"hostname"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck // best-effort drain for keep-alive
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if req.Username == "" {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}

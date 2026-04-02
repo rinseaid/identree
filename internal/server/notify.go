@@ -25,7 +25,7 @@ const notifyTimeout = 15 * time.Second
 const notifyMaxOutput = 1 << 20 // 1 MB
 
 // notifySemaphore limits concurrent notify executions.
-var notifySemaphore = make(chan struct{}, 10)
+var notifySemaphore = make(chan struct{}, 50)
 
 // NotifyData holds the fields sent to the notification backend.
 type NotifyData struct {
@@ -38,6 +38,7 @@ type NotifyData struct {
 	ExpiresIn   int
 	Timestamp   string
 	Reason      string
+	Actor       string
 }
 
 // sendNotification fires the configured notification backend asynchronously.
@@ -128,6 +129,7 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 		UserCode:  d.UserCode,
 		Timestamp: d.Timestamp,
 		Reason:    d.Reason,
+		Actor:     d.Actor,
 	}
 	s.notifyWg.Add(1)
 	go func() {
@@ -181,6 +183,7 @@ func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration, backend,
 		ExpiresIn:   d.ExpiresIn,
 		Timestamp:   d.Timestamp,
 		Reason:      d.Reason,
+		Actor:       d.Actor,
 	}
 
 	var (
@@ -302,6 +305,7 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command s
 		"NOTIFY_EXPIRES_IN=" + strconv.Itoa(d.ExpiresIn),
 		"NOTIFY_TIMESTAMP=" + d.Timestamp,
 		"NOTIFY_REASON=" + d.Reason,
+		"NOTIFY_ACTOR=" + d.Actor,
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer

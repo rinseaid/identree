@@ -1467,12 +1467,16 @@ const historyPageHTML = `<!DOCTYPE html>
       function filterHistory(){
         var filters={};
         document.querySelectorAll('#history-gtable .gtcol-filter-input').forEach(function(inp){filters[inp.dataset.col]=inp.value.toLowerCase().trim();});
+        var visibleCount=0;
         document.querySelectorAll('.history-gtable-row').forEach(function(row){
           var show=true;
           for(var col in filters){if(!filters[col])continue;var cell=row.querySelector('.gtcol-'+col);if(cell&&cell.textContent.toLowerCase().indexOf(filters[col])===-1){show=false;break;}}
           if(show&&historyJustMeActive&&historyJustMeUsername){var pill=row.querySelector('.gtcol-huser .pill');if(!pill||pill.textContent.trim()!==historyJustMeUsername)show=false;}
           row.style.display=show?'':'none';
+          if(show)visibleCount++;
         });
+        var emptyMsg=document.getElementById('filter-empty-msg');
+        if(emptyMsg){emptyMsg.style.display=visibleCount===0?'':'none';}
       }
       if(hjmt){
         function toggleHistoryJM(){historyJustMeActive=!historyJustMeActive;hjmt.classList.toggle('active',historyJustMeActive);hjmt.setAttribute('aria-checked',historyJustMeActive?'true':'false');filterHistory();}
@@ -1483,15 +1487,49 @@ const historyPageHTML = `<!DOCTYPE html>
       if(ffc)ffc.addEventListener('click',function(){document.querySelectorAll('#history-gtable .gtcol-filter-input').forEach(function(inp){inp.value='';});filterHistory();});
     })();
   });
-  // Fix 4: Poll every 30 seconds and reload if no unsaved filter state
-  setInterval(function(){
-    if(!document.querySelector('form.dirty')){
+  // Poll every 30 seconds and reload if no unsaved filter state; preserve active filter inputs via sessionStorage
+  (function(){
+    var FILTER_KEY='identree_history_filters';
+    // Restore filter state saved before the last auto-reload
+    try{
+      var saved=sessionStorage.getItem(FILTER_KEY);
+      if(saved){
+        sessionStorage.removeItem(FILTER_KEY);
+        var vals=JSON.parse(saved);
+        document.querySelectorAll('#history-gtable .gtcol-filter-input').forEach(function(inp){
+          if(vals[inp.dataset.col]){inp.value=vals[inp.dataset.col];}
+        });
+        // Trigger filter re-evaluation after restore (filterHistory is defined inside DOMContentLoaded scope;
+        // fire input events so the already-registered listeners pick up the restored values)
+        document.querySelectorAll('#history-gtable .gtcol-filter-input').forEach(function(inp){
+          if(inp.value){inp.dispatchEvent(new Event('input'));}
+        });
+        // Expand filter row if any values were restored
+        var ftr=document.getElementById('history-filter-row');
+        var ftb=document.getElementById('history-filter-toggle');
+        if(ftr&&ftr.style.display==='none'){ftr.style.display='';if(ftb)ftb.classList.add('active');}
+      }
+    }catch(e){}
+    setInterval(function(){
+      if(document.querySelector('form.dirty'))return;
+      // Check for active filter inputs — if any are set, save them and restore after reload
+      var filterVals={};
+      var hasFilter=false;
+      document.querySelectorAll('#history-gtable .gtcol-filter-input').forEach(function(inp){
+        if(inp.value){filterVals[inp.dataset.col]=inp.value;hasFilter=true;}
+      });
+      if(hasFilter){
+        try{sessionStorage.setItem(FILTER_KEY,JSON.stringify(filterVals));}catch(e){}
+      }
       fetch(window.location.href,{method:'HEAD'}).then(function(r){
         if(r.status===401){window.location.href='/login';return;}
         location.reload();
-      }).catch(function(){});
-    }
-  },30000);
+      }).catch(function(){
+        // On network error, clear the saved state so stale values don't linger
+        try{sessionStorage.removeItem(FILTER_KEY);}catch(e){}
+      });
+    },30000);
+  })();
   </script>
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
@@ -1588,6 +1626,7 @@ const historyPageHTML = `<!DOCTYPE html>
       </div>
       {{end}}
     </div>
+    <div id="filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <div class="pagination">
       {{if .HasPrev}}<a href="/history?page={{sub .Page 1}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&sort={{.Sort}}&order={{.Order}}&per_page={{.PerPage}}">&#8592; {{call .T "previous"}}</a>{{end}}
       <span class="page-info">{{call .T "page"}} {{.Page}} {{call .T "of"}} {{.TotalPages}}</span>
@@ -2204,14 +2243,33 @@ const adminPageHTML = `<!DOCTYPE html>
       (function(){
         var configForm=document.querySelector('form[action="/admin/config"]');
         if(!configForm)return;
-        // Intercept click on each save button before submission (Fix 2)
+        // Intercept click on each save button and POST via fetch for proper error handling
         configForm.querySelectorAll('.config-save-btn').forEach(function(btn){
           btn.addEventListener('click',function(e){
             e.preventDefault();
+            var origText=btn.textContent;
             btn.disabled=true;
             btn.textContent='Saving\u2026';
             submitted=true;
-            configForm.submit();
+            var body=new URLSearchParams(new FormData(configForm));
+            fetch('/admin/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
+              .then(function(r){
+                if(r.status===401){window.location.href='/login';return;}
+                if(!r.ok){return r.text().then(function(t){throw new Error(t||r.statusText);});}
+                window.location.reload();
+              })
+              .catch(function(err){
+                btn.disabled=false;
+                btn.textContent=origText;
+                submitted=false;
+                var errDiv=document.createElement('div');
+                errDiv.className='banner banner-error';
+                errDiv.setAttribute('role','alert');
+                errDiv.textContent='Save failed: '+(err&&err.message?err.message:'Network error');
+                var main=document.getElementById('main-content')||document.body;
+                main.insertBefore(errDiv,main.firstChild);
+                setTimeout(function(){errDiv.remove();},6000);
+              });
           });
         });
       })();
@@ -2351,6 +2409,7 @@ const adminPageHTML = `<!DOCTYPE html>
       {{end}}
     </div>
     <div class="pagination-bar" id="users-pagination"></div>
+    <div id="users-filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var usersPage=1,usersPs={{.DefaultPageSize}};
@@ -2364,6 +2423,8 @@ const adminPageHTML = `<!DOCTYPE html>
         var allRows=Array.from(document.querySelectorAll('#users-table .users-table-row'));
         allRows.forEach(function(r){hideRowAndPanel(r);});
         vis.slice(start,start+usersPs).forEach(function(r){r.style.display='';});
+        var emptyMsg=document.getElementById('users-filter-empty-msg');
+        if(emptyMsg){emptyMsg.style.display=total===0?'':'none';}
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
         bar.innerHTML='<button class="pagination-btn" '+(usersPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+usersPs,total)+' of '+total+'</span><button class="pagination-btn" '+(usersPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===usersPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
@@ -2559,6 +2620,7 @@ const adminPageHTML = `<!DOCTYPE html>
       </div>
     </div>
     <div class="pagination-bar" id="groups-pagination"></div>
+    <div id="groups-filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var groupsPage=1,groupsPs={{.DefaultPageSize}};
@@ -2571,6 +2633,8 @@ const adminPageHTML = `<!DOCTYPE html>
         var allWrappers=Array.from(document.querySelectorAll('.group-wrapper'));
         allWrappers.forEach(function(r){r.style.display='none';});
         vis.slice(start,start+groupsPs).forEach(function(r){r.style.display='';});
+        var emptyMsg=document.getElementById('groups-filter-empty-msg');
+        if(emptyMsg){emptyMsg.style.display=total===0?'':'none';}
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
         bar.innerHTML='<button class="pagination-btn" '+(groupsPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+groupsPs,total)+' of '+total+'</span><button class="pagination-btn" '+(groupsPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===groupsPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
@@ -2709,6 +2773,7 @@ const adminPageHTML = `<!DOCTYPE html>
       {{end}}
     </div>
     <div class="pagination-bar" id="hosts-pagination"></div>
+    <div id="hosts-filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var hostsPage=1,hostsPs={{.DefaultPageSize}};
@@ -2721,6 +2786,8 @@ const adminPageHTML = `<!DOCTYPE html>
         var allRows=Array.from(document.querySelectorAll('#hosts-table .hosts-table-row'));
         allRows.forEach(function(r){r.style.display='none';});
         vis.slice(start,start+hostsPs).forEach(function(r){r.style.display='';});
+        var emptyMsg=document.getElementById('hosts-filter-empty-msg');
+        if(emptyMsg){emptyMsg.style.display=total===0?'':'none';}
         if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
         if(total===0){bar.innerHTML='';return;}
         bar.innerHTML='<button class="pagination-btn" '+(hostsPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+hostsPs,total)+' of '+total+'</span><button class="pagination-btn" '+(hostsPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===hostsPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';

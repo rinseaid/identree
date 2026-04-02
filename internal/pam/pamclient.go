@@ -162,8 +162,13 @@ func (p *PAMClient) Authenticate(username string) error {
 	// precedence over the token cache.
 	if p.tokenCache != nil {
 		if tokenRemaining, cacheMtime, err := p.tokenCache.Check(username); err == nil {
-			// Check server for revocation and grace period (best-effort, 2s timeout)
-			graceStatus := p.queryGraceStatus(username)
+			// Check server for revocation and grace period (required — fail-closed on error).
+			graceStatus, graceErr := p.queryGraceStatus(username)
+			if graceErr != nil {
+				// Cannot verify grace period with the server — fail-closed rather
+				// than silently approving from cache with a potentially stale token.
+				return fmt.Errorf("could not verify grace period with server — please retry")
+			}
 
 			// If the server reports a revocation that postdates our cache, invalidate it.
 			// cacheMtime comes from Check()'s open-fd Stat, avoiding a TOCTOU race.
@@ -412,20 +417,20 @@ type graceStatusResult struct {
 }
 
 // queryGraceStatus makes a quick call to the server to get the grace period
-// remaining and any revocation signal. Returns a zero result on any failure
-// (server unreachable, timeout, error). On cache hits, a revocation signal
-// takes precedence over the cached token — the cache is deleted and the
-// client falls through to the device flow.
-func (p *PAMClient) queryGraceStatus(username string) graceStatusResult {
+// remaining and any revocation signal. Returns a non-nil error on any failure
+// (server unreachable, timeout, non-200 response, decode error). On cache hits,
+// a revocation signal takes precedence over the cached token — the cache is
+// deleted and the client falls through to the device flow.
+func (p *PAMClient) queryGraceStatus(username string) (graceStatusResult, error) {
 	if p.cfg.ServerURL == "" {
-		return graceStatusResult{}
+		return graceStatusResult{}, fmt.Errorf("no server URL configured")
 	}
 	u := fmt.Sprintf("%s/api/grace-status", p.cfg.ServerURL)
 	params := "?username=" + neturl.QueryEscape(username) + "&hostname=" + neturl.QueryEscape(p.hostname)
 	url := u + params
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return graceStatusResult{}
+		return graceStatusResult{}, err
 	}
 	if p.cfg.SharedSecret != "" {
 		req.Header.Set("X-Shared-Secret", p.cfg.SharedSecret)
@@ -444,18 +449,18 @@ func (p *PAMClient) queryGraceStatus(username string) graceStatusResult {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return graceStatusResult{}
+		return graceStatusResult{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return graceStatusResult{}
+		return graceStatusResult{}, fmt.Errorf("grace status returned HTTP %d", resp.StatusCode)
 	}
 	var result struct {
 		GraceRemaining     int    `json:"grace_remaining"`
 		RevokeTokensBefore string `json:"revoke_tokens_before,omitempty"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 512)).Decode(&result); err != nil {
-		return graceStatusResult{}
+		return graceStatusResult{}, fmt.Errorf("decoding grace status: %w", err)
 	}
 	gs := graceStatusResult{
 		graceRemaining: time.Duration(result.GraceRemaining) * time.Second,
@@ -466,7 +471,7 @@ func (p *PAMClient) queryGraceStatus(username string) graceStatusResult {
 			gs.revokeTime = t
 		}
 	}
-	return gs
+	return gs, nil
 }
 
 // applyClientConfig applies server-side config overrides to the PAM client.
@@ -480,7 +485,7 @@ func applyClientConfig(p *PAMClient, challenge *challengeResponse) {
 			p.cfg.PollInterval = d
 		}
 	}
-	if p.cfg.PollInterval != 0 && p.cfg.PollInterval < time.Second {
+	if p.cfg.PollInterval <= 0 || p.cfg.PollInterval < time.Second {
 		p.cfg.PollInterval = time.Second
 	}
 	if challenge.ClientConfig.Timeout != "" {
@@ -490,6 +495,11 @@ func applyClientConfig(p *PAMClient, challenge *challengeResponse) {
 	}
 	if p.cfg.Timeout != 0 && p.cfg.Timeout < 5*time.Second {
 		p.cfg.Timeout = 5 * time.Second
+	}
+	const maxTimeout = 10 * time.Minute
+	if p.cfg.Timeout > maxTimeout {
+		fmt.Fprintf(os.Stderr, "identree: WARNING: server-provided timeout %v exceeds maximum (%v), clamping\n", p.cfg.Timeout, maxTimeout)
+		p.cfg.Timeout = maxTimeout
 	}
 	if challenge.ClientConfig.BreakglassEnabled != nil {
 		p.cfg.BreakglassEnabled = *challenge.ClientConfig.BreakglassEnabled
@@ -608,11 +618,12 @@ func (p *PAMClient) pollChallenge(challengeID string) (*pollResponse, error) {
 	switch resp.StatusCode {
 	case http.StatusOK:
 		// normal — decode below
-	case http.StatusNotFound:
-		// When HMAC is configured, treat 404 as an unverified response.
-		// A MITM could inject 404s to prevent the client from ever seeing
+	case http.StatusNotFound, http.StatusGone:
+		// When HMAC is configured, treat 404/410 as an unverified response.
+		// A MITM could inject 404s/410s to prevent the client from ever seeing
 		// an "approved" response. Mark as server-expired (distinct from
 		// client-side timeout) so the caller can handle it appropriately.
+		// 410 Gone is returned when the challenge has been explicitly deleted/expired.
 		return &pollResponse{Status: string(challpkg.StatusExpired), serverExpired: true}, nil
 	default:
 		return nil, fmt.Errorf("poll returned HTTP %d", resp.StatusCode)

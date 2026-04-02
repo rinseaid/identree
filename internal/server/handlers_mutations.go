@@ -102,6 +102,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		UserCode:  challenge.UserCode,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Reason:    challenge.Reason,
+		Actor:     username,
 	})
 
 	// Redirect back to the dashboard with flash cookie
@@ -382,6 +383,13 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	// Log the action
 	s.store.LogAction(sessionOwner, challpkg.ActionRevoked, displayHostname, "", actor)
 	s.broadcastSSE(sessionOwner, "session_changed")
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "session_revoked",
+		Username:  sessionOwner,
+		Hostname:  displayHostname,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Actor:     actor,
+	})
 
 	// Redirect back to the referring page with flash cookie
 	dest := safeRedirectDest(r.FormValue("from"))
@@ -429,6 +437,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 				UserCode:  c.UserCode,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				Reason:    c.Reason,
+				Actor:     username,
 			})
 		}
 	}
@@ -496,6 +505,12 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 		return
 	}
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "sessions_revoked_bulk",
+		Username:  targetUser,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Actor:     username,
+	})
 	s.setFlashCookie(w, fmt.Sprintf("revoked_all:%d", count))
 	http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 }
@@ -653,6 +668,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 		UserCode:  challenge.UserCode,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Reason:    challenge.Reason,
+		Actor:     username,
 	})
 
 	s.setFlashCookie(w, "rejected:"+hostname)
@@ -694,6 +710,7 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 				UserCode:  c.UserCode,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				Reason:    c.Reason,
+				Actor:     username,
 			})
 		}
 	}
@@ -788,6 +805,13 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(targetUser, challpkg.ActionElevated, hostname, "", username)
 	slog.Info("ELEVATED", "user", targetUser, "host", hostname, "duration", duration, "by", username, "remote_addr", remoteAddr(r))
 	s.broadcastSSE(targetUser, "session_changed")
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "grace_elevated",
+		Username:  targetUser,
+		Hostname:  hostname,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Actor:     username,
+	})
 
 	expiry := time.Now().Add(duration)
 	s.setFlashCookie(w, fmt.Sprintf("elevated:%s:%s:%d", hostname, targetUser, expiry.Unix()))
@@ -826,6 +850,12 @@ func (s *Server) handleRotateHost(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(username, challpkg.ActionRotationRequested, hostname, "", username)
 	slog.Info("ROTATE_BREAKGLASS", "user", username, "host", hostname, "remote_addr", remoteAddr(r))
 	s.broadcastSSE(username, "host_changed")
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "breakglass_rotation_requested",
+		Hostname:  hostname,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Actor:     username,
+	})
 	s.setFlashCookie(w, "rotated:"+hostname)
 	http.Redirect(w, r, s.baseURL+"/admin/hosts", http.StatusSeeOther)
 }

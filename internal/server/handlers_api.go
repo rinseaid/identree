@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -232,6 +233,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		Reason   string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck // best-effort drain for keep-alive
 		apiError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -665,6 +667,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck // best-effort drain for keep-alive
 		apiError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -887,6 +890,7 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 		Hostname string `json:"hostname"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck // best-effort drain for keep-alive
 		apiError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -937,9 +941,9 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "revealed_breakglass",
-		Username:  actor,
 		Hostname:  hostname,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Actor:     actor,
 	})
 
 	w.Header().Set("Content-Type", "application/json")

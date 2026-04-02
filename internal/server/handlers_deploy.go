@@ -455,6 +455,7 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 		Hostname string `json:"hostname"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck // best-effort drain for keep-alive
 		apiError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
@@ -505,6 +506,7 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		RemoveFiles    bool   `json:"remove_files"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck // best-effort drain for keep-alive
 		apiError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}

@@ -1,6 +1,7 @@
 package challenge
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -10,10 +11,10 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
-	"runtime"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -199,6 +200,15 @@ type ChallengeStore struct {
 	persistPath        string        // file path for persisted state (empty = no persistence)
 	stopCh             chan struct{} // signals reapLoop to stop
 	stopOnce           sync.Once    // ensures Stop is safe to call concurrently
+
+	// revokedNoncesStore and revokedAdminSessionsStore persist server-side session
+	// revocations across restarts. They are separate from the in-memory maps in
+	// server.go because ChallengeStore owns the persistence layer.
+	revokedNoncesMu          sync.Mutex
+	revokedNoncesStore       map[string]int64 // nonce -> Unix revocation timestamp
+
+	revokedAdminSessionsMu   sync.Mutex
+	revokedAdminSessionsStore map[string]int64 // username -> Unix revocation timestamp
 }
 
 // persistedState is the JSON-serializable snapshot of grace sessions, revocation timestamps,
@@ -215,6 +225,12 @@ type persistedState struct {
 	EscrowedHosts          map[string]EscrowRecord      `json:"escrowed_hosts,omitempty"`
 	EscrowedCiphertexts    map[string]string            `json:"escrowed_ciphertexts,omitempty"`
 	LastOIDCAuth           map[string]time.Time         `json:"last_oidc_auth,omitempty"`
+	// RevokedNonces holds session cookie nonces that were explicitly revoked (sign-out).
+	// Stored as Unix timestamps (int64) so the JSON remains compact.
+	RevokedNonces          map[string]int64             `json:"revokedNonces,omitempty"`
+	// RevokedAdminSessions holds the most recent admin-role revocation time per username.
+	// Stored as Unix timestamps (int64) so the JSON remains compact.
+	RevokedAdminSessions   map[string]int64             `json:"revokedAdminSessions,omitempty"`
 	// OneTapUsed is intentionally ephemeral: it is in-memory only and is reset on restart.
 	// Challenges do not survive restarts, so persisting consumed nonces would only accumulate
 	// orphaned entries with no corresponding challenge to protect.
@@ -1191,6 +1207,62 @@ func (s *ChallengeStore) RemoveUser(username string) {
 	s.writeStateToDisk(data, rotate)
 }
 
+// PersistRevokedNonce records a revoked session cookie nonce to the persisted state.
+// at is the revocation time; it is stored as a Unix timestamp (int64).
+// This method is goroutine-safe.
+func (s *ChallengeStore) PersistRevokedNonce(nonce string, at time.Time) {
+	if s.persistPath == "" {
+		return
+	}
+	s.revokedNoncesMu.Lock()
+	if s.revokedNoncesStore == nil {
+		s.revokedNoncesStore = make(map[string]int64)
+	}
+	s.revokedNoncesStore[nonce] = at.Unix()
+	s.revokedNoncesMu.Unlock()
+	s.dirty.Store(true)
+}
+
+// PersistRevokedAdminSession records an admin-session revocation to the persisted state.
+// at is the revocation time; it is stored as a Unix timestamp (int64).
+// This method is goroutine-safe.
+func (s *ChallengeStore) PersistRevokedAdminSession(username string, at time.Time) {
+	if s.persistPath == "" {
+		return
+	}
+	s.revokedAdminSessionsMu.Lock()
+	if s.revokedAdminSessionsStore == nil {
+		s.revokedAdminSessionsStore = make(map[string]int64)
+	}
+	s.revokedAdminSessionsStore[username] = at.Unix()
+	s.revokedAdminSessionsMu.Unlock()
+	s.dirty.Store(true)
+}
+
+// LoadRevokedNonces returns the persisted revoked nonces as a map[nonce]time.Time.
+// Returns an empty map when no nonces are persisted or persistence is disabled.
+func (s *ChallengeStore) LoadRevokedNonces() map[string]time.Time {
+	s.revokedNoncesMu.Lock()
+	defer s.revokedNoncesMu.Unlock()
+	out := make(map[string]time.Time, len(s.revokedNoncesStore))
+	for nonce, ts := range s.revokedNoncesStore {
+		out[nonce] = time.Unix(ts, 0)
+	}
+	return out
+}
+
+// LoadRevokedAdminSessions returns the persisted admin-session revocations as a map[username]time.Time.
+// Returns an empty map when no entries are persisted or persistence is disabled.
+func (s *ChallengeStore) LoadRevokedAdminSessions() map[string]time.Time {
+	s.revokedAdminSessionsMu.Lock()
+	defer s.revokedAdminSessionsMu.Unlock()
+	out := make(map[string]time.Time, len(s.revokedAdminSessionsStore))
+	for username, ts := range s.revokedAdminSessionsStore {
+		out[username] = time.Unix(ts, 0)
+	}
+	return out
+}
+
 // flushDirty writes pending action-log changes to disk if the dirty flag is set.
 // Safe to call from any goroutine; serialised internally by diskMu.
 func (s *ChallengeStore) flushDirty() {
@@ -1318,6 +1390,29 @@ func (s *ChallengeStore) reap() {
 	var rotate bool
 	if pruned {
 		data, rotate = s.marshalStateLocked()
+	}
+	// Prune revokedNoncesStore and revokedAdminSessionsStore entries older than 35 minutes.
+	// These are short-lived (max session TTL is 30 min); we use 35 min to be safe.
+	noncePruneCutoff := now.Add(-35 * time.Minute).Unix()
+	var noncePruned bool
+	s.revokedNoncesMu.Lock()
+	for nonce, ts := range s.revokedNoncesStore {
+		if ts < noncePruneCutoff {
+			delete(s.revokedNoncesStore, nonce)
+			noncePruned = true
+		}
+	}
+	s.revokedNoncesMu.Unlock()
+	s.revokedAdminSessionsMu.Lock()
+	for username, ts := range s.revokedAdminSessionsStore {
+		if ts < noncePruneCutoff {
+			delete(s.revokedAdminSessionsStore, username)
+			noncePruned = true
+		}
+	}
+	s.revokedAdminSessionsMu.Unlock()
+	if noncePruned {
+		s.dirty.Store(true)
 	}
 	graceSessions.Set(float64(len(s.lastApproval)))
 	s.mu.Unlock()
@@ -1487,6 +1582,34 @@ func (s *ChallengeStore) loadState() {
 	// oneTapUsed IDs have no corresponding challenge and accumulate unboundedly.
 	// Dropping them on restart is safe: a challenge that was pending before restart
 	// will have expired, and the one-tap token is tied to the challenge ID.
+
+	// Load persisted revoked nonces (prune those older than 35 minutes on load).
+	const revokedNonceTTL = 35 * time.Minute
+	nonceCutoff := now.Add(-revokedNonceTTL)
+	if len(state.RevokedNonces) > 0 {
+		s.revokedNoncesStore = make(map[string]int64, len(state.RevokedNonces))
+		for nonce, ts := range state.RevokedNonces {
+			if time.Unix(ts, 0).After(nonceCutoff) {
+				s.revokedNoncesStore[nonce] = ts
+			}
+			if len(s.revokedNoncesStore) >= maxStateMapEntries {
+				break
+			}
+		}
+	}
+	// Load persisted admin-session revocations (prune those older than 35 minutes on load).
+	if len(state.RevokedAdminSessions) > 0 {
+		s.revokedAdminSessionsStore = make(map[string]int64, len(state.RevokedAdminSessions))
+		for username, ts := range state.RevokedAdminSessions {
+			if time.Unix(ts, 0).After(nonceCutoff) {
+				s.revokedAdminSessionsStore[username] = ts
+			}
+			if len(s.revokedAdminSessionsStore) >= maxStateMapEntries {
+				break
+			}
+		}
+	}
+
 	slog.Info("loaded session state", "grace_sessions", len(s.lastApproval), "revocations", len(s.revokeTokensBefore), "escrowed_hosts", len(s.escrowedHosts), "path", s.persistPath)
 	graceSessions.Set(float64(len(s.lastApproval)))
 }
@@ -1545,6 +1668,25 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 			state.LastOIDCAuth[user] = ts
 		}
 	}
+	// Include persisted revoked nonces and admin session revocations.
+	// These are stored in side-maps (revokedNoncesStore, revokedAdminSessionsStore)
+	// rather than the main state because they are written by the server package.
+	s.revokedNoncesMu.Lock()
+	if len(s.revokedNoncesStore) > 0 {
+		state.RevokedNonces = make(map[string]int64, len(s.revokedNoncesStore))
+		for nonce, ts := range s.revokedNoncesStore {
+			state.RevokedNonces[nonce] = ts
+		}
+	}
+	s.revokedNoncesMu.Unlock()
+	s.revokedAdminSessionsMu.Lock()
+	if len(s.revokedAdminSessionsStore) > 0 {
+		state.RevokedAdminSessions = make(map[string]int64, len(s.revokedAdminSessionsStore))
+		for username, ts := range s.revokedAdminSessionsStore {
+			state.RevokedAdminSessions[username] = ts
+		}
+	}
+	s.revokedAdminSessionsMu.Unlock()
 	// oneTapUsed is not persisted: challenges are in-memory only and
 	// do not survive restarts, so persisting these IDs would accumulate orphans.
 	d, err := json.Marshal(state)
@@ -1557,9 +1699,13 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 	// the fresh file starts small.  The caller (writeStateToDisk) will rotate
 	// archive files before writing the new data.
 	if len(d) > 1_000_000 {
-		// Collect dropped entries for archiving before we truncate them.
+		// Collect dropped entries for archiving BEFORE modifying the in-memory log.
+		// We only prune in-memory state after a successful archive write so that
+		// a failed write leaves entries intact (Fix C6).
 		archivedAt := time.Now().UTC().Format(time.RFC3339)
 		var toArchive []archivedUserEntries
+		// prunedLog holds the post-prune slices for each user; applied only on success.
+		prunedLog := make(map[string][]ActionLogEntry)
 		for user, entries := range s.actionLog {
 			if len(entries) > maxActionLogPrune {
 				dropped := entries[:len(entries)-maxActionLogPrune]
@@ -1568,13 +1714,21 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 					Entries:    dropped,
 					ArchivedAt: archivedAt,
 				})
-				s.actionLog[user] = entries[len(entries)-maxActionLogPrune:]
+				prunedLog[user] = entries[len(entries)-maxActionLogPrune:]
 			}
 		}
-		// Write dropped entries to the rotating archive file (best-effort).
+		// Attempt archive write before touching the in-memory log.
+		// If the write fails, skip rotation and keep all entries intact.
 		if len(toArchive) > 0 && s.persistPath != "" {
 			archivePath := filepath.Join(filepath.Dir(s.persistPath), "sessions.archive.jsonl")
-			s.appendToArchive(archivePath, toArchive)
+			if !s.appendToArchive(archivePath, toArchive) {
+				slog.Warn("challenge: archive write failed — skipping action log rotation to preserve entries")
+				return d, false
+			}
+		}
+		// Archive succeeded (or nothing needed archiving): apply in-memory prune.
+		for user, kept := range prunedLog {
+			s.actionLog[user] = kept
 		}
 		state.ActionLog = make(map[string][]ActionLogEntry)
 		for user, entries := range s.actionLog {
@@ -1593,34 +1747,52 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 }
 
 // appendToArchive appends the given archived user entries to the JSONL archive file,
-// rotating it if it exceeds 10 MB. Each entry is written as a single JSON line.
-// Called from marshalStateLocked (under the write lock) for disk I/O only; does not
-// re-acquire s.mu. Best-effort: errors are logged but do not fail the caller.
-func (s *ChallengeStore) appendToArchive(archivePath string, entries []archivedUserEntries) {
+// rotating it if it exceeds 10 MB. Keeps up to 5 numbered archive files (.1–.5).
+// All entries are serialised to an in-memory buffer and written in a single call
+// so that a partial write cannot corrupt the file (Fix C6/H10).
+// Returns true on success, false if any error prevented the write.
+func (s *ChallengeStore) appendToArchive(archivePath string, entries []archivedUserEntries) bool {
 	const maxArchiveSize = 10 << 20 // 10 MB
+	const maxArchiveFiles = 5
 
 	// Rotate archive if it has grown too large.
 	if info, err := os.Stat(archivePath); err == nil && info.Size() >= maxArchiveSize {
-		rotated := archivePath + ".1"
-		if err := os.Rename(archivePath, rotated); err != nil {
+		// Shift existing numbered files: delete .5, rename .4→.5, .3→.4, … .1→.2.
+		os.Remove(fmt.Sprintf("%s.%d", archivePath, maxArchiveFiles))
+		for i := maxArchiveFiles - 1; i >= 1; i-- {
+			src := fmt.Sprintf("%s.%d", archivePath, i)
+			dst := fmt.Sprintf("%s.%d", archivePath, i+1)
+			os.Rename(src, dst) // best-effort; file may not exist
+		}
+		if err := os.Rename(archivePath, archivePath+".1"); err != nil {
 			slog.Warn("challenge: failed to rotate archive file", "path", archivePath, "err", err)
 			// Continue — we'll still try to append/create a fresh file.
+		}
+	}
+
+	// Serialise all entries into a buffer first so the file write is a single
+	// syscall, preventing a partial-write from producing a truncated JSON line.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, item := range entries {
+		if err := enc.Encode(item); err != nil {
+			slog.Warn("challenge: failed to encode archive entry", "err", err)
+			return false
 		}
 	}
 
 	f, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
 		slog.Warn("challenge: failed to open archive file", "path", archivePath, "err", err)
-		return
+		return false
 	}
 	defer f.Close()
 
-	enc := json.NewEncoder(f)
-	for _, item := range entries {
-		if err := enc.Encode(item); err != nil {
-			slog.Warn("challenge: failed to write archive entry", "err", err)
-		}
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		slog.Warn("challenge: failed to write archive entries", "path", archivePath, "err", err)
+		return false
 	}
+	return true
 }
 
 // flockWithTimeout acquires an exclusive advisory flock on f within the given

@@ -144,7 +144,7 @@ func (s *Server) getSessionRole(r *http.Request) string {
 		// groups after this cookie was issued, downgrade to "user".
 		if role == "admin" {
 			if revokedAt, ok := s.revokedAdminSessions.Load(username); ok {
-				if revokedAt.(time.Time).Unix() > tsInt {
+				if t, ok := revokedAt.(time.Time); ok && t.Unix() >= tsInt {
 					return "user"
 				}
 			}
