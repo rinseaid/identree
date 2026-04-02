@@ -668,6 +668,9 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 	}
 
 	noAuth := s.cfg.LDAPSudoNoAuthenticate
+	if noAuth == config.SudoNoAuthTrue {
+		slog.Warn("SECURITY: LDAPSudoNoAuthenticate=true — ALL sudo rules bypass PAM authentication entirely; users can sudo without any authentication prompt")
+	}
 
 	var sent int
 	for _, g := range dir.Groups {
@@ -689,6 +692,9 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 		sudoHosts := validatedSudoHostOrUser(claims, "sudoHosts", "ALL")
 		if len(sudoHosts) == 0 {
 			continue // all explicit values were invalid — fail-closed
+		}
+		if len(sudoHosts) == 1 && sudoHosts[0] == "ALL" {
+			slog.Debug("sudo rule has sudoHost=ALL (permits execution on any host)", "group", g.Name)
 		}
 
 		// sudoCommand — required, no default
@@ -793,6 +799,9 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 	}
 
 	noAuth := s.cfg.LDAPSudoNoAuthenticate
+	if noAuth == config.SudoNoAuthTrue {
+		slog.Warn("SECURITY: LDAPSudoNoAuthenticate=true — ALL sudo rules bypass PAM authentication entirely; users can sudo without any authentication prompt")
+	}
 	rules := s.sudoRules.Rules()
 
 	var sent int
@@ -818,6 +827,9 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 		}
 		if len(sudoHosts) == 0 {
 			continue // all explicit values were invalid — fail-closed
+		}
+		if len(sudoHosts) == 1 && sudoHosts[0] == "ALL" {
+			slog.Debug("sudo rule has sudoHost=ALL (permits execution on any host)", "group", rule.Group)
 		}
 
 		// sudoCommand

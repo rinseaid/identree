@@ -333,6 +333,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		s.sendEventNotification(notify.WebhookData{
 			Event:     "auto_approved",
 			Username:  req.Username,
+			Actor:     req.Username,
 			Hostname:  hostname,
 			UserCode:  challenge.UserCode,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -368,7 +369,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 
 	approvalURL := fmt.Sprintf("%s/approve/%s", s.baseURL, challenge.UserCode)
 
-	oneTapToken := s.computeOneTapToken(challenge.ID, challenge.Username, challenge.ExpiresAt)
+	oneTapToken := s.computeOneTapToken(challenge.ID, challenge.Username, challenge.Hostname, challenge.ExpiresAt)
 	oneTapURL := ""
 	if oneTapToken != "" {
 		oneTapURL = s.baseURL + "/api/onetap/" + oneTapToken
@@ -522,7 +523,7 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := r.URL.Query().Get("username")
-	hostname := r.URL.Query().Get("hostname")
+	hostname := strings.ToLower(strings.TrimSuffix(r.URL.Query().Get("hostname"), "."))
 	if username == "" {
 		apiError(w, http.StatusBadRequest, "username required")
 		return
@@ -585,13 +586,15 @@ func (s *Server) computeStatusHMAC(challengeID, username, status, rotateBefore, 
 
 // computeOneTapToken creates a time-limited, single-use HMAC token for one-tap approval.
 // Format: {challenge_id}.{expires_unix}.{hmac_hex}
-func (s *Server) computeOneTapToken(challengeID, username string, expiresAt time.Time) string {
+// The token is bound to the challenge's hostname to prevent a token issued for a
+// challenge on host-a from being used to approve a challenge on host-b.
+func (s *Server) computeOneTapToken(challengeID, username, hostname string, expiresAt time.Time) string {
 	if s.cfg.SharedSecret == "" {
 		return ""
 	}
 	expires := strconv.FormatInt(expiresAt.Unix(), 10)
 	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-	mac.Write([]byte("onetap:" + challengeID + ":" + username + ":" + expires))
+	mac.Write([]byte("onetap:" + challengeID + ":" + username + ":" + expires + ":" + hostname))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	return challengeID + "." + expires + "." + sig
 }

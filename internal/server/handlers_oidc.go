@@ -92,8 +92,8 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 // Must be called under sessionNonceMu lock.
 func (s *Server) cleanExpiredSessionNonces() {
 	cutoff := time.Now().Add(-15 * time.Minute)
-	for nonce, created := range s.sessionNonces {
-		if created.Before(cutoff) {
+	for nonce, data := range s.sessionNonces {
+		if data.issuedAt.Before(cutoff) {
 			delete(s.sessionNonces, nonce)
 		}
 	}
@@ -119,6 +119,8 @@ func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	verifier := oauth2.GenerateVerifier()
+
 	s.sessionNonceMu.Lock()
 	s.cleanExpiredSessionNonces()
 	if len(s.sessionNonces) > 5000 {
@@ -126,11 +128,15 @@ func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many requests — try again later", http.StatusTooManyRequests)
 		return
 	}
-	s.sessionNonces[nonce] = time.Now()
+	s.sessionNonces[nonce] = sessionNonceData{
+		issuedAt:     time.Now(),
+		codeVerifier: verifier,
+		clientIP:     remoteAddr(r),
+	}
 	s.sessionNonceMu.Unlock()
 
 	state := "sessions:" + nonce
-	authURL := s.oidcConfig.AuthCodeURL(state, oidc.Nonce(nonce))
+	authURL := s.oidcConfig.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
 	// When IssuerPublicURL is set (e.g. split internal/external routing in dev),
 	// rewrite the auth URL so the browser follows the public hostname while
 	// token exchange and discovery continue to use the internal IssuerURL.
@@ -162,7 +168,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	// Verify and consume the nonce
 	s.sessionNonceMu.Lock()
 	s.cleanExpiredSessionNonces()
-	_, nonceValid := s.sessionNonces[stateNonce]
+	nonceData, nonceValid := s.sessionNonces[stateNonce]
 	if nonceValid {
 		delete(s.sessionNonces, stateNonce)
 	}
@@ -172,6 +178,20 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		slog.Warn("SECURITY unknown or expired sessions nonce", "remote_addr", remoteAddr(r))
 		revokeErrorPage(w, r, http.StatusBadRequest, "session_expired", "login_session_expired")
 		return
+	}
+
+	// Reject stale nonces regardless of lazy cleanup timing.
+	if time.Since(nonceData.issuedAt) > 15*time.Minute {
+		slog.Warn("SECURITY expired sessions nonce presented", "remote_addr", remoteAddr(r))
+		revokeErrorPage(w, r, http.StatusBadRequest, "auth_failed", "nonce_expired")
+		return
+	}
+
+	// Soft-check state binding: warn if the callback IP differs from login IP.
+	// This can legitimately differ for users behind load balancers or mobile NAT,
+	// so we warn rather than reject.
+	if nonceData.clientIP != "" && nonceData.clientIP != remoteAddr(r) {
+		slog.Warn("SECURITY sessions callback IP mismatch (possible CSRF)", "login_ip", nonceData.clientIP, "callback_ip", remoteAddr(r))
 	}
 
 	// Check for IdP error
@@ -194,7 +214,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	exchangeCtx = context.WithValue(exchangeCtx, oauth2.HTTPClient, s.oidcHTTPClient)
 
 	exchangeStart := time.Now()
-	token, err := s.oidcConfig.Exchange(exchangeCtx, code)
+	token, err := s.oidcConfig.Exchange(exchangeCtx, code, oauth2.VerifierOption(nonceData.codeVerifier))
 	oidcExchangeDuration.Observe(time.Since(exchangeStart).Seconds())
 	if err != nil {
 		slog.Error("sessions callback token exchange failed", "remote_addr", remoteAddr(r), "err", err)

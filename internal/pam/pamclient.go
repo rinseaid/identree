@@ -59,6 +59,9 @@ type serverHTTPError = breakglass.ServerHTTPError
 // cache; passing an empty string is safe and results in hostname being omitted
 // from challenge requests.
 func NewPAMClient(cfg *config.ClientConfig, tokenCache *TokenCache, hostname string) (*PAMClient, error) {
+	// Normalize hostname: lowercase + strip trailing dot for consistent matching
+	hostname = strings.ToLower(strings.TrimSuffix(hostname, "."))
+
 	if strings.HasPrefix(cfg.ServerURL, "http://") {
 		return nil, fmt.Errorf("identree: ServerURL must use https://, not http:// (shared secret would be sent in cleartext)")
 	}

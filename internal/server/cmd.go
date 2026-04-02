@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -194,12 +196,34 @@ func runServer() {
 			"base_dn", cfg.LDAPBaseDN,
 			"refresh_interval", cfg.LDAPRefreshInterval,
 		)
+	} else {
+		slog.Info("LDAP server is DISABLED — managed hosts cannot use LDAP/sudo; set IDENTREE_LDAP_ENABLED=true to enable")
 	}
 	if cfg.APIKey == "" {
 		slog.Info("bridge mode rules loaded", "count", len(rulesStore.Rules()))
 	}
 	if len(cfg.AdminGroups) == 0 && !cfg.DevLoginEnabled {
 		slog.Warn("IDENTREE_ADMIN_GROUPS is empty — admin UI will be inaccessible without IDENTREE_DEV_LOGIN")
+	}
+	if cfg.DevLoginEnabled && strings.HasPrefix(cfg.ExternalURL, "https://") {
+		slog.Warn("IDENTREE_DEV_LOGIN is enabled but ExternalURL uses HTTPS — DevLogin bypasses OIDC and should NEVER be used in production")
+	}
+
+	// Validate AdminApprovalHosts glob patterns at startup. A malformed pattern
+	// would silently skip matching, auto-approving hosts that require admin approval.
+	for _, pattern := range cfg.AdminApprovalHosts {
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			slog.Error("invalid IDENTREE_ADMIN_APPROVAL_HOSTS glob pattern — fix configuration", "pattern", pattern, "err", err)
+			os.Exit(1)
+		}
+	}
+
+	// Validate IssuerPublicURL is a well-formed http/https URL if set.
+	if cfg.IssuerPublicURL != "" {
+		if u, err := url.Parse(cfg.IssuerPublicURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			slog.Error("IDENTREE_OIDC_ISSUER_PUBLIC_URL is not a valid http/https URL", "value", cfg.IssuerPublicURL)
+			os.Exit(1)
+		}
 	}
 	if cfg.SessionStateFile != "" {
 		slog.Info("session persistence enabled", "path", cfg.SessionStateFile)
@@ -288,22 +312,72 @@ func runServer() {
 				}()
 				ticker := time.NewTicker(cfg.LDAPRefreshInterval)
 				defer ticker.Stop()
+
+				var ldapConsecutiveFailures int
+				// backoffTimer is used to delay the next poll attempt after failures.
+				// It starts stopped (fired immediately so the first select hits ticker.C).
+				backoffTimer := time.NewTimer(0)
+				<-backoffTimer.C // drain the initial fire
+				defer backoffTimer.Stop()
+				backoffActive := false
+
 				for {
 					select {
 					case <-ldapCtx.Done():
 						return
-					case <-ticker.C:
+					case <-backoffTimer.C:
+						backoffActive = false
+						// Retry after backoff: attempt a poll refresh.
 						dir, ferr := srv.pocketIDClient.FetchDirectory()
 						if ferr != nil {
-							// Partial or failed fetch: keep stale directory in use rather
-							// than refreshing with incomplete data. Retry next interval.
-							slog.Warn("ldap: directory refresh failed, retaining previous directory", "err", ferr)
+							ldapConsecutiveFailures++
+							backoff := time.Duration(1<<min(ldapConsecutiveFailures-1, 3)) * time.Minute
+							if backoff > 5*time.Minute {
+								backoff = 5 * time.Minute
+							}
+							slog.Warn("ldap: refresh failed, will retry with backoff", "err", ferr, "backoff", backoff, "consecutive_failures", ldapConsecutiveFailures)
 							srv.ldapLastErrorMu.Lock()
 							srv.ldapLastError = ferr
 							srv.ldapLastErrorAt = time.Now()
 							srv.ldapLastErrorMu.Unlock()
+							backoffTimer.Reset(backoff)
+							backoffActive = true
 							continue
 						}
+						ldapConsecutiveFailures = 0
+						ldapSrv.Refresh(dir, "poll", srv.removedUsersSnapshot())
+						srv.ldapLastSyncMu.Lock()
+						srv.ldapLastSync = time.Now()
+						srv.ldapLastSyncMu.Unlock()
+						srv.ldapLastErrorMu.Lock()
+						srv.ldapLastError = nil
+						srv.ldapLastErrorMu.Unlock()
+						srv.cfgMu.Lock()
+						srv.updateAdminRevocations(adminUsernamesFromDirectory(dir, srv.cfg.AdminGroups))
+						srv.cfgMu.Unlock()
+					case <-ticker.C:
+						if backoffActive {
+							// A backoff retry is pending — skip this tick to avoid
+							// concurrent fetches while waiting for backoff to resolve.
+							continue
+						}
+						dir, ferr := srv.pocketIDClient.FetchDirectory()
+						if ferr != nil {
+							ldapConsecutiveFailures++
+							backoff := time.Duration(1<<min(ldapConsecutiveFailures-1, 3)) * time.Minute
+							if backoff > 5*time.Minute {
+								backoff = 5 * time.Minute
+							}
+							slog.Warn("ldap: refresh failed, will retry with backoff", "err", ferr, "backoff", backoff, "consecutive_failures", ldapConsecutiveFailures)
+							srv.ldapLastErrorMu.Lock()
+							srv.ldapLastError = ferr
+							srv.ldapLastErrorAt = time.Now()
+							srv.ldapLastErrorMu.Unlock()
+							backoffTimer.Reset(backoff)
+							backoffActive = true
+							continue
+						}
+						ldapConsecutiveFailures = 0
 						ldapSrv.Refresh(dir, "poll", srv.removedUsersSnapshot())
 						srv.ldapLastSyncMu.Lock()
 						srv.ldapLastSync = time.Now()
@@ -326,6 +400,8 @@ func runServer() {
 							srv.ldapLastErrorMu.Unlock()
 							continue
 						}
+						ldapConsecutiveFailures = 0
+						backoffActive = false
 						ldapSrv.Refresh(dir, "webhook", srv.removedUsersSnapshot())
 						srv.ldapLastSyncMu.Lock()
 						srv.ldapLastSync = time.Now()
@@ -341,6 +417,25 @@ func runServer() {
 			}()
 		}
 	}
+
+	// periodicFlushCtx is cancelled at graceful shutdown to stop the flush goroutine.
+	periodicFlushCtx, periodicFlushCancel := context.WithCancel(context.Background())
+	defer periodicFlushCancel()
+
+	// Periodically flush session state to disk to minimize data loss on crash.
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				srv.store.SaveState()
+				slog.Debug("periodic state flush completed")
+			case <-periodicFlushCtx.Done():
+				return
+			}
+		}
+	}()
 
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -395,6 +490,7 @@ func runServer() {
 			}
 		}
 		srv.WaitForNotifications(5 * time.Second)
+		periodicFlushCancel()
 		srv.store.SaveState()
 		srv.Stop()
 		shutdownCancel()

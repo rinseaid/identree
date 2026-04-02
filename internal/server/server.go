@@ -28,6 +28,17 @@ import (
 
 var serverStartTime = time.Now()
 
+// sessionNonceData holds state for an in-flight OIDC login.
+type sessionNonceData struct {
+	issuedAt     time.Time
+	codeVerifier string // PKCE code verifier; empty for legacy sessions
+	clientIP     string // client IP at login initiation for state binding
+}
+
+// revokedNoncesRetentionDur is how long we keep revoked nonces before pruning.
+// Must exceed sessionCookieTTL (30 min) to cover cookies near their expiry.
+const revokedNoncesRetentionDur = 35 * time.Minute
+
 const escrowTimeout = 30 * time.Second
 const escrowMaxOutput = 1 << 20 // 1 MB
 const maxRequestBodySize = 1024
@@ -50,7 +61,7 @@ type Server struct {
 	mux          *http.ServeMux
 	notifyWg     sync.WaitGroup
 
-	sessionNonces  map[string]time.Time
+	sessionNonces  map[string]sessionNonceData
 	sessionNonceMu sync.Mutex
 
 	sseClients map[string][]chan string
@@ -162,10 +173,8 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 
 	if !cfg.DevLoginEnabled {
-		// M15: warn when InsecureIssuerURLContext is used with an HTTPS ExternalURL,
-		// as this skips issuer validation in what appears to be a production deployment.
-		if cfg.IssuerPublicURL != "" && strings.HasPrefix(cfg.ExternalURL, "https://") {
-			slog.Warn("InsecureIssuerURLContext enabled in production (ExternalURL uses HTTPS) — issuer URL mismatch will not be rejected")
+		if cfg.IssuerPublicURL != "" {
+			slog.Warn("InsecureIssuerURLContext: OIDC issuer URL mismatch validation is DISABLED — ID token issuer claim will not be verified against configured IssuerURL; only use IssuerPublicURL in controlled split-routing environments")
 		}
 
 		discoveryClient := &http.Client{
@@ -225,7 +234,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		oidcConfig:    oidcConfig,
 		verifier:      verifier,
 		mux:           http.NewServeMux(),
-		sessionNonces: make(map[string]time.Time),
+		sessionNonces: make(map[string]sessionNonceData),
 		sseClients:    make(map[string][]chan string),
 		deployJobs:    make(map[string]*deployJob),
 		deployRL:      newDeployRateLimiter(),
@@ -278,12 +287,12 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		slog.Error("IDENTREE_WEBHOOK_SECRET is not set — incoming PocketID webhooks are unauthenticated; this is a DoS vector in production")
 	}
 
-	// Periodically prune revokedNonces entries that have outlived sessionCookieTTL.
+	// Periodically prune revokedNonces entries that have outlived revokedNoncesRetentionDur.
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			cutoff := time.Now().Add(-sessionCookieTTL)
+			cutoff := time.Now().Add(-revokedNoncesRetentionDur)
 
 			s.revokedNoncesMu.Lock()
 			for nonce, revokedAt := range s.revokedNonces {
@@ -293,7 +302,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 			}
 			s.revokedNoncesMu.Unlock()
 
-			// Prune revokedAdminSessions entries older than sessionCookieTTL.
+			// Prune revokedAdminSessions entries older than revokedNoncesRetentionDur.
 			// Any cookie issued before that point has already expired naturally.
 			s.revokedAdminSessions.Range(func(k, v any) bool {
 				if revokedAt, ok := v.(time.Time); ok && revokedAt.Before(cutoff) {
@@ -313,6 +322,22 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 				}
 			}
 			s.usedEscrowTokensMu.Unlock()
+		}
+	}()
+
+	// Periodically prune sessionNonces entries older than 15 minutes.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			cutoff := time.Now().Add(-15 * time.Minute)
+			s.sessionNonceMu.Lock()
+			for nonce, data := range s.sessionNonces {
+				if data.issuedAt.Before(cutoff) {
+					delete(s.sessionNonces, nonce)
+				}
+			}
+			s.sessionNonceMu.Unlock()
 		}
 	}()
 

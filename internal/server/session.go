@@ -263,7 +263,7 @@ func computeCSRFToken(sharedSecret, username, timestamp string) string {
 		return ""
 	}
 	mac := hmac.New(sha256.New, []byte(sharedSecret))
-	mac.Write([]byte(username + ":" + timestamp))
+	mac.Write([]byte("csrf:" + username + ":" + timestamp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

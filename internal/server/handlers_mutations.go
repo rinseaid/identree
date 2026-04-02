@@ -31,7 +31,19 @@ func safeRedirectDest(raw string) string {
 	if err != nil {
 		return "/"
 	}
-	if !strings.HasPrefix(decoded, "/") || strings.HasPrefix(decoded, "//") || strings.ContainsAny(decoded, "?#\\\n\r\x00") {
+	if !strings.HasPrefix(decoded, "/") {
+		return "/"
+	}
+	// Strip ASCII whitespace/control characters that browsers normalize away,
+	// then recheck for // to block "/ \t//evil.com" → "//evil.com" redirect bypass.
+	var stripped strings.Builder
+	for _, ch := range decoded {
+		if ch > 0x20 && ch != 0x7F {
+			stripped.WriteRune(ch)
+		}
+	}
+	norm := stripped.String()
+	if strings.HasPrefix(norm, "//") || strings.ContainsAny(decoded, "?#\\\n\r\t\x00\x0b\x0c") {
 		return "/"
 	}
 	return decoded
@@ -165,9 +177,10 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify HMAC — include the challenge username to bind the token to a specific user.
+	// Verify HMAC — include challenge username and hostname to bind the token to a
+	// specific user on a specific host, preventing cross-host token replay.
 	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-	mac.Write([]byte("onetap:" + challengeID + ":" + challenge.Username + ":" + expiresStr))
+	mac.Write([]byte("onetap:" + challengeID + ":" + challenge.Username + ":" + expiresStr + ":" + challenge.Hostname))
 	expectedHMAC := hex.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(expectedHMAC), []byte(providedHMAC)) != 1 {
 		slog.Warn("SECURITY invalid one-tap token", "remote_addr", remoteAddr(r))
