@@ -234,11 +234,15 @@ func parseTOMLValue(raw string, isList bool) string {
 	// Quoted string
 	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
 		s := raw[1 : len(raw)-1]
+		// Process \\ first using a placeholder so that \\n is not misread as \n.
+		// Null bytes cannot appear in valid TOML strings, making them a safe placeholder.
+		const bsPlaceholder = "\x00"
+		s = strings.ReplaceAll(s, `\\`, bsPlaceholder)
 		s = strings.ReplaceAll(s, `\"`, `"`)
-		s = strings.ReplaceAll(s, `\\`, `\`)
 		s = strings.ReplaceAll(s, `\n`, "\n")
 		s = strings.ReplaceAll(s, `\r`, "\r")
 		s = strings.ReplaceAll(s, `\t`, "\t")
+		s = strings.ReplaceAll(s, bsPlaceholder, `\`)
 		return s
 	}
 	return raw

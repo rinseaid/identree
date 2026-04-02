@@ -30,7 +30,7 @@ import (
 // to prevent timing attacks that could leak the secret byte-by-byte.
 func (s *Server) verifySharedSecret(r *http.Request) bool {
 	if s.cfg.SharedSecret == "" {
-		return true
+		return false // fail closed: no secret configured means no access
 	}
 	provided := r.Header.Get("X-Shared-Secret")
 	if provided == "" {

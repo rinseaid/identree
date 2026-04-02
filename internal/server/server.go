@@ -290,7 +290,13 @@ func (s *Server) registerRoutes() {
 
 	// Misc
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	s.mux.Handle("/metrics", promhttp.Handler())
+	s.mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if !s.verifySharedSecret(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		promhttp.Handler().ServeHTTP(w, r)
+	})
 	s.mux.HandleFunc("/theme", s.handleThemeToggle)
 	s.mux.HandleFunc("/signout", s.handleSignOut)
 	s.mux.HandleFunc("/install.sh", s.handleInstallScript)

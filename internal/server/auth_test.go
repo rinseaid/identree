@@ -49,21 +49,21 @@ func TestVerifySharedSecret(t *testing.T) {
 		}
 	})
 
-	t.Run("empty secret bypasses check", func(t *testing.T) {
+	t.Run("empty secret fails closed", func(t *testing.T) {
 		s := newAuthTestServer("", nil, nil)
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		// No header at all — empty secret means open access.
-		if !s.verifySharedSecret(r) {
-			t.Fatal("expected true when shared secret is empty (bypass)")
+		// No secret configured — fail closed (no access).
+		if s.verifySharedSecret(r) {
+			t.Fatal("expected false when shared secret is empty (fail closed)")
 		}
 	})
 
-	t.Run("empty secret with any header also bypasses", func(t *testing.T) {
+	t.Run("empty secret with header still fails closed", func(t *testing.T) {
 		s := newAuthTestServer("", nil, nil)
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		r.Header.Set("X-Shared-Secret", "anything")
-		if !s.verifySharedSecret(r) {
-			t.Fatal("expected true when shared secret is empty (bypass)")
+		if s.verifySharedSecret(r) {
+			t.Fatal("expected false when shared secret is empty (fail closed)")
 		}
 	})
 }
