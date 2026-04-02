@@ -99,9 +99,6 @@ func (s *Server) cleanExpiredSessionNonces() {
 	}
 }
 
-// sessionsTokenTTL is kept for backward compatibility with CSRF tokens.
-const sessionsTokenTTL = 30 * time.Minute
-
 // handleSessionsLogin initiates an OIDC flow for the sessions management page.
 // GET /sessions/login
 func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
@@ -200,7 +197,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	token, err := s.oidcConfig.Exchange(exchangeCtx, code)
 	oidcExchangeDuration.Observe(time.Since(exchangeStart).Seconds())
 	if err != nil {
-		slog.Error("sessions callback token exchange failed", "remote_addr", remoteAddr(r))
+		slog.Error("sessions callback token exchange failed", "remote_addr", remoteAddr(r), "err", err)
 		challengesDenied.WithLabelValues("oidc_error").Inc()
 		loginURL := s.baseURL + "/sessions/login"
 		revokeErrorPageWithLink(w, r, http.StatusInternalServerError, "auth_failed", "token_exchange_failed", loginURL, "try_again")
@@ -216,7 +213,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 
 	idToken, err := s.verifier.Verify(exchangeCtx, rawIDToken)
 	if err != nil {
-		slog.Error("sessions callback token verification failed", "remote_addr", remoteAddr(r))
+		slog.Error("sessions callback token verification failed", "remote_addr", remoteAddr(r), "err", err)
 		revokeErrorPage(w, r, http.StatusInternalServerError, "auth_failed", "token_verify_failed")
 		return
 	}
@@ -235,7 +232,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		Groups            []string `json:"groups"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
-		slog.Error("sessions callback claims parsing failed", "remote_addr", remoteAddr(r))
+		slog.Error("sessions callback claims parsing failed", "remote_addr", remoteAddr(r), "err", err)
 		revokeErrorPage(w, r, http.StatusInternalServerError, "auth_failed", "claims_parse_failed")
 		return
 	}

@@ -387,8 +387,6 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			"uid":              {u.Username},
 			"cn":               {fullName},
 			"sn":               {sn},
-			"givenName":        {firstName},
-			"mail":             {email},
 			"uidNumber":        {fmt.Sprintf("%d", uid)},
 			"gidNumber":        {fmt.Sprintf("%d", gid)},
 			"homeDirectory":    {home},
@@ -398,6 +396,13 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			"shadowMax":        {"99999"},
 			"shadowWarning":    {"7"},
 			"accountStatus":    {accountStatus},
+		}
+		// RFC 4519 forbids empty attribute values; only emit optional attrs when non-empty.
+		if firstName != "" {
+			attrs["givenName"] = []string{firstName}
+		}
+		if email != "" {
+			attrs["mail"] = []string{email}
 		}
 
 		// For disabled accounts, set shadowExpire=1 so that standard LDAP clients

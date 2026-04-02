@@ -1833,6 +1833,7 @@ const adminPageHTML = `<!DOCTYPE html>
         });
       }).catch(function(){sel.innerHTML='<option value="">'+_t.unavailable+'</option>';});
     }
+    var deployDone=false;
     function closeDeployModal(){
       deployModal.classList.remove('open');
       if(_deployPrevFocus)_deployPrevFocus.focus();
@@ -1901,7 +1902,6 @@ const adminPageHTML = `<!DOCTYPE html>
             logEl.textContent+=e.data+'\n';
             logEl.scrollTop=logEl.scrollHeight;
           });
-          var deployDone=false;
           es.addEventListener('status',function(e){
             es.close();
             if(e.data==='done'){statusEl.textContent='\u2713 '+_t.deployOk;statusEl.className='deploy-status ok';deployDone=true;}
@@ -2846,14 +2846,14 @@ const adminPageHTML = `<!DOCTYPE html>
             <td class="info-label"><label for="sudo-commands">{{call .T "sudo_rules_commands"}}</label></td>
             <td>
               <input type="text" id="sudo-commands" name="commands" required class="text-input" placeholder="/usr/bin/apt,/usr/bin/systemctl" autocomplete="off">
-              <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:4px">{{call .T "sudo_rules_commands_hint"}}</div>
+              <div style="font-size:0.78rem;color:var(--text-2);margin-top:4px">{{call .T "sudo_rules_commands_hint"}}</div>
             </td>
           </tr>
           <tr>
             <td class="info-label"><label for="sudo-hosts">{{call .T "sudo_rules_hosts"}}</label></td>
             <td>
               <input type="text" id="sudo-hosts" name="hosts" class="text-input" placeholder="ALL" autocomplete="off">
-              <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:4px">{{call .T "sudo_rules_hosts_hint"}}</div>
+              <div style="font-size:0.78rem;color:var(--text-2);margin-top:4px">{{call .T "sudo_rules_hosts_hint"}}</div>
             </td>
           </tr>
           <tr>
@@ -3260,7 +3260,7 @@ const adminPageHTML = `<!DOCTYPE html>
               <button type="button" class="key-action-btn" id="deploy-key-upload-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>{{call .T "deploy_key_upload"}}</span></button>
               <input type="file" id="deploy-key-file" style="display:none" accept=".pem,.key,.pub,*">
             </div>
-            <div id="deploy-key-validating" style="display:none;font-size:0.813rem;color:var(--text-secondary);margin-top:8px">{{call .T "deploy_key_validating"}}</div>
+            <div id="deploy-key-validating" style="display:none;font-size:0.813rem;color:var(--text-2);margin-top:8px">{{call .T "deploy_key_validating"}}</div>
             <div id="deploy-key-invalid" style="display:none;font-size:0.813rem;color:var(--danger);margin-top:8px"></div>
           </div>
           <div id="deploy-key-loaded" style="display:none">
@@ -3552,12 +3552,12 @@ const accessPageHTML = `<!DOCTYPE html>
             <input type="hidden" name="challenge_id" value="{{.ID}}">
             <button type="submit" class="saction-btn saction-btn--approve">{{call $.T "approve"}}</button>
           </form>
-          <form method="POST" action="/api/challenges/reject" class="saction-form saction-confirm" data-confirm="{{call $.T "confirm_reject_all"}}">
+          <form method="POST" action="/api/challenges/reject" class="saction-form">
             <input type="hidden" name="username" value="{{$.Username}}">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
             <input type="hidden" name="challenge_id" value="{{.ID}}">
-            <button type="submit" class="saction-btn saction-btn--deny">{{call $.T "reject"}}</button>
+            <button type="submit" class="saction-btn saction-btn--deny access-saction-confirm" data-confirm="{{call $.T "confirm_reject_all"}}">{{call $.T "reject"}}</button>
           </form>
         </div>
       </div>

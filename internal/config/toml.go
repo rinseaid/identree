@@ -90,6 +90,9 @@ var TOMLSections = []TOMLSection{
 		{Key: "web_url", EnvKey: "IDENTREE_ESCROW_WEB_URL"},
 	}},
 	{Name: "client_defaults", Fields: []TOMLField{
+		{Key: "poll_interval", EnvKey: "IDENTREE_CLIENT_POLL_INTERVAL"},
+		{Key: "timeout", EnvKey: "IDENTREE_CLIENT_TIMEOUT"},
+		{Key: "breakglass_enabled", EnvKey: "IDENTREE_CLIENT_BREAKGLASS_ENABLED", IsBool: true},
 		{Key: "breakglass_password_type", EnvKey: "IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"},
 		{Key: "breakglass_rotation_days", EnvKey: "IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS"},
 		{Key: "token_cache_enabled", EnvKey: "IDENTREE_CLIENT_TOKEN_CACHE_ENABLED", IsBool: true},

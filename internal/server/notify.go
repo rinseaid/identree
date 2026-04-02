@@ -96,11 +96,10 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 	}()
 }
 
-// sendEventNotification fires a webhook notification for non-challenge events
-// (approved, rejected, auto_approved). No-op if backend is unset or is "custom"
-// (the command backend only fires on challenge_created).
+// sendEventNotification fires a notification for non-challenge-creation events
+// (approved, rejected, auto_approved, revealed_breakglass). No-op if no backend configured.
 func (s *Server) sendEventNotification(d notify.WebhookData) {
-	if s.cfg.NotifyBackend == "" || s.cfg.NotifyBackend == "custom" {
+	if s.cfg.NotifyBackend == "" {
 		return
 	}
 	nd := NotifyData{
@@ -132,7 +131,13 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 			timeout = notifyTimeout
 		}
 
-		if err := s.postNotifyWebhook(nd, timeout); err != nil {
+		var err error
+		if s.cfg.NotifyBackend == "custom" {
+			err = s.runNotifyCommand(nd, timeout)
+		} else {
+			err = s.postNotifyWebhook(nd, timeout)
+		}
+		if err != nil {
 			notify.NotificationsTotal.WithLabelValues("failed").Inc()
 			slog.Error("NOTIFY event failed", "event", nd.Event, "user", nd.Username, "err", err)
 			return
@@ -212,6 +217,7 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration) error {
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
+		"NOTIFY_EVENT=" + d.Event,
 		"NOTIFY_USERNAME=" + d.Username,
 		"NOTIFY_HOSTNAME=" + d.Hostname,
 		"NOTIFY_USER_CODE=" + d.UserCode,

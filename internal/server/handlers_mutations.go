@@ -414,6 +414,13 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 			s.store.LogAction(username, challpkg.ActionApproved, hostname, c.UserCode, username)
 			count++
 			slog.Info("BULK_APPROVE_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
+			s.sendEventNotification(notify.WebhookData{
+				Event:     "challenge_approved",
+				Username:  c.Username,
+				Hostname:  hostname,
+				UserCode:  c.UserCode,
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
 		}
 	}
 
@@ -670,6 +677,13 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 			s.store.LogAction(username, challpkg.ActionRejected, hostname, c.UserCode, username)
 			count++
 			slog.Info("BULK_REJECT_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
+			s.sendEventNotification(notify.WebhookData{
+				Event:     "challenge_rejected",
+				Username:  c.Username,
+				Hostname:  hostname,
+				UserCode:  c.UserCode,
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
 		}
 	}
 

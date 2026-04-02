@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"math/big"
 	"os"
@@ -25,9 +24,11 @@ import (
 )
 
 const (
-	ActionApproved           = "approved"
-	ActionDenied             = "denied"
-	ActionRejected           = "rejected"
+	ActionApproved = "approved"
+	// ActionDenied is a historical alias for the "denied" challenge status value.
+	// The action log uses ActionRejected ("rejected") for all user-denial events.
+	ActionDenied   = "denied"
+	ActionRejected = "rejected"
 	ActionAutoApproved       = "auto_approved"
 	ActionRevoked            = "revoked"
 	ActionExtended           = "extended"
@@ -438,6 +439,7 @@ func (s *ChallengeStore) Deny(id string) error {
 	}
 	c.Status = StatusDenied
 	s.decPending(c.Username)
+	s.dirty.Store(true)
 	return nil
 }
 
@@ -736,6 +738,7 @@ func (s *ChallengeStore) RemoveHost(hostname string) {
 		s.actionLog[user] = kept
 	}
 	delete(s.escrowedHosts, hostname)
+	delete(s.escrowedCiphertexts, hostname)
 	suffix := "@" + hostname
 	for key := range s.lastApproval {
 		if strings.HasSuffix(key, suffix) {
@@ -1018,6 +1021,7 @@ func (s *ChallengeStore) RecordOIDCAuth(username string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastOIDCAuth[username] = time.Now()
+	s.dirty.Store(true)
 }
 
 // LastOIDCAuth returns the last OIDC authentication time for the user, or zero if never recorded.
@@ -1106,7 +1110,7 @@ func (s *ChallengeStore) flushDirty() {
 func (s *ChallengeStore) reapLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("ERROR: panic in challenge reaper (recovered): %v", r)
+			slog.Error("panic in challenge reaper (recovered)", "panic", r)
 			// Only restart if Stop() has not been called.
 			select {
 			case <-s.stopCh:
@@ -1215,27 +1219,27 @@ func (s *ChallengeStore) loadState() {
 	f, err := os.OpenFile(s.persistPath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("WARNING: cannot open session state file %s: %v — starting fresh", s.persistPath, err)
+			slog.Warn("cannot open session state file — starting fresh", "path", s.persistPath, "err", err)
 		}
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		log.Printf("WARNING: cannot stat session state file: %v — starting fresh", err)
+		slog.Warn("cannot stat session state file — starting fresh", "err", err)
 		return
 	}
 	if !info.Mode().IsRegular() {
-		log.Printf("WARNING: session state file is not a regular file — starting fresh")
+		slog.Warn("session state file is not a regular file — starting fresh", "path", s.persistPath)
 		return
 	}
 	if info.Mode().Perm()&0077 != 0 {
-		log.Printf("WARNING: session state file has insecure permissions %o — starting fresh", info.Mode().Perm())
+		slog.Warn("session state file has insecure permissions — starting fresh", "path", s.persistPath, "perm", fmt.Sprintf("%o", info.Mode().Perm()))
 		return
 	}
 	data, err := io.ReadAll(io.LimitReader(f, 10<<20)) // 10MB limit
 	if err != nil {
-		log.Printf("WARNING: cannot read session state file: %v — starting fresh", err)
+		slog.Warn("cannot read session state file — starting fresh", "path", s.persistPath, "err", err)
 		return
 	}
 	// First pass: try to migrate old escrowed_hosts format (map[string]time.Time)
@@ -1254,7 +1258,7 @@ func (s *ChallengeStore) loadState() {
 					raw["escrowed_hosts"] = converted
 					if migrated, merr := json.Marshal(raw); merr == nil {
 						data = migrated
-						log.Printf("Migrated %d escrowed_hosts entries to new format", len(oldFormat))
+						slog.Info("migrated escrowed_hosts entries to new format", "count", len(oldFormat))
 					}
 				}
 			}
@@ -1263,7 +1267,7 @@ func (s *ChallengeStore) loadState() {
 
 	var state persistedState
 	if err := json.Unmarshal(data, &state); err != nil {
-		log.Printf("WARNING: corrupt session state file %s: %v — starting fresh", s.persistPath, err)
+		slog.Warn("corrupt session state file — starting fresh", "path", s.persistPath, "err", err)
 		return
 	}
 	const maxStateMapEntries = 100_000
@@ -1278,7 +1282,7 @@ func (s *ChallengeStore) loadState() {
 			s.lastApproval[key] = expiry
 		}
 		if len(s.lastApproval) >= maxStateMapEntries {
-			log.Printf("WARNING: grace_sessions map in state file exceeds %d entries — truncating", maxStateMapEntries)
+			slog.Warn("grace_sessions map in state file exceeds limit — truncating", "limit", maxStateMapEntries)
 			break
 		}
 	}
@@ -1288,7 +1292,7 @@ func (s *ChallengeStore) loadState() {
 			s.revokeTokensBefore[user] = ts
 		}
 		if len(s.revokeTokensBefore) >= maxStateMapEntries {
-			log.Printf("WARNING: revoke_tokens_before map in state file exceeds %d entries — truncating", maxStateMapEntries)
+			slog.Warn("revoke_tokens_before map in state file exceeds limit — truncating", "limit", maxStateMapEntries)
 			break
 		}
 	}
@@ -1298,7 +1302,7 @@ func (s *ChallengeStore) loadState() {
 		}
 		s.actionLog[user] = entries
 		if len(s.actionLog) >= maxStateMapEntries {
-			log.Printf("WARNING: action_log map in state file exceeds %d entries — truncating", maxStateMapEntries)
+			slog.Warn("action_log map in state file exceeds limit — truncating", "limit", maxStateMapEntries)
 			break
 		}
 	}
@@ -1340,7 +1344,7 @@ func (s *ChallengeStore) loadState() {
 	// oneTapUsed IDs have no corresponding challenge and accumulate unboundedly.
 	// Dropping them on restart is safe: a challenge that was pending before restart
 	// will have expired, and the one-tap token is tied to the challenge ID.
-	log.Printf("Loaded %d grace sessions, %d revocation entries, %d escrowed hosts from %s", len(s.lastApproval), len(s.revokeTokensBefore), len(s.escrowedHosts), s.persistPath)
+	slog.Info("loaded session state", "grace_sessions", len(s.lastApproval), "revocations", len(s.revokeTokensBefore), "escrowed_hosts", len(s.escrowedHosts), "path", s.persistPath)
 	graceSessions.Set(float64(len(s.lastApproval)))
 }
 
@@ -1401,7 +1405,7 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 	// do not survive restarts, so persisting these IDs would accumulate orphans.
 	d, err := json.Marshal(state)
 	if err != nil {
-		log.Printf("ERROR: marshaling session state: %v", err)
+		slog.Error("marshaling session state", "err", err)
 		return nil, false
 	}
 
@@ -1422,7 +1426,7 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 		}
 		d, err = json.Marshal(state)
 		if err != nil {
-			log.Printf("ERROR: re-marshaling session state after prune: %v", err)
+			slog.Error("re-marshaling session state after prune", "err", err)
 			return nil, false
 		}
 		return d, true
@@ -1450,7 +1454,7 @@ func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) bool 
 	dir := filepath.Dir(s.persistPath) + "/"
 	tmp, err := os.CreateTemp(dir, ".sessions-tmp-*")
 	if err != nil {
-		log.Printf("ERROR: creating temp session state file: %v", err)
+		slog.Error("creating temp session state file", "err", err)
 		return false
 	}
 	tmpName := tmp.Name()
@@ -1459,29 +1463,29 @@ func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) bool 
 	if err := tmp.Chmod(0600); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		log.Printf("ERROR: setting session state permissions: %v", err)
+		slog.Error("setting session state permissions", "err", err)
 		return false
 	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		log.Printf("ERROR: writing session state: %v", err)
+		slog.Error("writing session state", "err", err)
 		return false
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		log.Printf("ERROR: syncing session state: %v", err)
+		slog.Error("syncing session state", "err", err)
 		return false
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
-		log.Printf("ERROR: closing session state temp file: %v", err)
+		slog.Error("closing session state temp file", "err", err)
 		return false
 	}
 	if err := os.Rename(tmpName, s.persistPath); err != nil {
 		os.Remove(tmpName)
-		log.Printf("ERROR: renaming session state file: %v", err)
+		slog.Error("renaming session state file", "err", err)
 		return false
 	}
 	return true

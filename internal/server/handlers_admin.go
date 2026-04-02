@@ -557,8 +557,18 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_ESCROW_AUTH_ID":                  cfg.EscrowAuthID,
 		"IDENTREE_ESCROW_PATH":                     cfg.EscrowPath,
 		"IDENTREE_ESCROW_WEB_URL":                  cfg.EscrowWebURL,
-		"IDENTREE_CLIENT_POLL_INTERVAL":            formatDuration(cfg.ClientPollInterval),
-		"IDENTREE_CLIENT_TIMEOUT":                  formatDuration(cfg.ClientTimeout),
+		"IDENTREE_CLIENT_POLL_INTERVAL": func() string {
+			if cfg.ClientPollInterval == 0 {
+				return ""
+			}
+			return formatDuration(cfg.ClientPollInterval)
+		}(),
+		"IDENTREE_CLIENT_TIMEOUT": func() string {
+			if cfg.ClientTimeout == 0 {
+				return ""
+			}
+			return formatDuration(cfg.ClientTimeout)
+		}(),
 		"IDENTREE_CLIENT_BREAKGLASS_ENABLED":       boolPtrToString(cfg.ClientBreakglassEnabled),
 		"IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE": cfg.ClientBreakglassPasswordType,
 		"IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS": strconv.Itoa(cfg.ClientBreakglassRotationDays),
@@ -686,6 +696,14 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 		case "random", "passphrase", "alphanumeric":
 		default:
 			return fmt.Errorf("invalid breakglass password type: %q", v)
+		}
+	}
+	// Prevent saving a config that would break on next restart: required fields
+	// must not be blanked via the UI. Only check fields that are not env-locked
+	// (env-locked fields are absent from values and keep their runtime value).
+	if !config.IsEnvSourced("IDENTREE_EXTERNAL_URL") {
+		if v := values["IDENTREE_EXTERNAL_URL"]; v == "" {
+			return fmt.Errorf("IDENTREE_EXTERNAL_URL is required and must not be blank")
 		}
 	}
 	if v := values["IDENTREE_LDAP_DEFAULT_HOME"]; v != "" {
@@ -1982,6 +2000,10 @@ func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		os.Exit(0)
+		// Send SIGTERM to trigger the graceful shutdown path (drain HTTP, flush
+		// session state, wait for notifications) rather than hard-exiting.
+		if p, err := os.FindProcess(os.Getpid()); err == nil {
+			_ = p.Signal(os.Interrupt)
+		}
 	}()
 }

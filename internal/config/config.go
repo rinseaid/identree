@@ -338,10 +338,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if raw := get("IDENTREE_ESCROW_VAULT_MAP"); raw != "" {
 		var m map[string]string
 		if err := json.Unmarshal([]byte(raw), &m); err != nil {
-			slog.Warn("IDENTREE_ESCROW_VAULT_MAP: invalid JSON, ignoring", "err", err)
-		} else {
-			cfg.EscrowVaultMap = m
+			return nil, fmt.Errorf("IDENTREE_ESCROW_VAULT_MAP: invalid JSON: %w", err)
 		}
+		cfg.EscrowVaultMap = m
 	}
 
 	// Client bool overrides
