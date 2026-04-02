@@ -525,6 +525,9 @@ func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 	if !allowNoServer && cfg.ServerURL == "" {
 		return nil, fmt.Errorf("IDENTREE_SERVER_URL is required")
 	}
+	if cfg.ServerURL != "" && !strings.HasPrefix(cfg.ServerURL, "http://") && !strings.HasPrefix(cfg.ServerURL, "https://") {
+		return nil, fmt.Errorf("IDENTREE_SERVER_URL must start with http:// or https://")
+	}
 
 	// Clamp PollInterval: 0 or negative would cause a tight loop.
 	if cfg.PollInterval < time.Second {

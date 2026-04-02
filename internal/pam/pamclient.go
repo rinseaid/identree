@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strings"
 	"syscall"
 	"time"
 
@@ -118,6 +119,12 @@ type pollResponse struct {
 // Authenticate runs the full PAM authentication flow for the given username.
 // Returns nil on success (sudo approved), non-nil on failure.
 func (p *PAMClient) Authenticate(username string) error {
+	// Reject usernames that could cause path traversal in the token cache.
+	// Valid Unix usernames never contain '/' or null bytes; this is defence-in-depth
+	// since the PAM subsystem already enforces OS-level username constraints.
+	if strings.ContainsAny(username, "/\x00") {
+		return fmt.Errorf("identree: invalid username")
+	}
 	// Detect terminal language for user-facing messages
 	t := i18n.T(i18n.TerminalLang())
 	// Set up signal handling so Ctrl+C exits cleanly.

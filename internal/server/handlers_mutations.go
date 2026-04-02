@@ -504,6 +504,10 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 	var remaining time.Duration
 	if durStr := r.FormValue("duration"); durStr != "" && durStr != "max" {
 		if durSec, err := strconv.Atoi(durStr); err == nil && durSec > 0 {
+			// Cap before multiplying to prevent int64 overflow in time.Duration arithmetic.
+			if durSec > 604800 { // 7 days max, more than any reasonable grace period
+				durSec = 604800
+			}
 			remaining = s.store.ExtendGraceSessionFor(username, hostname, time.Duration(durSec)*time.Second)
 		}
 	}
@@ -722,6 +726,11 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 	if err != nil || durationSec < 1 {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_duration")
 		return
+	}
+	// Cap before multiplying to prevent int64 overflow in time.Duration arithmetic.
+	// Max meaningful value is 24h (86400s); anything larger is clamped below.
+	if durationSec > 86400 {
+		durationSec = 86400
 	}
 	duration := time.Duration(durationSec) * time.Second
 	// Clamp to [1h, GracePeriod]

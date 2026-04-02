@@ -16,6 +16,28 @@ import (
 // uppercase, starts with a letter or underscore, max 256 chars.
 var posixGroupName = regexp.MustCompile(`^[a-z_][a-z0-9_.-]*$`)
 
+// maxSudoFieldLen is the maximum byte length for a single sudo rule field
+// (hosts, commands, run_as_user, run_as_group, options). The entire request
+// body is already limited by verifyFormAuth's MaxBytesReader, but per-field
+// caps provide defence-in-depth and clearer error messages.
+const maxSudoFieldLen = 4096
+
+// validateSudoRuleFields checks that the free-form fields of a sudo rule do
+// not exceed maxSudoFieldLen and do not contain ASCII control characters
+// (null bytes, newlines, carriage returns) that could cause issues in stored
+// JSON or downstream LDAP attribute values.
+func validateSudoRuleFields(rule sudorules.SudoRule) bool {
+	for _, f := range []string{rule.Hosts, rule.Commands, rule.RunAsUser, rule.RunAsGroup, rule.Options} {
+		if len(f) > maxSudoFieldLen {
+			return false
+		}
+		if strings.ContainsAny(f, "\x00\n\r") {
+			return false
+		}
+	}
+	return true
+}
+
 // handleAdminSudoRules renders the sudo rules admin tab (bridge mode only).
 // GET /admin/sudo-rules
 func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +160,10 @@ func (s *Server) handleSudoRuleAdd(w http.ResponseWriter, r *http.Request) {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
 		return
 	}
+	if !validateSudoRuleFields(rule) {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
+		return
+	}
 
 	if err := s.sudoRules.Add(rule); err != nil {
 		revokeErrorPage(w, r, http.StatusConflict, "sudo_rule_conflict", "sudo_rule_conflict_message")
@@ -184,6 +210,10 @@ func (s *Server) handleSudoRuleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(rule.Group) > 256 || !posixGroupName.MatchString(rule.Group) {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
+		return
+	}
+	if !validateSudoRuleFields(rule) {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
 		return
 	}
