@@ -888,6 +888,10 @@ func validSudoCommand(cmd string) bool {
 	return true
 }
 
+// maxClaimItems caps the number of comma-separated items accepted from a single
+// OIDC claim to prevent resource exhaustion from a pathologically large claim.
+const maxClaimItems = 500
+
 // splitClaim splits a comma-separated claim value into trimmed, non-empty values.
 func splitClaim(claims map[string]string, key string) []string {
 	v := claims[key]
@@ -898,6 +902,9 @@ func splitClaim(claims map[string]string, key string) []string {
 	for _, s := range strings.Split(v, ",") {
 		if s = strings.TrimSpace(s); s != "" {
 			vals = append(vals, s)
+			if len(vals) >= maxClaimItems {
+				break
+			}
 		}
 	}
 	return vals
@@ -1049,18 +1056,25 @@ func firstDC(baseDN string) string {
 //   - (!(f))                        NOT
 //   - objectClass=value             shorthand objectClass filter
 
+// maxFilterDepth caps recursive filter evaluation to prevent stack exhaustion
+// from maliciously nested filters sent by authenticated LDAP clients.
+const maxFilterDepth = 32
+
 func matchesFilter(filter, dn string, attrs map[string][]string) bool {
 	if filter == "" || filter == "(objectClass=*)" {
 		return true
 	}
 	filter = strings.TrimSpace(filter)
-	ok, _ := evalFilterStr(filter, attrs)
+	ok, _ := evalFilterStr(filter, attrs, 0)
 	return ok
 }
 
 // evalFilterStr evaluates a single LDAP filter expression against an attribute map.
 // Returns (match, rest) where rest is the unconsumed portion of the string.
-func evalFilterStr(s string, attrs map[string][]string) (bool, string) {
+func evalFilterStr(s string, attrs map[string][]string, depth int) (bool, string) {
+	if depth > maxFilterDepth {
+		return false, "" // fail closed on excessively nested filters
+	}
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return true, ""
@@ -1073,14 +1087,14 @@ func evalFilterStr(s string, attrs map[string][]string) (bool, string) {
 	}
 
 	// Find matching close paren, handling nesting
-	depth := 0
+	parenDepth := 0
 	end := -1
 	for i, c := range s {
 		if c == '(' {
-			depth++
+			parenDepth++
 		} else if c == ')' {
-			depth--
-			if depth == 0 {
+			parenDepth--
+			if parenDepth == 0 {
 				end = i
 				break
 			}
@@ -1095,24 +1109,24 @@ func evalFilterStr(s string, attrs map[string][]string) (bool, string) {
 
 	switch {
 	case strings.HasPrefix(inner, "&"):
-		return evalAnd(inner[1:], attrs), rest
+		return evalAnd(inner[1:], attrs, depth+1), rest
 	case strings.HasPrefix(inner, "|"):
-		return evalOr(inner[1:], attrs), rest
+		return evalOr(inner[1:], attrs, depth+1), rest
 	case strings.HasPrefix(inner, "!"):
-		ok, _ := evalFilterStr(strings.TrimSpace(inner[1:]), attrs)
+		ok, _ := evalFilterStr(strings.TrimSpace(inner[1:]), attrs, depth+1)
 		return !ok, rest
 	default:
 		return evalSimple(inner, attrs), rest
 	}
 }
 
-func evalAnd(s string, attrs map[string][]string) bool {
+func evalAnd(s string, attrs map[string][]string, depth int) bool {
 	s = strings.TrimSpace(s)
 	for s != "" {
 		if !strings.HasPrefix(s, "(") {
 			break
 		}
-		ok, rest := evalFilterStr(s, attrs)
+		ok, rest := evalFilterStr(s, attrs, depth)
 		if !ok {
 			return false
 		}
@@ -1121,13 +1135,13 @@ func evalAnd(s string, attrs map[string][]string) bool {
 	return true
 }
 
-func evalOr(s string, attrs map[string][]string) bool {
+func evalOr(s string, attrs map[string][]string, depth int) bool {
 	s = strings.TrimSpace(s)
 	for s != "" {
 		if !strings.HasPrefix(s, "(") {
 			break
 		}
-		ok, rest := evalFilterStr(s, attrs)
+		ok, rest := evalFilterStr(s, attrs, depth)
 		if ok {
 			return true
 		}
