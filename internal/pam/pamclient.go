@@ -54,15 +54,13 @@ type serverHTTPError = breakglass.ServerHTTPError
 // NewPAMClient creates a new PAM helper client.
 // Returns an error if cfg.ServerURL uses plain HTTP, which would transmit the
 // shared secret in cleartext.
-func NewPAMClient(cfg *config.ClientConfig, tokenCache *TokenCache) (*PAMClient, error) {
+// hostname should be resolved once by the caller (e.g. runPAMHelper) and
+// passed in so that it is consistent with the hostname stored in the token
+// cache; passing an empty string is safe and results in hostname being omitted
+// from challenge requests.
+func NewPAMClient(cfg *config.ClientConfig, tokenCache *TokenCache, hostname string) (*PAMClient, error) {
 	if strings.HasPrefix(cfg.ServerURL, "http://") {
 		return nil, fmt.Errorf("identree: ServerURL must use https://, not http:// (shared secret would be sent in cleartext)")
-	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		// Non-fatal: hostname is best-effort context in challenge requests.
-		fmt.Fprintf(os.Stderr, "identree: os.Hostname() failed: %v\n", err)
 	}
 
 	return &PAMClient{

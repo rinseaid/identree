@@ -135,7 +135,7 @@ services:
 
       IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
       IDENTREE_ESCROW_BACKEND: "local"
-      IDENTREE_ESCROW_ENCRYPTION_KEY: "c27eb3f9a4d82e1b5f0c6a7d893e4f2b1a0d5c8e7b6a9f3d2c4e8b1a7f0d5c3"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "c27eb3f9a4d82e1b5f0c6a7d893e4f2b1a0d5c8e7b6a9f3d2c4e8b1a7f0d5c3e"
       IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
     volumes:
       - identree-data:/data

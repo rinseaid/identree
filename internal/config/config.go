@@ -90,8 +90,8 @@ type ServerConfig struct {
 	LDAPSudoNoAuthenticate SudoNoAuthenticate
 
 	// LDAPAllowAnonymous controls whether unauthenticated (anonymous) LDAP
-	// binds are permitted. Defaults to true to preserve existing behaviour.
-	// Set IDENTREE_LDAP_ALLOW_ANONYMOUS=false to require a bind DN/password.
+	// binds are permitted. Defaults to false.
+	// Set IDENTREE_LDAP_ALLOW_ANONYMOUS=true to allow unauthenticated searches.
 	LDAPAllowAnonymous bool
 
 	// SudoRulesFile is the path to the JSON sudo rules store (bridge mode only).
@@ -182,6 +182,7 @@ type ClientConfig struct {
 	BreakglassFile         string // default /etc/identree-breakglass
 	BreakglassRotationDays int    // default 90
 	BreakglassPasswordType string // random, passphrase, alphanumeric
+	BreakglassBcryptCost   int    // bcrypt cost for hashing break-glass passwords (default 12, min 10, max 31)
 
 	// Token cache
 	TokenCacheEnabled  bool
@@ -297,7 +298,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPRefreshInterval:    getDuration("IDENTREE_LDAP_REFRESH_INTERVAL", 300*time.Second),
 		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/config/uidmap.json"),
 		LDAPSudoNoAuthenticate: SudoNoAuthenticate(stringDefault(get("IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"), "false")),
-		LDAPAllowAnonymous:     getBool("IDENTREE_LDAP_ALLOW_ANONYMOUS", true),
+		LDAPAllowAnonymous:     getBool("IDENTREE_LDAP_ALLOW_ANONYMOUS", false),
 		SudoRulesFile:          stringDefault(get("IDENTREE_SUDO_RULES_FILE"), "/config/sudorules.json"),
 		LDAPUIDBase:            getInt("IDENTREE_LDAP_UID_BASE", 200000),
 		LDAPGIDBase:            getInt("IDENTREE_LDAP_GID_BASE", 200000),
@@ -655,6 +656,11 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
+	// Log anonymous LDAP status at startup so operators know the current posture.
+	if cfg.LDAPEnabled && !cfg.LDAPAllowAnonymous {
+		slog.Info("ldap: anonymous bind disabled; set IDENTREE_LDAP_ALLOW_ANONYMOUS=true to allow unauthenticated searches")
+	}
+
 	return cfg, nil
 }
 
@@ -723,6 +729,7 @@ func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 		BreakglassFile:         stringDefault(get("IDENTREE_BREAKGLASS_FILE", "PAM_POCKETID_BREAKGLASS_FILE"), "/etc/identree-breakglass"),
 		BreakglassRotationDays: getInt(90, "IDENTREE_BREAKGLASS_ROTATION_DAYS", "PAM_POCKETID_BREAKGLASS_ROTATION_DAYS"),
 		BreakglassPasswordType: stringDefault(get("IDENTREE_BREAKGLASS_PASSWORD_TYPE", "PAM_POCKETID_BREAKGLASS_PASSWORD_TYPE"), "random"),
+		BreakglassBcryptCost:   getInt(12, "IDENTREE_BREAKGLASS_BCRYPT_COST"),
 
 		TokenCacheEnabled:  getBool(true, "IDENTREE_TOKEN_CACHE_ENABLED", "PAM_POCKETID_TOKEN_CACHE_ENABLED"),
 		TokenCacheDir:      stringDefault(get("IDENTREE_TOKEN_CACHE_DIR", "PAM_POCKETID_TOKEN_CACHE_DIR"), "/run/identree"),
@@ -745,6 +752,14 @@ func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 	// Clamp BreakglassRotationDays: negative values are nonsensical.
 	if cfg.BreakglassRotationDays < 1 {
 		cfg.BreakglassRotationDays = 90
+	}
+
+	// Clamp BreakglassBcryptCost to safe bounds (min 10, max 31).
+	if cfg.BreakglassBcryptCost < 10 {
+		cfg.BreakglassBcryptCost = 12
+	}
+	if cfg.BreakglassBcryptCost > 31 {
+		cfg.BreakglassBcryptCost = 31
 	}
 
 	return cfg, nil

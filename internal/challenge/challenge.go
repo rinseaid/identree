@@ -1148,15 +1148,18 @@ func (s *ChallengeStore) RemoveUser(username string) {
 // flushDirty writes pending action-log changes to disk if the dirty flag is set.
 // Safe to call from any goroutine; serialised internally by diskMu.
 func (s *ChallengeStore) flushDirty() {
-	if !s.dirty.Swap(false) {
+	if !s.dirty.Load() { // quick non-locking check to avoid unnecessary lock acquisition
 		return
 	}
 	s.mu.Lock()
+	if !s.dirty.Swap(false) { // re-check under lock
+		s.mu.Unlock()
+		return
+	}
 	data, rotate := s.marshalStateLocked()
 	s.mu.Unlock()
 	if !s.writeStateToDisk(data, rotate) {
-		// Restore dirty flag so the next cycle retries the write.
-		s.dirty.Store(true)
+		s.dirty.Store(true) // restore dirty flag on failure
 	}
 }
 
@@ -1558,7 +1561,9 @@ func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) bool 
 	}
 	// Sync the parent directory so the rename is durable on power loss.
 	if d, err := os.Open(filepath.Dir(s.persistPath)); err == nil {
-		_ = d.Sync()
+		if syncErr := d.Sync(); syncErr != nil {
+			slog.Warn("challenge: failed to sync parent directory after state write", "err", syncErr)
+		}
 		d.Close()
 	}
 	return true

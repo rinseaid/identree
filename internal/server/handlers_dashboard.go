@@ -215,6 +215,10 @@ func (s *Server) buildPendingViews(username, lang string) []pendingView {
 
 // buildAllPendingViews returns pending challenges across all users for the
 // admin queue panel. Sorted by expiry (most urgent first).
+// buildAllPendingViews returns pending challenge views for every user, used
+// by the admin overlay present on all admin pages. Each call site is in a
+// separate request handler, so this is computed once per request — no
+// intra-handler caching is needed.
 func (s *Server) buildAllPendingViews(lang string) []pendingView {
 	t := T(lang)
 	pending := s.store.AllPendingChallenges()

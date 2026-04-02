@@ -203,7 +203,9 @@ func runServer() {
 		if cfg.APIKey != "" {
 			dir, ferr := srv.pocketIDClient.FetchDirectory()
 			if ferr != nil {
-				slog.Warn("ldap: initial directory fetch failed (will retry)", "err", ferr)
+				// Partial or failed fetch: do not load incomplete data into LDAP.
+				// The periodic refresh goroutine will retry on the next interval.
+				slog.Warn("ldap: initial directory fetch failed, skipping initial load (will retry)", "err", ferr)
 			} else {
 				ldapSrv.Refresh(dir, "poll", srv.removedUsersSnapshot())
 				srv.ldapLastSyncMu.Lock()
@@ -255,7 +257,9 @@ func runServer() {
 					case <-ticker.C:
 						dir, ferr := srv.pocketIDClient.FetchDirectory()
 						if ferr != nil {
-							slog.Warn("ldap: directory refresh failed", "err", ferr)
+							// Partial or failed fetch: keep stale directory in use rather
+							// than refreshing with incomplete data. Retry next interval.
+							slog.Warn("ldap: directory refresh failed, retaining previous directory", "err", ferr)
 							srv.ldapLastErrorMu.Lock()
 							srv.ldapLastError = ferr
 							srv.ldapLastErrorAt = time.Now()
@@ -272,7 +276,9 @@ func runServer() {
 					case <-srv.ldapRefreshCh:
 						dir, ferr := srv.pocketIDClient.FetchDirectory()
 						if ferr != nil {
-							slog.Warn("ldap: webhook-triggered refresh failed", "err", ferr)
+							// Partial or failed fetch: keep stale directory in use rather
+							// than refreshing with incomplete data. Retry on next trigger.
+							slog.Warn("ldap: webhook-triggered refresh failed, retaining previous directory", "err", ferr)
 							srv.ldapLastErrorMu.Lock()
 							srv.ldapLastError = ferr
 							srv.ldapLastErrorAt = time.Now()
@@ -447,18 +453,30 @@ func runPAMHelper() {
 		os.Exit(1)
 	}
 
+	// Resolve the hostname once here so it is consistent across the token
+	// cache and the PAM client (both use it for cache paths and challenge
+	// requests). Non-fatal: hostname is best-effort context.
+	hostname, err := os.Hostname()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identree: os.Hostname() failed: %v\n", err)
+	}
+
 	var cache *pam.TokenCache
 	if cfg.TokenCacheEnabled {
 		var err error
-		cache, err = pam.NewTokenCache(cfg.TokenCacheDir, cfg.TokenCacheIssuer, cfg.TokenCacheClientID)
+		cache, err = pam.NewTokenCache(cfg.TokenCacheDir, cfg.TokenCacheIssuer, cfg.TokenCacheClientID, hostname)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "identree: %v\n", err)
 			os.Exit(1)
 		}
 	}
 
-	client, err := pam.NewPAMClient(cfg, cache)
+	client, err := pam.NewPAMClient(cfg, cache, hostname)
 	if err != nil {
+		// Surface the error via the PAM conversation interface (MessageWriter →
+		// pam_exec stdout → user's terminal) in addition to stderr, so that
+		// misconfiguration (e.g. http:// ServerURL) is visible to the user.
+		fmt.Fprintf(pam.MessageWriter, "  identree: %v\n", err)
 		fmt.Fprintf(os.Stderr, "identree: %v\n", err)
 		os.Exit(1)
 	}

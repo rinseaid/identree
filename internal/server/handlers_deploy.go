@@ -33,6 +33,9 @@ const deployIPCooldown = 15 * time.Second
 // deployRequestMaxBody caps the deploy request body (private keys can be large).
 const deployRequestMaxBody = 65536 // 64 KB
 
+// deploySSEKeepalive is the interval between SSE keepalive comments on streaming endpoints.
+const deploySSEKeepalive = 30 * time.Second
+
 // deploySemaphore limits concurrent deploy operations server-wide.
 var deploySemaphore = make(chan struct{}, deployMaxConcurrent)
 
@@ -147,7 +150,7 @@ func (r *deployRateLimiter) allow(ip string) bool {
 // POST /api/deploy/pubkey — admin-only; used by the browser to validate a key before deploying.
 func (s *Server) handleDeployPubkey(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if s.verifyJSONAdminAuth(w, r) == "" {
@@ -157,12 +160,12 @@ func (s *Server) handleDeployPubkey(w http.ResponseWriter, r *http.Request) {
 		PrivateKey string `json:"private_key"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, deployRequestMaxBody)).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	signer, err := gossh.ParsePrivateKey([]byte(req.PrivateKey))
 	if err != nil {
-		http.Error(w, "invalid key: "+err.Error(), http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid key: "+err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -176,11 +179,11 @@ func (s *Server) handleDeployPubkey(w http.ResponseWriter, r *http.Request) {
 // GET /api/deploy/users — admin-only
 func (s *Server) handleDeployUsers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apiError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if s.pocketIDClient == nil {
@@ -191,7 +194,7 @@ func (s *Server) handleDeployUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := s.pocketIDClient.UsersWithSSHKeys()
 	if err != nil {
 		slog.Error("deploy/users fetch failed", "err", err)
-		http.Error(w, "failed to fetch users", http.StatusInternalServerError)
+		apiError(w, http.StatusInternalServerError, "failed to fetch users")
 		return
 	}
 	type userEntry struct {
@@ -211,7 +214,7 @@ func (s *Server) handleDeployUsers(w http.ResponseWriter, r *http.Request) {
 // POST /api/deploy — admin-only.
 func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -220,14 +223,14 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+		apiError(w, http.StatusUnsupportedMediaType, "content-type must be application/json")
 		return
 	}
 
 	// Per-IP rate limit
 	callerIP := clientIP(r)
 	if !s.deployRL.allow(callerIP) {
-		http.Error(w, "too many requests — wait before retrying", http.StatusTooManyRequests)
+		apiError(w, http.StatusTooManyRequests, "too many requests — wait before retrying")
 		return
 	}
 
@@ -240,41 +243,41 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		PocketIDUser string `json:"pocketid_user"` // informational only
 	}
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
 	// Validate required fields
 	if req.Hostname == "" {
-		http.Error(w, "hostname required", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "hostname required")
 		return
 	}
 	if !validHostname.MatchString(req.Hostname) {
-		http.Error(w, "invalid hostname", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid hostname")
 		return
 	}
 	if req.SSHUser == "" {
 		req.SSHUser = "root"
 	}
 	if !validUsername.MatchString(req.SSHUser) {
-		http.Error(w, "invalid ssh_user", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid ssh_user")
 		return
 	}
 	if req.Port == 0 {
 		req.Port = 22
 	} else if req.Port < 1 || req.Port > 65535 {
-		http.Error(w, "invalid port", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid port")
 		return
 	}
 	if req.PrivateKey == "" {
-		http.Error(w, "private_key required", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "private_key required")
 		return
 	}
 
 	// Parse the private key eagerly to fail fast (key never stored)
 	signer, err := gossh.ParsePrivateKey([]byte(req.PrivateKey))
 	if err != nil {
-		http.Error(w, "invalid private key: "+err.Error(), http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid private key: "+err.Error())
 		return
 	}
 
@@ -282,14 +285,14 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	select {
 	case deploySemaphore <- struct{}{}:
 	default:
-		http.Error(w, "server busy — too many concurrent deploys", http.StatusServiceUnavailable)
+		apiError(w, http.StatusServiceUnavailable, "server busy — too many concurrent deploys")
 		return
 	}
 
 	jobID, err := randutil.Hex(16)
 	if err != nil {
 		<-deploySemaphore
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		apiError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -305,7 +308,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	installScript, err := s.renderInstallScript()
 	if err != nil {
 		<-deploySemaphore
-		http.Error(w, "failed to render install script", http.StatusInternalServerError)
+		apiError(w, http.StatusInternalServerError, "failed to render install script")
 		return
 	}
 
@@ -343,7 +346,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 	currentUser := s.getSessionUser(r)
 	if currentUser == "" || s.getSessionRole(r) != "admin" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apiError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -351,7 +354,7 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/deploy/stream/")
 	jobID := strings.TrimSpace(path)
 	if jobID == "" || !isHex(jobID) {
-		http.Error(w, "invalid job id", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid job id")
 		return
 	}
 
@@ -359,13 +362,13 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 	job, ok := s.deployJobs[jobID]
 	s.deployMu.Unlock()
 	if !ok {
-		http.Error(w, "job not found", http.StatusNotFound)
+		apiError(w, http.StatusNotFound, "job not found")
 		return
 	}
 
 	// Only the admin who initiated the job may stream its output.
 	if job.initiator != currentUser {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		apiError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
@@ -380,7 +383,7 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 	_ = rc.SetWriteDeadline(time.Time{})
 
 	sent := 0 // bytes already sent
-	keepalive := time.NewTimer(30 * time.Second)
+	keepalive := time.NewTimer(deploySSEKeepalive)
 	defer keepalive.Stop()
 	for {
 		data, done, failed, notify := job.snapshot()
@@ -427,7 +430,7 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 			if canFlush {
 				flusher.Flush()
 			}
-			keepalive.Reset(30 * time.Second)
+			keepalive.Reset(deploySSEKeepalive)
 		}
 	}
 }
@@ -436,14 +439,14 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 // POST /api/hosts/remove-host
 func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if s.verifyJSONAdminAuth(w, r) == "" {
 		return
 	}
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+		apiError(w, http.StatusUnsupportedMediaType, "content-type must be application/json")
 		return
 	}
 
@@ -452,11 +455,11 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 		Hostname string `json:"hostname"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
 	if req.Hostname == "" || !validHostname.MatchString(req.Hostname) {
-		http.Error(w, "invalid hostname", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid hostname")
 		return
 	}
 
@@ -474,21 +477,21 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 // POST /api/deploy/remove
 func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if s.verifyJSONAdminAuth(w, r) == "" {
 		return
 	}
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+		apiError(w, http.StatusUnsupportedMediaType, "content-type must be application/json")
 		return
 	}
 
 	// Per-IP rate limit
 	callerIP := clientIP(r)
 	if !s.deployRL.allow(callerIP) {
-		http.Error(w, "too many requests — wait before retrying", http.StatusTooManyRequests)
+		apiError(w, http.StatusTooManyRequests, "too many requests — wait before retrying")
 		return
 	}
 
@@ -502,52 +505,52 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		RemoveFiles    bool   `json:"remove_files"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Hostname == "" || !validHostname.MatchString(req.Hostname) {
-		http.Error(w, "hostname required", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "hostname required")
 		return
 	}
 	if req.Port == 0 {
 		req.Port = 22
 	} else if req.Port < 1 || req.Port > 65535 {
-		http.Error(w, "invalid port", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid port")
 		return
 	}
 	if req.SSHUser == "" {
 		req.SSHUser = "root"
 	}
 	if !validUsername.MatchString(req.SSHUser) {
-		http.Error(w, "invalid ssh_user", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid ssh_user")
 		return
 	}
 	if req.PrivateKey == "" {
-		http.Error(w, "private_key required", http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "private_key required")
 		return
 	}
 
 	signer, err := gossh.ParsePrivateKey([]byte(req.PrivateKey))
 	if err != nil {
-		http.Error(w, "invalid private key: "+err.Error(), http.StatusBadRequest)
+		apiError(w, http.StatusBadRequest, "invalid private key: "+err.Error())
 		return
 	}
 
 	uninstallScript, err := s.renderUninstallScript(req.UnconfigurePAM, req.RemoveFiles)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		apiError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	adminUser := s.getSessionUser(r)
 	if adminUser == "" {
-		http.Error(w, "not authenticated", http.StatusUnauthorized)
+		apiError(w, http.StatusUnauthorized, "not authenticated")
 		return
 	}
 
 	jobID, err := randutil.Hex(8)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		apiError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -568,7 +571,7 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 	select {
 	case deploySemaphore <- struct{}{}:
 	default:
-		http.Error(w, "server busy — too many concurrent deploys", http.StatusServiceUnavailable)
+		apiError(w, http.StatusServiceUnavailable, "server busy — too many concurrent deploys")
 		return
 	}
 

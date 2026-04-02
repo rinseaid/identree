@@ -50,10 +50,8 @@ func (e *escrowHTTPError) Error() string {
 	return fmt.Sprintf("server returned %d: %s", e.StatusCode, e.Body)
 }
 
-// bcryptCost is the cost parameter for bcrypt hashing. Cost 12 provides good
-// security (~250ms on modern hardware) while remaining acceptable for
-// interactive break-glass authentication.
-const bcryptCost = 12
+// defaultBcryptCost is the fallback cost used when none is provided.
+const defaultBcryptCost = 12
 
 // openTTY is a function variable for opening a terminal for password input.
 // Tries multiple approaches since pam_exec connects stdin to /dev/null and
@@ -189,9 +187,13 @@ func generatePassphrase() (string, error) {
 	return strings.Join(words, "-"), nil
 }
 
-// hashBreakglassPassword bcrypt-hashes a password at the configured cost.
-func hashBreakglassPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+// hashBreakglassPassword bcrypt-hashes a password at the given cost.
+// If cost is 0, defaultBcryptCost (12) is used.
+func hashBreakglassPassword(password string, cost int) (string, error) {
+	if cost == 0 {
+		cost = defaultBcryptCost
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
 	if err != nil {
 		return "", fmt.Errorf("bcrypt hash: %w", err)
 	}
@@ -591,7 +593,7 @@ func RotateBreakglass(cfg *config.ClientConfig, force, quiet bool) (plaintext st
 	}
 
 	// Hash it
-	hash, err := hashBreakglassPassword(password)
+	hash, err := hashBreakglassPassword(password, cfg.BreakglassBcryptCost)
 	if err != nil {
 		return "", fmt.Errorf("hashing password: %w", err)
 	}

@@ -824,3 +824,496 @@ func TestConsumeOneTap(t *testing.T) {
 		}
 	})
 }
+
+// TestConsumeAndApprove verifies the atomic consume-and-approve operation.
+func TestConsumeAndApprove(t *testing.T) {
+	t.Run("successfully consumes one-tap nonce and approves atomically", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.ConsumeAndApprove(c.ID, "alice"); err != nil {
+			t.Fatalf("ConsumeAndApprove: unexpected error: %v", err)
+		}
+		// Verify the challenge is approved in the store.
+		s.mu.RLock()
+		ch, exists := s.challenges[c.ID]
+		s.mu.RUnlock()
+		if !exists {
+			t.Fatal("challenge disappeared from store after ConsumeAndApprove")
+		}
+		if ch.Status != StatusApproved {
+			t.Errorf("status after ConsumeAndApprove: got %q, want %q", ch.Status, StatusApproved)
+		}
+		if ch.ApprovedBy != "alice" {
+			t.Errorf("ApprovedBy: got %q, want %q", ch.ApprovedBy, "alice")
+		}
+		// Verify one-tap nonce is consumed.
+		s.mu.RLock()
+		used := s.oneTapUsed[c.ID]
+		s.mu.RUnlock()
+		if !used {
+			t.Error("expected oneTapUsed[id] to be true after ConsumeAndApprove")
+		}
+	})
+
+	t.Run("second call on same challenge ID fails (already approved)", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.ConsumeAndApprove(c.ID, "alice"); err != nil {
+			t.Fatalf("ConsumeAndApprove first call: %v", err)
+		}
+		// Second call: nonce already consumed and challenge already resolved.
+		if err := s.ConsumeAndApprove(c.ID, "alice"); err == nil {
+			t.Fatal("ConsumeAndApprove second call: expected error, got nil")
+		}
+	})
+
+	t.Run("call on expired challenge fails", func(t *testing.T) {
+		s := newTestStore(time.Millisecond, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+		if err := s.ConsumeAndApprove(c.ID, "alice"); err == nil {
+			t.Fatal("ConsumeAndApprove on expired challenge: expected error, got nil")
+		}
+	})
+
+	t.Run("call after session revocation fails", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// Revoke the session after challenge creation.
+		s.RevokeSession("alice", "host1")
+		if err := s.ConsumeAndApprove(c.ID, "alice"); err == nil {
+			t.Fatal("ConsumeAndApprove after revocation: expected error, got nil")
+		}
+	})
+
+	t.Run("call on unknown ID fails", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		if err := s.ConsumeAndApprove("does-not-exist", "alice"); err == nil {
+			t.Fatal("ConsumeAndApprove on unknown ID: expected error, got nil")
+		}
+	})
+
+	t.Run("approval is reflected via Get after ConsumeAndApprove", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.ConsumeAndApprove(c.ID, "alice"); err != nil {
+			t.Fatalf("ConsumeAndApprove: %v", err)
+		}
+		// Get returns false for non-pending challenges (expired-check-only).
+		// Read directly from the store to confirm approved state.
+		s.mu.RLock()
+		ch, exists := s.challenges[c.ID]
+		s.mu.RUnlock()
+		if !exists {
+			t.Fatal("challenge not found in store after ConsumeAndApprove")
+		}
+		if ch.Status != StatusApproved {
+			t.Errorf("store status: got %q, want %q", ch.Status, StatusApproved)
+		}
+	})
+
+	t.Run("grace session is created when grace period is configured", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		c, err := s.Create("alice", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.ConsumeAndApprove(c.ID, "alice"); err != nil {
+			t.Fatalf("ConsumeAndApprove: %v", err)
+		}
+		if !s.WithinGracePeriod("alice", "host1") {
+			t.Error("expected grace session to exist after ConsumeAndApprove with grace period configured")
+		}
+	})
+
+	t.Run("pendingByUser is decremented after ConsumeAndApprove", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("bob", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		s.mu.RLock()
+		before := s.pendingByUser["bob"]
+		s.mu.RUnlock()
+		if before != 1 {
+			t.Fatalf("expected pendingByUser=1 before ConsumeAndApprove, got %d", before)
+		}
+		if err := s.ConsumeAndApprove(c.ID, "bob"); err != nil {
+			t.Fatalf("ConsumeAndApprove: %v", err)
+		}
+		s.mu.RLock()
+		after := s.pendingByUser["bob"]
+		s.mu.RUnlock()
+		if after != 0 {
+			t.Errorf("expected pendingByUser=0 after ConsumeAndApprove, got %d", after)
+		}
+	})
+}
+
+// TestAllActiveSessions verifies AllActiveSessions across multiple users and hosts.
+func TestAllActiveSessions(t *testing.T) {
+	t.Run("empty store returns no sessions", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		sessions := s.AllActiveSessions()
+		if len(sessions) != 0 {
+			t.Errorf("expected 0 sessions, got %d", len(sessions))
+		}
+	})
+
+	t.Run("sessions for multiple users and hosts are all returned", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		s.CreateGraceSession("alice", "host1", 10*time.Minute)
+		s.CreateGraceSession("alice", "host2", 10*time.Minute)
+		s.CreateGraceSession("bob", "host1", 10*time.Minute)
+
+		sessions := s.AllActiveSessions()
+		if len(sessions) != 3 {
+			t.Errorf("expected 3 sessions, got %d", len(sessions))
+		}
+
+		// Build a quick lookup to verify each expected session is present.
+		type sessionKey struct{ username, hostname string }
+		found := make(map[sessionKey]bool)
+		for _, gs := range sessions {
+			found[sessionKey{gs.Username, gs.Hostname}] = true
+		}
+		expected := []sessionKey{
+			{"alice", "host1"},
+			{"alice", "host2"},
+			{"bob", "host1"},
+		}
+		for _, k := range expected {
+			if !found[k] {
+				t.Errorf("session missing for user=%q host=%q", k.username, k.hostname)
+			}
+		}
+	})
+
+	t.Run("only approved sessions appear — pending challenges do not", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		// Create a pending challenge; it should NOT appear in AllActiveSessions.
+		_, err := s.Create("carol", "host1", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		sessions := s.AllActiveSessions()
+		if len(sessions) != 0 {
+			t.Errorf("pending challenge should not appear in AllActiveSessions, got %d sessions", len(sessions))
+		}
+
+		// Approve a different challenge to seed a grace session.
+		s.CreateGraceSession("carol", "host1", 10*time.Minute)
+		sessions = s.AllActiveSessions()
+		if len(sessions) != 1 {
+			t.Errorf("expected 1 session after CreateGraceSession, got %d", len(sessions))
+		}
+	})
+
+	t.Run("revoked session no longer appears", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		s.CreateGraceSession("alice", "host1", 10*time.Minute)
+		s.CreateGraceSession("bob", "host2", 10*time.Minute)
+
+		// Verify both are present before revocation.
+		if got := len(s.AllActiveSessions()); got != 2 {
+			t.Fatalf("expected 2 sessions before revocation, got %d", got)
+		}
+
+		s.RevokeSession("alice", "host1")
+
+		sessions := s.AllActiveSessions()
+		if len(sessions) != 1 {
+			t.Errorf("expected 1 session after revocation, got %d", len(sessions))
+		}
+		if sessions[0].Username != "bob" || sessions[0].Hostname != "host2" {
+			t.Errorf("unexpected remaining session: user=%q host=%q", sessions[0].Username, sessions[0].Hostname)
+		}
+	})
+
+	t.Run("expired sessions are not returned", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		// Manually inject an already-expired grace session.
+		s.mu.Lock()
+		s.lastApproval[graceKey("alice", "host1")] = time.Now().Add(-1 * time.Second)
+		s.mu.Unlock()
+
+		sessions := s.AllActiveSessions()
+		if len(sessions) != 0 {
+			t.Errorf("expected 0 sessions (expired), got %d", len(sessions))
+		}
+	})
+
+	t.Run("sessions are grouped correctly by user and host", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		s.CreateGraceSession("alice", "host1", 5*time.Minute)
+		s.CreateGraceSession("alice", "host2", 8*time.Minute)
+
+		sessions := s.AllActiveSessions()
+		if len(sessions) != 2 {
+			t.Fatalf("expected 2 sessions, got %d", len(sessions))
+		}
+		for _, gs := range sessions {
+			if gs.Username != "alice" {
+				t.Errorf("unexpected username: got %q, want %q", gs.Username, "alice")
+			}
+			if gs.Hostname != "host1" && gs.Hostname != "host2" {
+				t.Errorf("unexpected hostname: %q", gs.Hostname)
+			}
+		}
+	})
+}
+
+// TestAllActionHistoryWithUsers verifies AllActionHistoryWithUsers across multiple users.
+func TestAllActionHistoryWithUsers(t *testing.T) {
+	t.Run("empty store returns no entries", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		entries := s.AllActionHistoryWithUsers()
+		if len(entries) != 0 {
+			t.Errorf("expected 0 entries, got %d", len(entries))
+		}
+	})
+
+	t.Run("actions for multiple users are all returned", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		s.LogAction("alice", ActionApproved, "host1", "CODE1", "")
+		s.LogAction("bob", ActionApproved, "host2", "CODE2", "")
+		s.LogAction("carol", ActionRevoked, "host3", "", "")
+
+		entries := s.AllActionHistoryWithUsers()
+		if len(entries) != 3 {
+			t.Errorf("expected 3 entries, got %d", len(entries))
+		}
+
+		// Verify each entry includes the correct username.
+		users := make(map[string]bool)
+		for _, e := range entries {
+			users[e.Username] = true
+		}
+		for _, u := range []string{"alice", "bob", "carol"} {
+			if !users[u] {
+				t.Errorf("expected entry for user %q, not found", u)
+			}
+		}
+	})
+
+	t.Run("entries are sorted most recent first", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		t0 := time.Now().Add(-2 * time.Minute)
+		t1 := time.Now().Add(-1 * time.Minute)
+		t2 := time.Now()
+		s.LogActionAt("alice", ActionApproved, "host1", "C1", "", t0)
+		s.LogActionAt("bob", ActionRevoked, "host2", "", "", t2)
+		s.LogActionAt("carol", ActionAutoApproved, "host3", "C3", "", t1)
+
+		entries := s.AllActionHistoryWithUsers()
+		if len(entries) != 3 {
+			t.Fatalf("expected 3 entries, got %d", len(entries))
+		}
+		for i := 1; i < len(entries); i++ {
+			if entries[i].Timestamp.After(entries[i-1].Timestamp) {
+				t.Errorf("entries not sorted descending: entries[%d].Timestamp=%v is after entries[%d].Timestamp=%v",
+					i, entries[i].Timestamp, i-1, entries[i-1].Timestamp)
+			}
+		}
+	})
+
+	t.Run("entry fields match what was logged", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		s.LogAction("alice", ActionApproved, "host1", "CODE1", "admin")
+
+		entries := s.AllActionHistoryWithUsers()
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 entry, got %d", len(entries))
+		}
+		e := entries[0]
+		if e.Username != "alice" {
+			t.Errorf("Username: got %q, want %q", e.Username, "alice")
+		}
+		if e.Action != ActionApproved {
+			t.Errorf("Action: got %q, want %q", e.Action, ActionApproved)
+		}
+		if e.Hostname != "host1" {
+			t.Errorf("Hostname: got %q, want %q", e.Hostname, "host1")
+		}
+		if e.Code != "CODE1" {
+			t.Errorf("Code: got %q, want %q", e.Code, "CODE1")
+		}
+		if e.Actor != "admin" {
+			t.Errorf("Actor: got %q, want %q", e.Actor, "admin")
+		}
+	})
+
+	t.Run("multiple actions per user are all returned", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		s.LogAction("alice", ActionApproved, "host1", "C1", "")
+		s.LogAction("alice", ActionRevoked, "host1", "", "")
+		s.LogAction("alice", ActionAutoApproved, "host2", "C2", "")
+
+		entries := s.AllActionHistoryWithUsers()
+		aliceCount := 0
+		for _, e := range entries {
+			if e.Username == "alice" {
+				aliceCount++
+			}
+		}
+		if aliceCount != 3 {
+			t.Errorf("expected 3 entries for alice, got %d", aliceCount)
+		}
+	})
+}
+
+// TestPersistStateVersionCompat verifies that a state file with version 0 (legacy/absent)
+// loads successfully and its data is intact.
+func TestPersistStateVersionCompat(t *testing.T) {
+	t.Run("version 0 state file loads without error and data is intact", func(t *testing.T) {
+		dir := t.TempDir()
+		persistPath := filepath.Join(dir, "sessions.json")
+
+		// Build a version-0 (legacy) state JSON manually.
+		// In the legacy format version is 0 (Go zero value when absent).
+		futureExpiry := time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339Nano)
+		pastRevoke := time.Now().Add(-1 * time.Minute).UTC().Format(time.RFC3339Nano)
+		stateJSON := `{
+			"version": 0,
+			"grace_sessions": {
+				"alice\u0000host1": "` + futureExpiry + `"
+			},
+			"revoke_tokens_before": {
+				"bob": "` + pastRevoke + `"
+			},
+			"action_log": {
+				"alice": [
+					{"timestamp": "` + pastRevoke + `", "action": "approved", "hostname": "host1", "code": "CODE1"}
+				]
+			}
+		}`
+
+		// Write the file with 0600 permissions so loadState does not reject it.
+		if err := os.WriteFile(persistPath, []byte(stateJSON), 0600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		// Load from the file — this should succeed without error.
+		s := NewChallengeStore(5*time.Minute, 10*time.Minute, persistPath)
+		s.Stop()
+
+		// Verify the grace session for alice@host1 survived the load.
+		if !s.WithinGracePeriod("alice", "host1") {
+			t.Error("expected grace session for alice@host1 to be loaded from version-0 state")
+		}
+
+		// Verify the revocation timestamp for bob survived the load.
+		s.mu.RLock()
+		rts, ok := s.revokeTokensBefore["bob"]
+		s.mu.RUnlock()
+		if !ok {
+			t.Error("expected revokeTokensBefore[bob] to be loaded from version-0 state")
+		}
+		if rts.IsZero() {
+			t.Error("revokeTokensBefore[bob] is zero after load")
+		}
+
+		// Verify the action log entry for alice survived the load.
+		hosts := s.KnownHosts("alice")
+		found := false
+		for _, h := range hosts {
+			if h == "host1" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected host1 in KnownHosts(alice) after load, got %v", hosts)
+		}
+	})
+
+	t.Run("version field absent (truly legacy) loads the same as version 0", func(t *testing.T) {
+		dir := t.TempDir()
+		persistPath := filepath.Join(dir, "sessions.json")
+
+		// Omit the version field entirely to simulate the oldest legacy files.
+		futureExpiry := time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339Nano)
+		stateJSON := `{
+			"grace_sessions": {
+				"carol\u0000host2": "` + futureExpiry + `"
+			},
+			"revoke_tokens_before": {},
+			"action_log": {}
+		}`
+
+		if err := os.WriteFile(persistPath, []byte(stateJSON), 0600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		s := NewChallengeStore(5*time.Minute, 10*time.Minute, persistPath)
+		s.Stop()
+
+		if !s.WithinGracePeriod("carol", "host2") {
+			t.Error("expected grace session for carol@host2 to be loaded from truly-legacy state (no version field)")
+		}
+	})
+
+	t.Run("sessions and action log survive round-trip through version-0 load then re-save", func(t *testing.T) {
+		dir := t.TempDir()
+		persistPath := filepath.Join(dir, "sessions.json")
+
+		futureExpiry := time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339Nano)
+		pastAction := time.Now().Add(-30 * time.Second).UTC().Format(time.RFC3339Nano)
+		stateJSON := `{
+			"version": 0,
+			"grace_sessions": {
+				"dave\u0000host3": "` + futureExpiry + `"
+			},
+			"revoke_tokens_before": {},
+			"action_log": {
+				"dave": [
+					{"timestamp": "` + pastAction + `", "action": "approved", "hostname": "host3", "code": "C99"}
+				]
+			}
+		}`
+
+		if err := os.WriteFile(persistPath, []byte(stateJSON), 0600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		// Load and immediately re-save (simulates a server restart with graceful flush).
+		s1 := NewChallengeStore(5*time.Minute, 10*time.Minute, persistPath)
+		s1.Stop()
+		s1.SaveState()
+
+		// Load again from the re-saved (now version-1) file.
+		s2 := NewChallengeStore(5*time.Minute, 10*time.Minute, persistPath)
+		s2.Stop()
+
+		if !s2.WithinGracePeriod("dave", "host3") {
+			t.Error("expected grace session for dave@host3 to survive version-0 load + re-save round-trip")
+		}
+
+		hosts := s2.KnownHosts("dave")
+		found := false
+		for _, h := range hosts {
+			if h == "host3" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected host3 in KnownHosts(dave) after round-trip, got %v", hosts)
+		}
+	})
+}

@@ -533,15 +533,27 @@ func NewUserDirectory(users []PocketIDAdminUser, groups []PocketIDAdminGroup) *U
 }
 
 // FetchDirectory fetches users and groups from PocketID and returns
-// a queryable UserDirectory snapshot. Returns an error if either API call fails.
+// a queryable UserDirectory snapshot.
+//
+// If AllAdminGroups returns a partial result alongside an error (some groups
+// failed to fetch), FetchDirectory propagates both the partial directory and
+// the error so callers can decide how to handle incomplete data. Callers
+// MUST NOT use the returned directory for an LDAP refresh when err != nil;
+// stale-but-complete data is preferable to fresh-but-partial data.
 func (c *PocketIDClient) FetchDirectory() (*UserDirectory, error) {
 	users, err := c.AllAdminUsers()
 	if err != nil {
 		return nil, fmt.Errorf("pocketid: fetch users: %w", err)
 	}
-	groups, err := c.AllAdminGroups()
-	if err != nil {
-		return nil, fmt.Errorf("pocketid: fetch groups: %w", err)
+	groups, gerr := c.AllAdminGroups()
+	if gerr != nil {
+		// Return the partial directory alongside the error so callers have
+		// visibility into what was fetched, but they must not use it for refresh.
+		var partial *UserDirectory
+		if groups != nil {
+			partial = NewUserDirectory(users, groups)
+		}
+		return partial, fmt.Errorf("pocketid: fetch groups: %w", gerr)
 	}
 	return NewUserDirectory(users, groups), nil
 }

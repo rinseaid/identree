@@ -276,6 +276,7 @@ Set up a webhook in PocketID pointing to `https://identree.example.com/api/webho
 | `IDENTREE_ESCROW_PATH` | — | Storage path/prefix in the backend |
 | `IDENTREE_ESCROW_WEB_URL` | — | Link to the backend's web UI (shown in admin panel) |
 | `IDENTREE_ESCROW_ENCRYPTION_KEY` | — | Encryption key for `local` backend |
+| `IDENTREE_ESCROW_HKDF_SALT` | — | Hex-encoded salt for HKDF key derivation (16+ bytes recommended). Set to a random value per deployment for cross-deployment key diversification. Generate with: `openssl rand -hex 32`. Changing this value invalidates existing escrow ciphertexts. If unset, a static legacy salt is used (warning logged at startup). |
 | `IDENTREE_BREAKGLASS_ROTATE_BEFORE` | — | RFC 3339 timestamp — clients older than this are prompted to rotate |
 
 See [docs/breakglass.md](docs/breakglass.md) for full details and per-backend examples.

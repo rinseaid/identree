@@ -281,12 +281,18 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	// Only store avatar URLs with safe schemes to prevent javascript: XSS.
 	if p := claims.Picture; p != "" && (strings.HasPrefix(p, "https://") || strings.HasPrefix(p, "http://")) {
 		http.SetCookie(w, &http.Cookie{
-			Name:     "identree_avatar",
-			Value:    p,
-			Path:     "/",
-			MaxAge:   2592000, // 30 days — outlasts session cookie so avatar persists
-			HttpOnly: false,   // needs to be readable for display
-			SameSite: http.SameSiteLaxMode,
+			Name:  "identree_avatar",
+			Value: p,
+			Path:  "/",
+			MaxAge: 2592000, // 30 days — outlasts session cookie so avatar persists
+			// HttpOnly must remain false: the dashboard JS reads this cookie to
+			// display the user's avatar image. The risk is mitigated by:
+			//   1. Server-side scheme validation (only http/https accepted above).
+			//   2. SameSite=Strict, so the cookie is never sent on cross-site
+			//      navigations, reducing the SSRF/XSS attack surface.
+			//   3. getAvatar() rejects private/loopback hostnames on every read.
+			HttpOnly: false,
+			SameSite: http.SameSiteStrictMode,
 			Secure:   httpsOrigin,
 		})
 	}

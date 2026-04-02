@@ -6,7 +6,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -192,7 +194,7 @@ func (s *Server) getAndClearFlash(w http.ResponseWriter, r *http.Request) string
 	return cookie.Value
 }
 
-// getTheme reads the pam_theme cookie and returns "light", "dark", or "" (system default).
+// getAvatar reads the identree_avatar cookie and returns the URL, or "" if invalid.
 func getAvatar(r *http.Request) string {
 	c, err := r.Cookie("identree_avatar")
 	if err != nil || c.Value == "" {
@@ -202,6 +204,22 @@ func getAvatar(r *http.Request) string {
 	// set by an attacker who can write arbitrary cookies.
 	if !strings.HasPrefix(c.Value, "https://") && !strings.HasPrefix(c.Value, "http://") {
 		return ""
+	}
+	// Reject avatar URLs whose hostname resolves to a private or loopback
+	// address. The cookie is readable by JS (HttpOnly=false), so a stored XSS
+	// could craft a cookie pointing at an internal service; we block that here
+	// by refusing to pass the URL to templates where it becomes an <img src>.
+	if parsed, perr := url.Parse(c.Value); perr == nil {
+		hostname := parsed.Hostname()
+		addrs, lerr := net.LookupHost(hostname)
+		if lerr != nil {
+			return ""
+		}
+		for _, addr := range addrs {
+			if ip := net.ParseIP(addr); ip != nil && isPrivateIP(ip) {
+				return ""
+			}
+		}
 	}
 	return c.Value
 }

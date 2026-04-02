@@ -31,6 +31,7 @@ type TokenCache struct {
 	CacheDir string
 	Issuer   string
 	ClientID string
+	hostname string // resolved once at construction; consistent across all operations
 
 	// verifierMu guards lazy initialization of the OIDC verifier.
 	// Unlike sync.Once, the TTL-based pattern here retries after failures so
@@ -51,7 +52,10 @@ type cachedToken struct {
 // NewTokenCache creates a new token cache.
 // Returns an error if issuer or clientID are empty, as both are required for
 // OIDC token verification and an empty value would only be caught at first use.
-func NewTokenCache(cacheDir, issuer, clientID string) (*TokenCache, error) {
+// hostname is resolved once by the caller and stored so that all cache
+// operations (Check, Write, Delete, ModTime) use a consistent path even if
+// the system hostname were to change during the process lifetime.
+func NewTokenCache(cacheDir, issuer, clientID, hostname string) (*TokenCache, error) {
 	if issuer == "" {
 		return nil, fmt.Errorf("token cache: issuer must not be empty")
 	}
@@ -62,6 +66,7 @@ func NewTokenCache(cacheDir, issuer, clientID string) (*TokenCache, error) {
 		CacheDir: cacheDir,
 		Issuer:   issuer,
 		ClientID: clientID,
+		hostname: hostname,
 	}, nil
 }
 
@@ -70,11 +75,7 @@ func NewTokenCache(cacheDir, issuer, clientID string) (*TokenCache, error) {
 // open fd's Stat to avoid a TOCTOU race with a separate Lstat call), and nil on
 // success. Returns zero, zero time, and an error on any failure.
 func (tc *TokenCache) Check(username string) (time.Duration, time.Time, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return 0, time.Time{}, fmt.Errorf("getting hostname: %w", err)
-	}
-	path := filepath.Join(tc.CacheDir, hostname, username)
+	path := filepath.Join(tc.CacheDir, tc.hostname, username)
 
 	// Read with O_NOFOLLOW to reject symlinks (same pattern as readBreakglassHash)
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
@@ -82,6 +83,13 @@ func (tc *TokenCache) Check(username string) (time.Duration, time.Time, error) {
 		return 0, time.Time{}, fmt.Errorf("opening cache file: %w", err)
 	}
 	defer f.Close()
+
+	// Acquire a shared advisory lock so concurrent PAM sessions do not race
+	// with a Write on the same token file.
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH); err != nil {
+		return 0, time.Time{}, fmt.Errorf("locking cache file: %w", err)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck
 
 	// Validate file security; capture mtime from the open fd to avoid a
 	// separate Lstat call that could race with a file replacement.
@@ -191,12 +199,8 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 
 	expiresAt := time.Unix(claims.Exp, 0)
 
-	// Resolve the hostname-specific cache directory.
-	hostname, err := os.Hostname()
-	if err != nil {
-		return fmt.Errorf("getting hostname: %w", err)
-	}
-	hostCacheDir := filepath.Join(tc.CacheDir, hostname)
+	// Resolve the hostname-specific cache directory using the stored hostname.
+	hostCacheDir := filepath.Join(tc.CacheDir, tc.hostname)
 
 	// Ensure per-hostname cache directory exists with tight permissions.
 	// MkdirAll does not fix permissions on existing directories, so
@@ -247,8 +251,25 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 		return fmt.Errorf("closing temp file: %w", err)
 	}
 
-	// Atomic rename
+	// Acquire an exclusive advisory lock on the destination path before the
+	// rename so that concurrent PAM sessions (a Check still in progress)
+	// cannot observe a partial or replaced file. Open with O_CREATE so the
+	// lock target always exists even on first write.
 	path := filepath.Join(hostCacheDir, username)
+	lockFile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("opening lock target: %w", err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("locking cache file: %w", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) //nolint:errcheck
+
+	// Atomic rename — replaces the locked file; the new inode is visible to
+	// readers only after the lock is released.
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
 		return fmt.Errorf("renaming to target: %w", err)
@@ -264,11 +285,7 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 
 // Delete removes the cached token file for a given username.
 func (tc *TokenCache) Delete(username string) error {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return fmt.Errorf("getting hostname: %w", err)
-	}
-	path := filepath.Join(tc.CacheDir, hostname, username)
+	path := filepath.Join(tc.CacheDir, tc.hostname, username)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing cache file: %w", err)
 	}
@@ -277,11 +294,7 @@ func (tc *TokenCache) Delete(username string) error {
 
 // ModTime returns the modification time of the cached token file.
 func (tc *TokenCache) ModTime(username string) (time.Time, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return time.Time{}, fmt.Errorf("getting hostname: %w", err)
-	}
-	path := filepath.Join(tc.CacheDir, hostname, username)
+	path := filepath.Join(tc.CacheDir, tc.hostname, username)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("stating cache file: %w", err)

@@ -23,6 +23,10 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// configFormMaxBytes is the maximum request body size for the config form POST.
+// The config form is larger than the default 8 KB limit because it includes many fields.
+const configFormMaxBytes = 65536 // 64 KB
+
 var sshKeyClaimPattern = regexp.MustCompile(`^sshPublicKey\d*$`)
 var validAdminIDPattern = regexp.MustCompile(`^[a-fA-F0-9-]{1,128}$`)
 var validLoginShellPattern = regexp.MustCompile(`^/[a-zA-Z0-9/_.-]+$`)
@@ -360,7 +364,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodPost {
 		// Custom form auth with 64 KB body limit (config form exceeds default 8 KB).
-		r.Body = http.MaxBytesReader(w, r.Body, 65536)
+		r.Body = http.MaxBytesReader(w, r.Body, configFormMaxBytes)
 		if err := r.ParseForm(); err != nil {
 			revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_form")
 			return
@@ -639,16 +643,19 @@ func configSecretStatus(cfg *config.ServerConfig) map[string]bool {
 	}
 }
 
-// isPrivateIP returns true if the given IP is loopback, link-local, or private
-// (RFC 1918 / RFC 4193 / RFC 3927 / IPv6 loopback).
+// isPrivateIP returns true if the given IP is loopback, link-local, private,
+// or multicast (RFC 1918 / RFC 4193 / RFC 3927 / RFC 1122 / IPv6 loopback).
 func isPrivateIP(ip net.IP) bool {
 	private := []net.IPNet{
+		{IP: net.ParseIP("0.0.0.0"), Mask: net.CIDRMask(8, 32)},     // this host network (RFC 1122)
 		{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(8, 32)},
 		{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)},
 		{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)},
 		{IP: net.ParseIP("169.254.0.0"), Mask: net.CIDRMask(16, 32)}, // link-local
+		{IP: net.ParseIP("224.0.0.0"), Mask: net.CIDRMask(4, 32)},   // IPv4 multicast
 		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},      // ULA
 		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},     // link-local IPv6
+		{IP: net.ParseIP("ff00::"), Mask: net.CIDRMask(8, 128)},      // IPv6 multicast
 	}
 	if ip.IsLoopback() {
 		return true
@@ -795,6 +802,19 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
+
+	// Warn and remap deprecated key names before processing.
+	if v, ok := values["IDENTREE_SUDO_NO_AUTHENTICATE"]; ok && values["IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"] == "" {
+		slog.Warn("config: IDENTREE_SUDO_NO_AUTHENTICATE is deprecated, use IDENTREE_LDAP_SUDO_NO_AUTHENTICATE instead")
+		values["IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"] = v
+		delete(values, "IDENTREE_SUDO_NO_AUTHENTICATE")
+	}
+	if v, ok := values["IDENTREE_HISTORY_PAGE_SIZE"]; ok && values["IDENTREE_DEFAULT_PAGE_SIZE"] == "" {
+		slog.Warn("config: IDENTREE_HISTORY_PAGE_SIZE is deprecated, use IDENTREE_DEFAULT_PAGE_SIZE instead")
+		values["IDENTREE_DEFAULT_PAGE_SIZE"] = v
+		delete(values, "IDENTREE_HISTORY_PAGE_SIZE")
+	}
+
 	parseDur := func(key string, def time.Duration) time.Duration {
 		if v := values[key]; v != "" {
 			if d, err := time.ParseDuration(v); err == nil {
@@ -853,12 +873,25 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 		}
 	}
 	if !config.IsEnvSourced("IDENTREE_ADMIN_APPROVAL_HOSTS") {
-		s.cfg.AdminApprovalHosts = parseSlice("IDENTREE_ADMIN_APPROVAL_HOSTS")
+		newHosts := parseSlice("IDENTREE_ADMIN_APPROVAL_HOSTS")
+		if fmt.Sprintf("%v", newHosts) != fmt.Sprintf("%v", s.cfg.AdminApprovalHosts) {
+			slog.Info("ADMIN_APPROVAL_HOSTS_CHANGED", "actor", actor,
+				"old", s.cfg.AdminApprovalHosts, "new", newHosts)
+		}
+		s.cfg.AdminApprovalHosts = newHosts
 	}
 	if !config.IsEnvSourced("IDENTREE_NOTIFY_BACKEND") {
+		if values["IDENTREE_NOTIFY_BACKEND"] != s.cfg.NotifyBackend {
+			slog.Info("NOTIFY_BACKEND_CHANGED", "actor", actor,
+				"old", s.cfg.NotifyBackend, "new", values["IDENTREE_NOTIFY_BACKEND"])
+		}
 		s.cfg.NotifyBackend = values["IDENTREE_NOTIFY_BACKEND"]
 	}
 	if !config.IsEnvSourced("IDENTREE_NOTIFY_URL") {
+		if values["IDENTREE_NOTIFY_URL"] != s.cfg.NotifyURL {
+			slog.Info("NOTIFY_URL_CHANGED", "actor", actor,
+				"old", s.cfg.NotifyURL, "new", values["IDENTREE_NOTIFY_URL"])
+		}
 		s.cfg.NotifyURL = values["IDENTREE_NOTIFY_URL"]
 	}
 	// IDENTREE_NOTIFY_COMMAND is intentionally not live-updated: it executes
@@ -871,18 +904,39 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 		}
 	}
 	if !config.IsEnvSourced("IDENTREE_ESCROW_BACKEND") {
-		s.cfg.EscrowBackend = config.EscrowBackend(values["IDENTREE_ESCROW_BACKEND"])
+		newBackend := config.EscrowBackend(values["IDENTREE_ESCROW_BACKEND"])
+		if newBackend != s.cfg.EscrowBackend {
+			slog.Info("ESCROW_BACKEND_CHANGED", "actor", actor,
+				"old", s.cfg.EscrowBackend, "new", newBackend)
+		}
+		s.cfg.EscrowBackend = newBackend
 	}
 	if !config.IsEnvSourced("IDENTREE_ESCROW_URL") {
+		if values["IDENTREE_ESCROW_URL"] != s.cfg.EscrowURL {
+			slog.Info("ESCROW_URL_CHANGED", "actor", actor,
+				"old", s.cfg.EscrowURL, "new", values["IDENTREE_ESCROW_URL"])
+		}
 		s.cfg.EscrowURL = values["IDENTREE_ESCROW_URL"]
 	}
 	if !config.IsEnvSourced("IDENTREE_ESCROW_AUTH_ID") {
+		if values["IDENTREE_ESCROW_AUTH_ID"] != s.cfg.EscrowAuthID {
+			slog.Info("ESCROW_AUTH_ID_CHANGED", "actor", actor,
+				"old", s.cfg.EscrowAuthID, "new", values["IDENTREE_ESCROW_AUTH_ID"])
+		}
 		s.cfg.EscrowAuthID = values["IDENTREE_ESCROW_AUTH_ID"]
 	}
 	if !config.IsEnvSourced("IDENTREE_ESCROW_PATH") {
+		if values["IDENTREE_ESCROW_PATH"] != s.cfg.EscrowPath {
+			slog.Info("ESCROW_PATH_CHANGED", "actor", actor,
+				"old", s.cfg.EscrowPath, "new", values["IDENTREE_ESCROW_PATH"])
+		}
 		s.cfg.EscrowPath = values["IDENTREE_ESCROW_PATH"]
 	}
 	if !config.IsEnvSourced("IDENTREE_ESCROW_WEB_URL") {
+		if values["IDENTREE_ESCROW_WEB_URL"] != s.cfg.EscrowWebURL {
+			slog.Info("ESCROW_WEB_URL_CHANGED", "actor", actor,
+				"old", s.cfg.EscrowWebURL, "new", values["IDENTREE_ESCROW_WEB_URL"])
+		}
 		s.cfg.EscrowWebURL = values["IDENTREE_ESCROW_WEB_URL"]
 	}
 	if !config.IsEnvSourced("IDENTREE_CLIENT_POLL_INTERVAL") {
@@ -902,17 +956,34 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 	if !config.IsEnvSourced("IDENTREE_CLIENT_BREAKGLASS_ENABLED") {
 		if v := values["IDENTREE_CLIENT_BREAKGLASS_ENABLED"]; v != "" {
 			if b, err := strconv.ParseBool(v); err == nil {
+				if s.cfg.ClientBreakglassEnabled == nil || *s.cfg.ClientBreakglassEnabled != b {
+					slog.Info("BREAKGLASS_ENABLED_CHANGED", "actor", actor,
+						"old", boolPtrToString(s.cfg.ClientBreakglassEnabled), "new", boolToString(b))
+				}
 				s.cfg.ClientBreakglassEnabled = &b
 			}
 		} else {
+			if s.cfg.ClientBreakglassEnabled != nil {
+				slog.Info("BREAKGLASS_ENABLED_CHANGED", "actor", actor,
+					"old", boolPtrToString(s.cfg.ClientBreakglassEnabled), "new", "")
+			}
 			s.cfg.ClientBreakglassEnabled = nil
 		}
 	}
 	if !config.IsEnvSourced("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE") {
+		if values["IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"] != s.cfg.ClientBreakglassPasswordType {
+			slog.Info("BREAKGLASS_PASSWORD_TYPE_CHANGED", "actor", actor,
+				"old", s.cfg.ClientBreakglassPasswordType, "new", values["IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"])
+		}
 		s.cfg.ClientBreakglassPasswordType = values["IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"]
 	}
 	if !config.IsEnvSourced("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS") {
-		s.cfg.ClientBreakglassRotationDays = parseInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", s.cfg.ClientBreakglassRotationDays)
+		newDays := parseInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", s.cfg.ClientBreakglassRotationDays)
+		if newDays != s.cfg.ClientBreakglassRotationDays {
+			slog.Info("BREAKGLASS_ROTATION_DAYS_CHANGED", "actor", actor,
+				"old", s.cfg.ClientBreakglassRotationDays, "new", newDays)
+		}
+		s.cfg.ClientBreakglassRotationDays = newDays
 	}
 	if !config.IsEnvSourced("IDENTREE_CLIENT_TOKEN_CACHE_ENABLED") {
 		if v := values["IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"]; v != "" {
@@ -929,6 +1000,10 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 	if !config.IsEnvSourced("IDENTREE_LDAP_SUDO_NO_AUTHENTICATE") {
 		switch v := config.SudoNoAuthenticate(values["IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"]); v {
 		case config.SudoNoAuthTrue, config.SudoNoAuthFalse, config.SudoNoAuthClaims:
+			if v != s.cfg.LDAPSudoNoAuthenticate {
+				slog.Info("LDAP_SUDO_NO_AUTHENTICATE_CHANGED", "actor", actor,
+					"old", s.cfg.LDAPSudoNoAuthenticate, "new", v)
+			}
 			s.cfg.LDAPSudoNoAuthenticate = v
 		}
 	}
@@ -941,6 +1016,10 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 	if !config.IsEnvSourced("IDENTREE_LDAP_ALLOW_ANONYMOUS") {
 		if v := values["IDENTREE_LDAP_ALLOW_ANONYMOUS"]; v != "" {
 			if b, err := strconv.ParseBool(v); err == nil {
+				if b != s.cfg.LDAPAllowAnonymous {
+					slog.Info("LDAP_ALLOW_ANONYMOUS_CHANGED", "actor", actor,
+						"old", boolToString(s.cfg.LDAPAllowAnonymous), "new", boolToString(b))
+				}
 				s.cfg.LDAPAllowAnonymous = b
 			}
 		}
@@ -2044,6 +2123,12 @@ func (s *Server) handleGetUserClaims(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.getSessionUser(r) == "" || s.getSessionRole(r) != "admin" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Lightweight CSRF protection for this sensitive GET endpoint: verify that
+	// the request originates from our own UI by checking the Referer header.
+	if ref := r.Referer(); !strings.HasPrefix(ref, s.cfg.ExternalURL) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if s.pocketIDClient == nil {

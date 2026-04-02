@@ -31,14 +31,17 @@ import (
 func apiError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
+		slog.Debug("handlers_api: failed to write response", "err", err)
+	}
 }
 
 // authFailTracker counts per-IP authentication failures in a sliding window.
 // After authFailMax failures in authFailWindow, the IP is throttled.
 const (
-	authFailWindow = 60 * time.Second
-	authFailMax    = 10
+	authFailWindow       = 60 * time.Second
+	authFailMax          = 10
+	maxUsedEscrowTokens  = 10000
 )
 
 type authFailTracker struct {
@@ -705,6 +708,11 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		// Lazily prune entries older than 10 minutes (2× the window).
 		tokenKey := req.Hostname + ":" + tsHeader
 		s.usedEscrowTokensMu.Lock()
+		if len(s.usedEscrowTokens) >= maxUsedEscrowTokens {
+			s.usedEscrowTokensMu.Unlock()
+			apiError(w, http.StatusTooManyRequests, "escrow rate limit exceeded")
+			return
+		}
 		_, seen := s.usedEscrowTokens[tokenKey]
 		if !seen {
 			s.usedEscrowTokens[tokenKey] = time.Now()
@@ -841,17 +849,21 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Verify admin session via form auth (includes CSRF check).
-	actor := s.verifyFormAuth(w, r)
+	// Verify admin session via JSON auth (reads CSRF from X-CSRF-Token / X-CSRF-Ts headers).
+	actor := s.verifyJSONAdminAuth(w, r)
 	if actor == "" {
 		return
 	}
-	if s.getSessionRole(r) != "admin" {
-		apiError(w, http.StatusForbidden, "admin access required")
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	var req struct {
+		Hostname string `json:"hostname"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	hostname := r.FormValue("hostname")
+	hostname := req.Hostname
 	if hostname == "" || !validHostname.MatchString(hostname) {
 		apiError(w, http.StatusBadRequest, "invalid hostname")
 		return
