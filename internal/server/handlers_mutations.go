@@ -21,7 +21,9 @@ import (
 
 // safeRedirectDest validates and returns a safe same-origin redirect destination
 // from the "from" form field. It decodes percent-encoding before validation to
-// prevent %2f%2f bypass of the "//" open-redirect guard.
+// prevent %2f%2f bypass of the "//" open-redirect guard. It returns the
+// stripped version (all ASCII control chars and space removed) to ensure the
+// result is safe for use in HTTP Location headers.
 func safeRedirectDest(raw string) string {
 	if raw == "" {
 		return "/"
@@ -34,19 +36,18 @@ func safeRedirectDest(raw string) string {
 	if !strings.HasPrefix(decoded, "/") {
 		return "/"
 	}
-	// Strip ASCII whitespace/control characters that browsers normalize away,
-	// then recheck for // to block "/ \t//evil.com" → "//evil.com" redirect bypass.
-	var stripped strings.Builder
+	// Strip all ASCII control chars and space (≤0x20) and DEL (0x7F).
+	var b strings.Builder
 	for _, ch := range decoded {
 		if ch > 0x20 && ch != 0x7F {
-			stripped.WriteRune(ch)
+			b.WriteRune(ch)
 		}
 	}
-	norm := stripped.String()
-	if strings.HasPrefix(norm, "//") || strings.ContainsAny(decoded, "?#\\\n\r\t\x00\x0b\x0c") {
+	norm := b.String()
+	if strings.HasPrefix(norm, "//") || strings.ContainsAny(norm, "?#\\") {
 		return "/"
 	}
-	return decoded
+	return norm
 }
 
 // handleBulkApprove approves a pending challenge from the dashboard.
@@ -209,11 +210,14 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	oidcFresh := !lastAuth.IsZero() && time.Since(lastAuth) < s.cfg.OneTapMaxAge
 	if !oidcFresh {
 		secure := strings.HasPrefix(s.cfg.ExternalURL, "https://")
+		s.cfgMu.RLock()
+		ttl := s.cfg.ChallengeTTL
+		s.cfgMu.RUnlock()
 		http.SetCookie(w, &http.Cookie{
 			Name:     "pam_onetap",
 			Value:    token,
 			Path:     "/",
-			MaxAge:   300, // 5 minutes
+			MaxAge:   int(ttl.Seconds()),
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 			Secure:   secure,
@@ -388,6 +392,14 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	} else if !validHostname.MatchString(hostname) {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
 		return
+	}
+
+	if sessionOwner != actor {
+		slog.Warn("CROSS_USER_SESSION_REVOKE",
+			"actor", actor,
+			"target_user", sessionOwner,
+			"host", hostname,
+			"remote_addr", remoteAddr(r))
 	}
 
 	s.store.RevokeSession(sessionOwner, hostname)

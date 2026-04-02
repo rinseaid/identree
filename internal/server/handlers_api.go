@@ -314,6 +314,12 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	// Build client_config if any server-side client overrides are set
 	clientCfg := s.buildClientConfig()
 
+	// Snapshot live-updated config fields under read lock before use in response.
+	s.cfgMu.RLock()
+	challengeTTL := s.cfg.ChallengeTTL
+	notifyBackend := s.cfg.NotifyBackend
+	s.cfgMu.RUnlock()
+
 	// Auto-approve if within grace period, but only for hosts that don't require admin approval.
 	// AutoApproveIfWithinGracePeriod performs the check and approval atomically,
 	// eliminating the TOCTOU race between a separate WithinGracePeriod + AutoApprove pair.
@@ -345,7 +351,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{
 			"challenge_id":    challenge.ID,
 			"user_code":       challenge.UserCode,
-			"expires_in":      int(s.cfg.ChallengeTTL.Seconds()),
+			"expires_in":      int(challengeTTL.Seconds()),
 			"status":          "approved",
 			"grace_remaining": int(s.store.GraceRemaining(req.Username, req.Hostname).Seconds()),
 		}
@@ -384,9 +390,9 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		"challenge_id":     challenge.ID,
 		"user_code":        challenge.UserCode,
 		"verification_url": approvalURL,
-		"expires_in":       int(s.cfg.ChallengeTTL.Seconds()),
+		"expires_in":       int(challengeTTL.Seconds()),
 	}
-	if s.cfg.NotifyBackend != "" {
+	if notifyBackend != "" {
 		resp["notification_queued"] = true
 	}
 	if challenge.BreakglassRotateBefore != "" {
@@ -601,25 +607,44 @@ func (s *Server) computeOneTapToken(challengeID, username, hostname string, expi
 
 // buildClientConfig returns a client config override map if any fields are set,
 // or nil if no overrides are configured.
+// All fields read here are live-updated by applyLiveConfigUpdates, so we
+// snapshot them under cfgMu.RLock before use.
 func (s *Server) buildClientConfig() map[string]interface{} {
-	cfg := make(map[string]interface{})
-	if s.cfg.ClientPollInterval > 0 {
-		cfg["poll_interval"] = s.cfg.ClientPollInterval.String()
-	}
-	if s.cfg.ClientTimeout > 0 {
-		cfg["timeout"] = s.cfg.ClientTimeout.String()
-	}
+	s.cfgMu.RLock()
+	pollInterval := s.cfg.ClientPollInterval
+	timeout := s.cfg.ClientTimeout
+	var breakglassEnabled *bool
 	if s.cfg.ClientBreakglassEnabled != nil {
-		cfg["breakglass_enabled"] = *s.cfg.ClientBreakglassEnabled
+		v := *s.cfg.ClientBreakglassEnabled
+		breakglassEnabled = &v
 	}
-	if s.cfg.ClientBreakglassPasswordType != "" {
-		cfg["breakglass_password_type"] = s.cfg.ClientBreakglassPasswordType
-	}
-	if s.cfg.ClientBreakglassRotationDays > 0 {
-		cfg["breakglass_rotation_days"] = s.cfg.ClientBreakglassRotationDays
-	}
+	breakglassPasswordType := s.cfg.ClientBreakglassPasswordType
+	breakglassRotationDays := s.cfg.ClientBreakglassRotationDays
+	var tokenCacheEnabled *bool
 	if s.cfg.ClientTokenCacheEnabled != nil {
-		cfg["token_cache_enabled"] = *s.cfg.ClientTokenCacheEnabled
+		v := *s.cfg.ClientTokenCacheEnabled
+		tokenCacheEnabled = &v
+	}
+	s.cfgMu.RUnlock()
+
+	cfg := make(map[string]interface{})
+	if pollInterval > 0 {
+		cfg["poll_interval"] = pollInterval.String()
+	}
+	if timeout > 0 {
+		cfg["timeout"] = timeout.String()
+	}
+	if breakglassEnabled != nil {
+		cfg["breakglass_enabled"] = *breakglassEnabled
+	}
+	if breakglassPasswordType != "" {
+		cfg["breakglass_password_type"] = breakglassPasswordType
+	}
+	if breakglassRotationDays > 0 {
+		cfg["breakglass_rotation_days"] = breakglassRotationDays
+	}
+	if tokenCacheEnabled != nil {
+		cfg["token_cache_enabled"] = *tokenCacheEnabled
 	}
 	if len(cfg) == 0 {
 		return nil
@@ -764,7 +789,13 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	hasNativeEscrow := s.cfg.EscrowBackend != ""
+	// Snapshot live-updated escrow config fields under read lock.
+	s.cfgMu.RLock()
+	escrowBackend := s.cfg.EscrowBackend
+	escrowPath := s.cfg.EscrowPath
+	s.cfgMu.RUnlock()
+
+	hasNativeEscrow := escrowBackend != ""
 	if s.cfg.EscrowCommand == "" && !hasNativeEscrow {
 		slog.Warn("BREAKGLASS escrow received but not configured, password discarded", "host", req.Hostname)
 		apiError(w, http.StatusNotImplemented, "escrow not configured on server")
@@ -787,17 +818,17 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 
 	if hasNativeEscrow {
 		var backend escrow.Backend
-		if s.cfg.EscrowBackend == config.EscrowBackendLocal {
+		if escrowBackend == config.EscrowBackendLocal {
 			backend = escrow.NewLocalEscrowBackend(s.escrowKey, s.store)
 		} else {
 			backend = escrow.NewEscrowBackend(s.cfg)
 		}
-		vault := escrow.ResolveEscrowVault(req.Hostname, s.cfg.EscrowVaultMap, s.cfg.EscrowPath)
+		vault := escrow.ResolveEscrowVault(req.Hostname, s.cfg.EscrowVaultMap, escrowPath)
 		var err error
 		itemID, vaultID, err = backend.Store(ctx, req.Hostname, req.Password, vault)
 		if err != nil {
 			breakglassEscrowTotal.WithLabelValues("failure").Inc()
-			slog.Error("BREAKGLASS escrow failed", "backend", s.cfg.EscrowBackend, "host", req.Hostname, "err", err)
+			slog.Error("BREAKGLASS escrow failed", "backend", escrowBackend, "host", req.Hostname, "err", err)
 			apiError(w, http.StatusInternalServerError, "escrow failed")
 			return
 		}
@@ -867,6 +898,13 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		s.store.LogAction(user, challpkg.ActionRotatedBreakglass, req.Hostname, "", "")
 	}
 	slog.Info("BREAKGLASS password escrowed", "host", req.Hostname)
+	// H9: prominent audit log for breakglass token issuance capturing all
+	// relevant fields for incident investigation.
+	backendName := string(escrowBackend)
+	if backendName == "" {
+		backendName = "command"
+	}
+	slog.Warn("BREAKGLASS_ESCROWED", "host", req.Hostname, "backend", backendName, "timestamp", time.Now().UTC().Format(time.RFC3339), "remote_addr", remoteAddr(r))
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
 		slog.Error("writing JSON response", "err", err)
@@ -911,7 +949,12 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if s.cfg.EscrowBackend == "" {
+	// Snapshot live-updated escrow backend under read lock.
+	s.cfgMu.RLock()
+	revealEscrowBackend := s.cfg.EscrowBackend
+	s.cfgMu.RUnlock()
+
+	if revealEscrowBackend == "" {
 		apiError(w, http.StatusNotImplemented, "no escrow backend configured")
 		return
 	}
@@ -920,7 +963,7 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 
 	var backend escrow.Backend
-	if s.cfg.EscrowBackend == config.EscrowBackendLocal {
+	if revealEscrowBackend == config.EscrowBackendLocal {
 		backend = escrow.NewLocalEscrowBackend(s.escrowKey, s.store)
 	} else {
 		backend = escrow.NewEscrowBackend(s.cfg)

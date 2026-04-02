@@ -150,6 +150,17 @@ func runServer() {
 		os.Exit(1)
 	}
 
+	// Normalize ExternalURL: strip any trailing slashes so cfg.ExternalURL is
+	// consistent wherever it is used (slog output, cookie Secure detection, etc.).
+	cfg.ExternalURL = strings.TrimRight(cfg.ExternalURL, "/")
+
+	// Clamp ClientPollInterval to a minimum of 1 second to prevent sub-second
+	// polling hammering both the server and managed hosts.
+	if cfg.ClientPollInterval > 0 && cfg.ClientPollInterval < time.Second {
+		slog.Warn("IDENTREE_CLIENT_POLL_INTERVAL is sub-second; clamping to 1s", "value", cfg.ClientPollInterval)
+		cfg.ClientPollInterval = time.Second
+	}
+
 	// Bridge mode: APIKey is empty — serve only ou=sudoers from local rules store.
 	var rulesStore *sudorules.Store
 	if cfg.APIKey == "" {
@@ -421,9 +432,11 @@ func runServer() {
 	// periodicFlushCtx is cancelled at graceful shutdown to stop the flush goroutine.
 	periodicFlushCtx, periodicFlushCancel := context.WithCancel(context.Background())
 	defer periodicFlushCancel()
+	periodicFlushDone := make(chan struct{})
 
 	// Periodically flush session state to disk to minimize data loss on crash.
 	go func() {
+		defer close(periodicFlushDone)
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
 		for {
@@ -485,12 +498,17 @@ func runServer() {
 		if ldapRefreshDone != nil {
 			select {
 			case <-ldapRefreshDone:
-			case <-time.After(5 * time.Second):
-				slog.Warn("ldap refresh goroutine did not stop within 5s — saving state anyway")
+			case <-time.After(30 * time.Second):
+				slog.Error("ldap refresh goroutine did not stop within 30s — forced shutdown may cause data race; check for stuck network calls")
 			}
 		}
 		srv.WaitForNotifications(5 * time.Second)
 		periodicFlushCancel()
+		select {
+		case <-periodicFlushDone:
+		case <-time.After(5 * time.Second):
+			slog.Warn("periodic flush goroutine did not stop within 5s")
+		}
 		srv.store.SaveState()
 		srv.Stop()
 		shutdownCancel()

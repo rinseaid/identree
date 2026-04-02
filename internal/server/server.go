@@ -90,6 +90,7 @@ type Server struct {
 	deployRL   *deployRateLimiter
 	loginRL    *loginRateLimiter
 	approveRL  *loginRateLimiter  // per-IP limit on /approve/{code}
+	callbackRL *loginRateLimiter  // per-IP limit on /callback (OIDC callback)
 	authFailRL *authFailTracker   // per-IP auth-failure backoff on /api/challenge
 
 	// healthz filesystem check cache: avoids disk I/O on every probe.
@@ -107,6 +108,11 @@ type Server struct {
 	// ldapBound is set to true once the LDAP listener goroutine has started.
 	// It is never reset to false (a stopped listener causes the process to exit).
 	ldapBound atomic.Bool
+
+	// notifyShutdown is set to true before WaitForNotifications calls notifyWg.Wait().
+	// sendNotification and sendEventNotification check this flag before calling
+	// notifyWg.Add(1) to prevent a panic from Add-after-Wait.
+	notifyShutdown atomic.Bool
 
 	// Recently-removed users: excluded from PocketID merge until cleared.
 	removedUsers   map[string]time.Time
@@ -240,6 +246,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		deployRL:      newDeployRateLimiter(),
 		loginRL:       newLoginRateLimiter(),
 		approveRL:     newLoginRateLimiter(),
+		callbackRL:    newLoginRateLimiter(),
 		authFailRL:    newAuthFailTracker(),
 		removedUsers:       make(map[string]time.Time),
 		usedEscrowTokens:   make(map[string]time.Time),

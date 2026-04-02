@@ -231,7 +231,17 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 			}
 			// No break — log all controls for observability.
 		} else {
-			slog.Debug("ldap: unknown control received (ignored)", "oid", ctrl.GetControlType())
+			oid := ctrl.GetControlType()
+			// RFC 4511 §4.1.11: if an unknown control is marked critical the
+			// server MUST return unavailableCriticalExtension and MUST NOT
+			// process the request.
+			if cs, ok := ctrl.(*gldap.ControlString); ok && cs.Criticality {
+				slog.Warn("ldap: unknown critical control received, rejecting request",
+					"oid", oid)
+				resp.SetResultCode(gldap.ResultUnavailableCriticalExtension)
+				return
+			}
+			slog.Debug("ldap: unknown control received (ignored)", "oid", oid)
 		}
 	}
 	if hasPagingControl {
@@ -322,6 +332,25 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 	case scope == sudoersDN || strings.HasSuffix(scope, ","+sudoersDN):
 		truncated = s.searchSudoers(w, req, filter, msg.Attributes, dir, base, limit)
 
+	case scope == baseLower && msg.Scope == gldap.SingleLevel:
+		// RFC 4511 SingleLevel from root: return only the immediate OU
+		// containers (ou=People, ou=Groups, ou=Sudoers) — not their children.
+		for _, ouDN := range []string{
+			"ou=people," + base,
+			"ou=groups," + base,
+			"ou=sudoers," + base,
+		} {
+			ouName := strings.SplitN(ouDN, ",", 2)[0] // e.g. "ou=people"
+			ouName = strings.TrimPrefix(strings.ToLower(ouName), "ou=")
+			attrs := map[string][]string{
+				"objectClass": {"top", "organizationalUnit"},
+				"ou":          {ouName},
+			}
+			if matchesFilter(filter, ouDN, attrs) {
+				w.Write(req.NewSearchResponseEntry(ouDN, gldap.WithAttributes(filterAttrs(attrs, msg.Attributes))))
+			}
+		}
+
 	case scope == baseLower:
 		// Subtree from root — serve everything. The size limit is tracked
 		// cumulatively across all three branches so that the aggregate never
@@ -330,11 +359,11 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		remaining := limit
 		truncated, n = s.searchPeople(w, req, filter, msg.Attributes, dir, userHosts, base, remaining)
 		remaining = decrementLimit(remaining, n)
-		if !truncated && remaining != 0 {
+		if !truncated && (limit == 0 || remaining > 0) {
 			truncated, n = s.searchGroups(w, req, filter, msg.Attributes, dir, base, remaining)
 			remaining = decrementLimit(remaining, n)
 		}
-		if !truncated && remaining != 0 {
+		if !truncated && (limit == 0 || remaining > 0) {
 			truncated = s.searchSudoers(w, req, filter, msg.Attributes, dir, base, remaining)
 		}
 	}
@@ -432,6 +461,10 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			homePattern = "/home/%s"
 		}
 		home := strings.Replace(homePattern, "%s", u.Username, 1)
+		if !strings.HasPrefix(home, "/") {
+			slog.Warn("ldap: constructed home path is not absolute, using /tmp", "user", u.Username, "pattern", homePattern)
+			home = "/tmp"
+		}
 		if !isValidLDAPAttrValue(home) {
 			slog.Warn("ldap: constructed home path has invalid characters, using /tmp", "user", u.Username)
 			home = "/tmp"

@@ -155,6 +155,11 @@ func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 // handleSessionsCallback processes the OIDC callback for the sessions management page.
 // Called from handleOIDCCallback when state starts with "sessions:".
 func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) {
+	if !s.callbackRL.allow(remoteAddr(r)) {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
 	state := r.URL.Query().Get("state")
 	stateNonce := strings.TrimPrefix(state, "sessions:")
 
@@ -217,7 +222,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	token, err := s.oidcConfig.Exchange(exchangeCtx, code, oauth2.VerifierOption(nonceData.codeVerifier))
 	oidcExchangeDuration.Observe(time.Since(exchangeStart).Seconds())
 	if err != nil {
-		slog.Error("sessions callback token exchange failed", "remote_addr", remoteAddr(r), "err", err)
+		slog.Error("sessions callback token exchange failed", "remote_addr", remoteAddr(r), "err", err, "hint", "if using PocketID <v2.5, PKCE (code_challenge) may not be supported")
 		challengesDenied.WithLabelValues("oidc_error").Inc()
 		loginURL := s.baseURL + "/sessions/login"
 		revokeErrorPageWithLink(w, r, http.StatusInternalServerError, "auth_failed", "token_exchange_failed", loginURL, "try_again")
@@ -329,9 +334,12 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		parts := strings.SplitN(onetapCookie.Value, ".", 3)
 		if len(parts) == 3 && isDecimal(parts[1]) && isHex(parts[2]) && len(parts[2]) == 64 {
 			if challenge, ok := s.store.Get(parts[0]); ok && challenge.Username == username {
-				onetapURL := s.baseURL + "/api/onetap/" + onetapCookie.Value
-				http.Redirect(w, r, onetapURL, http.StatusSeeOther)
-				return
+				expected := s.computeOneTapToken(challenge.ID, challenge.Username, challenge.Hostname, challenge.ExpiresAt)
+				if expected != "" && subtle.ConstantTimeCompare([]byte(expected), []byte(onetapCookie.Value)) == 1 {
+					onetapURL := s.baseURL + "/api/onetap/" + onetapCookie.Value
+					http.Redirect(w, r, onetapURL, http.StatusSeeOther)
+					return
+				}
 			}
 		}
 		// Token invalid or challenge not for this user — fall through to dashboard

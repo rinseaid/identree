@@ -52,106 +52,88 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, username, role string) 
 	http.SetCookie(w, cookie)
 }
 
-// getSessionUser validates the session cookie and returns the username, or "" if invalid/expired.
-func (s *Server) getSessionUser(r *http.Request) string {
+// sessionData holds the validated fields parsed from a session cookie.
+type sessionData struct {
+	Username string
+	Role     string
+	TsInt    int64
+}
+
+// parseSessionCookie validates the session cookie and returns the parsed data.
+// Returns (data, true) on success, or (zero, false) if the cookie is missing,
+// malformed, expired, or has a bad HMAC/revoked nonce.
+// Callers must check valid == false before using the returned data.
+func (s *Server) parseSessionCookie(r *http.Request) (data sessionData, valid bool) {
 	if s.cfg.SharedSecret == "" {
-		return ""
+		return sessionData{}, false
 	}
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
-		return ""
+		return sessionData{}, false
 	}
 	// Only accept the 5-part format: username:role:ts:nonce:sig
 	parts := strings.SplitN(cookie.Value, ":", 5)
-	if len(parts) == 5 {
-		username, role, ts, nonce, sig := parts[0], parts[1], parts[2], parts[3], parts[4]
-		if !validUsername.MatchString(username) {
-			return ""
-		}
-		if role != "admin" && role != "user" {
-			return ""
-		}
-		if !isHex(nonce) || len(nonce) != 32 {
-			return ""
-		}
-		tsInt, err := strconv.ParseInt(ts, 10, 64)
-		if err != nil {
-			return ""
-		}
-		if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > sessionCookieTTL {
-			return ""
-		}
-		mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-		mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
-		expected := hex.EncodeToString(mac.Sum(nil))
-		if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
-			return ""
-		}
-		s.revokedNoncesMu.Lock()
-		_, revoked := s.revokedNonces[nonce]
-		s.revokedNoncesMu.Unlock()
-		if revoked {
-			return ""
-		}
-		return username
+	if len(parts) != 5 {
+		return sessionData{}, false
 	}
-	return ""
+	username, role, ts, nonce, sig := parts[0], parts[1], parts[2], parts[3], parts[4]
+	if !validUsername.MatchString(username) {
+		return sessionData{}, false
+	}
+	if role != "admin" && role != "user" {
+		return sessionData{}, false
+	}
+	if !isHex(nonce) || len(nonce) != 32 {
+		return sessionData{}, false
+	}
+	tsInt, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return sessionData{}, false
+	}
+	if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > sessionCookieTTL {
+		return sessionData{}, false
+	}
+	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
+	mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
+		return sessionData{}, false
+	}
+	s.revokedNoncesMu.Lock()
+	_, revoked := s.revokedNonces[nonce]
+	s.revokedNoncesMu.Unlock()
+	if revoked {
+		return sessionData{}, false
+	}
+	return sessionData{Username: username, Role: role, TsInt: tsInt}, true
+}
+
+// getSessionUser validates the session cookie and returns the username, or "" if invalid/expired.
+func (s *Server) getSessionUser(r *http.Request) string {
+	data, valid := s.parseSessionCookie(r)
+	if !valid {
+		return ""
+	}
+	return data.Username
 }
 
 // getSessionRole returns the role embedded in the session cookie: "admin" or "user".
 // Returns "user" if the cookie is invalid or expired.
 func (s *Server) getSessionRole(r *http.Request) string {
-	if s.cfg.SharedSecret == "" {
+	data, valid := s.parseSessionCookie(r)
+	if !valid {
 		return "user"
 	}
-	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil {
-		return "user"
-	}
-	// Only accept the 5-part format: username:role:ts:nonce:sig
-	parts := strings.SplitN(cookie.Value, ":", 5)
-	if len(parts) == 5 {
-		username, role, ts, nonce, sig := parts[0], parts[1], parts[2], parts[3], parts[4]
-		if !validUsername.MatchString(username) {
-			return "user"
-		}
-		if role != "admin" && role != "user" {
-			return "user"
-		}
-		if !isHex(nonce) || len(nonce) != 32 {
-			return "user"
-		}
-		tsInt, err := strconv.ParseInt(ts, 10, 64)
-		if err != nil {
-			return "user"
-		}
-		if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > sessionCookieTTL {
-			return "user"
-		}
-		mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-		mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
-		expected := hex.EncodeToString(mac.Sum(nil))
-		if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
-			return "user"
-		}
-		s.revokedNoncesMu.Lock()
-		_, revoked := s.revokedNonces[nonce]
-		s.revokedNoncesMu.Unlock()
-		if revoked {
-			return "user"
-		}
-		// C5: if the cookie claims admin but the user was removed from admin
-		// groups after this cookie was issued, downgrade to "user".
-		if role == "admin" {
-			if revokedAt, ok := s.revokedAdminSessions.Load(username); ok {
-				if t, ok := revokedAt.(time.Time); ok && t.Unix() >= tsInt {
-					return "user"
-				}
+	// C5: if the cookie claims admin but the user was removed from admin
+	// groups after this cookie was issued, downgrade to "user".
+	if data.Role == "admin" {
+		if revokedAt, ok := s.revokedAdminSessions.Load(data.Username); ok {
+			if t, ok := revokedAt.(time.Time); ok && t.Unix() >= data.TsInt {
+				return "user"
 			}
 		}
-		return role
 	}
-	return "user"
+	return data.Role
 }
 
 // requiresAdminApproval checks if a hostname matches the admin approval policy.

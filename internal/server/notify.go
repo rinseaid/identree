@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rinseaid/identree/internal/challenge"
@@ -69,6 +70,10 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 		Reason:      ch.Reason,
 	}
 
+	if s.notifyShutdown.Load() {
+		slog.Debug("notify: shutdown in progress, dropping notification", "event", d.Event)
+		return
+	}
 	s.notifyWg.Add(1)
 	go func() {
 		defer s.notifyWg.Done()
@@ -130,6 +135,10 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 		Timestamp: d.Timestamp,
 		Reason:    d.Reason,
 		Actor:     d.Actor,
+	}
+	if s.notifyShutdown.Load() {
+		slog.Debug("notify: shutdown in progress, dropping notification", "event", nd.Event)
+		return
 	}
 	s.notifyWg.Add(1)
 	go func() {
@@ -271,6 +280,19 @@ func (s *Server) sendWebhookOnce(body []byte, timeout time.Duration, notifyURL, 
 	return nil
 }
 
+// sanitizeEnvVal strips control characters and non-printable bytes from s so
+// it is safe to place in a shell environment variable. Only printable ASCII
+// (0x20–0x7E) is retained; everything else (including \n, \r, \0) is dropped.
+func sanitizeEnvVal(s string) string {
+	var b strings.Builder
+	for _, ch := range s {
+		if ch >= 0x20 && ch <= 0x7E {
+			b.WriteRune(ch)
+		}
+	}
+	return b.String()
+}
+
 // runNotifyCommand executes the custom notify command with NOTIFY_* env vars.
 // command is the snapshotted config value passed by the caller.
 func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command string) error {
@@ -296,7 +318,7 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command s
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
-		"NOTIFY_EVENT=" + d.Event,
+		"NOTIFY_EVENT=" + sanitizeEnvVal(d.Event),
 		"NOTIFY_USERNAME=" + d.Username,
 		"NOTIFY_HOSTNAME=" + d.Hostname,
 		"NOTIFY_USER_CODE=" + d.UserCode,
@@ -304,8 +326,8 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command s
 		"NOTIFY_ONETAP_URL=" + d.OneTapURL,
 		"NOTIFY_EXPIRES_IN=" + strconv.Itoa(d.ExpiresIn),
 		"NOTIFY_TIMESTAMP=" + d.Timestamp,
-		"NOTIFY_REASON=" + d.Reason,
-		"NOTIFY_ACTOR=" + d.Actor,
+		"NOTIFY_REASON=" + sanitizeEnvVal(d.Reason),
+		"NOTIFY_ACTOR=" + sanitizeEnvVal(d.Actor),
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -322,6 +344,7 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command s
 // WaitForNotifications blocks until all in-flight notification goroutines
 // complete or the timeout expires.
 func (s *Server) WaitForNotifications(timeout time.Duration) {
+	s.notifyShutdown.Store(true)
 	done := make(chan struct{})
 	go func() {
 		s.notifyWg.Wait()

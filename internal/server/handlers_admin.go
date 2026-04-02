@@ -984,17 +984,34 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 	}
 
 	if !config.IsEnvSourced("IDENTREE_CHALLENGE_TTL") {
-		s.cfg.ChallengeTTL = parseDur("IDENTREE_CHALLENGE_TTL", s.cfg.ChallengeTTL)
+		d := parseDur("IDENTREE_CHALLENGE_TTL", s.cfg.ChallengeTTL)
+		const minChallengeTTL, maxChallengeTTL = 30 * time.Second, 24 * time.Hour
+		if d < minChallengeTTL || d > maxChallengeTTL {
+			slog.Warn("IDENTREE_CHALLENGE_TTL out of bounds, ignoring", "value", d, "min", minChallengeTTL, "max", maxChallengeTTL)
+		} else {
+			s.cfg.ChallengeTTL = d
+		}
 	}
 	if !config.IsEnvSourced("IDENTREE_GRACE_PERIOD") {
 		d := parseDur("IDENTREE_GRACE_PERIOD", s.cfg.GracePeriod)
+		const maxGracePeriod = 8 * time.Hour
 		if d < 0 {
 			d = 0
 		}
-		s.cfg.GracePeriod = d
+		if d > maxGracePeriod {
+			slog.Warn("IDENTREE_GRACE_PERIOD out of bounds, ignoring", "value", d, "max", maxGracePeriod)
+		} else {
+			s.cfg.GracePeriod = d
+		}
 	}
 	if !config.IsEnvSourced("IDENTREE_ONE_TAP_MAX_AGE") {
-		s.cfg.OneTapMaxAge = parseDur("IDENTREE_ONE_TAP_MAX_AGE", s.cfg.OneTapMaxAge)
+		d := parseDur("IDENTREE_ONE_TAP_MAX_AGE", s.cfg.OneTapMaxAge)
+		const minOneTapMaxAge, maxOneTapMaxAge = 1 * time.Minute, 24 * time.Hour
+		if d < minOneTapMaxAge || d > maxOneTapMaxAge {
+			slog.Warn("IDENTREE_ONE_TAP_MAX_AGE out of bounds, ignoring", "value", d, "min", minOneTapMaxAge, "max", maxOneTapMaxAge)
+		} else {
+			s.cfg.OneTapMaxAge = d
+		}
 	}
 	if !config.IsEnvSourced("IDENTREE_ADMIN_GROUPS") {
 		newGroups := parseSlice("IDENTREE_ADMIN_GROUPS")
@@ -1083,7 +1100,12 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 	}
 	if !config.IsEnvSourced("IDENTREE_CLIENT_POLL_INTERVAL") {
 		if d, err := time.ParseDuration(values["IDENTREE_CLIENT_POLL_INTERVAL"]); err == nil && d > 0 {
-			s.cfg.ClientPollInterval = d
+			const minPollInterval, maxPollInterval = 1 * time.Second, 5 * time.Minute
+			if d < minPollInterval || d > maxPollInterval {
+				slog.Warn("IDENTREE_CLIENT_POLL_INTERVAL out of bounds, ignoring", "value", d, "min", minPollInterval, "max", maxPollInterval)
+			} else {
+				s.cfg.ClientPollInterval = d
+			}
 		} else if values["IDENTREE_CLIENT_POLL_INTERVAL"] == "" {
 			s.cfg.ClientPollInterval = 0
 		}
