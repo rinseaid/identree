@@ -397,6 +397,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if !strings.HasPrefix(cfg.ExternalURL, "http://") && !strings.HasPrefix(cfg.ExternalURL, "https://") {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL must start with http:// or https://")
 	}
+	if strings.ContainsAny(cfg.ExternalURL, `"'<>`) {
+		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL contains invalid characters (must not contain quotes or angle brackets)")
+	}
 	if cfg.LDAPEnabled && cfg.LDAPBaseDN == "" {
 		return nil, fmt.Errorf("IDENTREE_LDAP_BASE_DN is required when LDAP is enabled")
 	}
