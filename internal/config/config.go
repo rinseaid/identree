@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -85,6 +87,11 @@ type ServerConfig struct {
 	//   "true"   — !authenticate added to all sudo rules; PAM is never invoked.
 	//   "claims" — per-group: IDP admins set sudoOptions=!authenticate on specific groups.
 	LDAPSudoNoAuthenticate SudoNoAuthenticate
+
+	// LDAPAllowAnonymous controls whether unauthenticated (anonymous) LDAP
+	// binds are permitted. Defaults to true to preserve existing behaviour.
+	// Set IDENTREE_LDAP_ALLOW_ANONYMOUS=false to require a bind DN/password.
+	LDAPAllowAnonymous bool
 
 	// SudoRulesFile is the path to the JSON sudo rules store (bridge mode only).
 	// In bridge mode (APIKey == ""), the LDAP server serves ou=sudoers from this file.
@@ -282,6 +289,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPRefreshInterval:    getDuration("IDENTREE_LDAP_REFRESH_INTERVAL", 300*time.Second),
 		LDAPUIDMapFile:         stringDefault(get("IDENTREE_LDAP_UID_MAP_FILE"), "/config/uidmap.json"),
 		LDAPSudoNoAuthenticate: SudoNoAuthenticate(stringDefault(get("IDENTREE_SUDO_NO_AUTHENTICATE"), "false")),
+		LDAPAllowAnonymous:     getBool("IDENTREE_LDAP_ALLOW_ANONYMOUS", true),
 		SudoRulesFile:          stringDefault(get("IDENTREE_SUDO_RULES_FILE"), "/config/sudorules.json"),
 		LDAPUIDBase:            getInt("IDENTREE_LDAP_UID_BASE", 200000),
 		LDAPGIDBase:            getInt("IDENTREE_LDAP_GID_BASE", 200000),
@@ -432,6 +440,13 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
+	// Validate AdminApprovalHosts glob patterns.
+	for _, pattern := range cfg.AdminApprovalHosts {
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			return nil, fmt.Errorf("IDENTREE_ADMIN_APPROVAL_HOSTS: invalid glob pattern %q: %w", pattern, err)
+		}
+	}
+
 	// Validate required fields
 	if cfg.IssuerURL == "" && !cfg.DevLoginEnabled {
 		return nil, fmt.Errorf("IDENTREE_OIDC_ISSUER_URL is required")
@@ -459,8 +474,8 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if cfg.ExternalURL == "" {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL is required")
 	}
-	if !strings.HasPrefix(cfg.ExternalURL, "http://") && !strings.HasPrefix(cfg.ExternalURL, "https://") {
-		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL must start with http:// or https://")
+	if u, err := url.Parse(cfg.ExternalURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL must be a valid http:// or https:// URL with a non-empty host (got %q)", cfg.ExternalURL)
 	}
 	if strings.ContainsAny(cfg.ExternalURL, `"'<>`) {
 		return nil, fmt.Errorf("IDENTREE_EXTERNAL_URL contains invalid characters (must not contain quotes or angle brackets)")
@@ -494,6 +509,14 @@ func LoadServerConfig() (*ServerConfig, error) {
 		return nil, fmt.Errorf("IDENTREE_NOTIFY_BACKEND must be one of: ntfy, slack, discord, apprise, webhook, custom (got %q)", cfg.NotifyBackend)
 	}
 
+	// Warn if NotifyToken or EscrowAuthSecret are set but too short.
+	if cfg.NotifyToken != "" && len(cfg.NotifyToken) < 16 {
+		slog.Warn("IDENTREE_NOTIFY_TOKEN is set but shorter than 16 characters; consider using a longer token for better security")
+	}
+	if cfg.EscrowAuthSecret != "" && len(cfg.EscrowAuthSecret) < 16 {
+		slog.Warn("IDENTREE_ESCROW_AUTH_SECRET is set but shorter than 16 characters; consider using a longer secret for better security")
+	}
+
 	// EscrowCommand and EscrowBackend are mutually exclusive.
 	if cfg.EscrowCommand != "" && cfg.EscrowBackend != "" {
 		return nil, fmt.Errorf("IDENTREE_ESCROW_COMMAND and IDENTREE_ESCROW_BACKEND are mutually exclusive; set only one")
@@ -512,7 +535,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
-	// URL scheme validation: fields used in outbound HTTP requests must start with http:// or https://.
+	// URL scheme validation: fields used in outbound HTTP requests must be valid http:// or https:// URLs.
 	for _, pair := range [][2]string{
 		{"IDENTREE_OIDC_ISSUER_URL", cfg.IssuerURL},
 		{"IDENTREE_OIDC_ISSUER_PUBLIC_URL", cfg.IssuerPublicURL},
@@ -521,8 +544,12 @@ func LoadServerConfig() (*ServerConfig, error) {
 		{"IDENTREE_ESCROW_URL", cfg.EscrowURL},
 		{"IDENTREE_ESCROW_WEB_URL", cfg.EscrowWebURL},
 	} {
-		if pair[1] != "" && !strings.HasPrefix(pair[1], "http://") && !strings.HasPrefix(pair[1], "https://") {
-			return nil, fmt.Errorf("%s must start with http:// or https://", pair[0])
+		if pair[1] == "" {
+			continue
+		}
+		u, err := url.Parse(pair[1])
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return nil, fmt.Errorf("%s must be a valid http:// or https:// URL with a non-empty host (got %q)", pair[0], pair[1])
 		}
 	}
 

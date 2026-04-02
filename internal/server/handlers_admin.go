@@ -262,6 +262,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := detectLanguage(r)
+	t := T(lang)
 
 	username := s.getSessionUser(r)
 	if username == "" {
@@ -303,7 +304,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"DefaultPageSize":     s.cfg.DefaultPageSize,
 		"Theme":               getTheme(r),
 		"CSPNonce":            cspNonce(r),
-		"T":                   T(lang),
+		"T":                   t,
 		"Lang":                lang,
 		"Languages":           supportedLanguages,
 		"IsAdmin":             true,
@@ -314,7 +315,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"Version":             version,
 		"CommitShort":         commitShort(commit),
 		"Commit":              commit,
-		"Uptime":              formatDuration(time.Since(serverStartTime)),
+		"Uptime":              formatDuration(t, time.Since(serverStartTime)),
 		"GoVersion":           runtime.Version(),
 		"OSArch":              runtime.GOOS + "/" + runtime.GOARCH,
 		"Goroutines":          runtime.NumGoroutine(),
@@ -533,14 +534,14 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_LISTEN_ADDR":                     cfg.ListenAddr,
 		"IDENTREE_EXTERNAL_URL":                    cfg.ExternalURL,
 		"IDENTREE_INSTALL_URL":                     cfg.InstallURL,
-		"IDENTREE_CHALLENGE_TTL":                   formatDuration(cfg.ChallengeTTL),
-		"IDENTREE_GRACE_PERIOD":                    formatDuration(cfg.GracePeriod),
-		"IDENTREE_ONE_TAP_MAX_AGE":                 formatDuration(cfg.OneTapMaxAge),
+		"IDENTREE_CHALLENGE_TTL":                   formatDuration(nil, cfg.ChallengeTTL),
+		"IDENTREE_GRACE_PERIOD":                    formatDuration(nil, cfg.GracePeriod),
+		"IDENTREE_ONE_TAP_MAX_AGE":                 formatDuration(nil, cfg.OneTapMaxAge),
 		"IDENTREE_LDAP_ENABLED":                    boolToString(cfg.LDAPEnabled),
 		"IDENTREE_LDAP_LISTEN_ADDR":                cfg.LDAPListenAddr,
 		"IDENTREE_LDAP_BASE_DN":                    cfg.LDAPBaseDN,
 		"IDENTREE_LDAP_BIND_DN":                    cfg.LDAPBindDN,
-		"IDENTREE_LDAP_REFRESH_INTERVAL":           formatDuration(cfg.LDAPRefreshInterval),
+		"IDENTREE_LDAP_REFRESH_INTERVAL":           formatDuration(nil, cfg.LDAPRefreshInterval),
 		"IDENTREE_LDAP_UID_MAP_FILE":               cfg.LDAPUIDMapFile,
 		"IDENTREE_SUDO_NO_AUTHENTICATE":            string(cfg.LDAPSudoNoAuthenticate),
 		"IDENTREE_SUDO_RULES_FILE":                 cfg.SudoRulesFile,
@@ -555,7 +556,7 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		// IDENTREE_NOTIFY_COMMAND intentionally excluded: it contains a shell command
 		// path that may reveal internal infrastructure and runs as the server process.
 		// It is env-var only (not admin-UI writable) and must not be shown in the UI.
-		"IDENTREE_NOTIFY_TIMEOUT":                  formatDuration(cfg.NotifyTimeout),
+		"IDENTREE_NOTIFY_TIMEOUT":                  formatDuration(nil, cfg.NotifyTimeout),
 		"IDENTREE_ESCROW_BACKEND":                  string(cfg.EscrowBackend),
 		"IDENTREE_ESCROW_URL":                      cfg.EscrowURL,
 		"IDENTREE_ESCROW_AUTH_ID":                  cfg.EscrowAuthID,
@@ -565,13 +566,13 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 			if cfg.ClientPollInterval == 0 {
 				return ""
 			}
-			return formatDuration(cfg.ClientPollInterval)
+			return formatDuration(nil, cfg.ClientPollInterval)
 		}(),
 		"IDENTREE_CLIENT_TIMEOUT": func() string {
 			if cfg.ClientTimeout == 0 {
 				return ""
 			}
-			return formatDuration(cfg.ClientTimeout)
+			return formatDuration(nil, cfg.ClientTimeout)
 		}(),
 		"IDENTREE_CLIENT_BREAKGLASS_ENABLED":       boolPtrToString(cfg.ClientBreakglassEnabled),
 		"IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE": cfg.ClientBreakglassPasswordType,
@@ -1017,7 +1018,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		for _, sess := range sessions {
 			sessionViews = append(sessionViews, userSessionView{
 				Hostname:        sess.Hostname,
-				Remaining:       formatDuration(time.Until(sess.ExpiresAt)),
+				Remaining:       formatDuration(t, time.Until(sess.ExpiresAt)),
 				SessionUsername: u,
 			})
 		}
@@ -1516,7 +1517,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		// Build active session map for this host
 		activeMap := make(map[string]string) // username -> remaining
 		for _, sess := range s.store.ActiveSessionsForHost(h) {
-			activeMap[sess.Username] = formatDuration(time.Until(sess.ExpiresAt))
+			activeMap[sess.Username] = formatDuration(t, time.Until(sess.ExpiresAt))
 		}
 		hv.ActiveSessionCount = len(activeMap)
 
@@ -1547,7 +1548,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 
 		if escrowRecord, ok := escrowed[h]; ok {
 			hv.Escrowed = true
-			hv.EscrowAge = formatDuration(time.Since(escrowRecord.Timestamp))
+			hv.EscrowAge = formatDuration(t, time.Since(escrowRecord.Timestamp))
 			hv.EscrowExpired = time.Since(escrowRecord.Timestamp) > time.Duration(rotationDays)*24*time.Hour
 			hv.EscrowLink = deriveEscrowLink(string(s.cfg.EscrowBackend), s.cfg.EscrowURL, s.cfg.EscrowPath, escrowRecord.ItemID, escrowRecord.VaultID, s.cfg.EscrowWebURL, h)
 			// Reveal is available for all native backends (local, 1password-connect, vault, bitwarden, infisical).
@@ -1630,7 +1631,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	if len(durations) == 0 && s.cfg.GracePeriod > 0 {
 		durations = append(durations, durationOption{
 			Value:    int(s.cfg.GracePeriod.Seconds()),
-			Label:    formatDuration(s.cfg.GracePeriod),
+			Label:    formatDuration(t, s.cfg.GracePeriod),
 			Selected: true,
 		})
 	}

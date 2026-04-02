@@ -170,7 +170,7 @@ func (p *PAMClient) Authenticate(username string) error {
 				if graceStatus.graceRemaining > effective {
 					effective = graceStatus.graceRemaining
 				}
-				fmt.Fprintf(MessageWriter, "  "+t("terminal_sudo_approved")+"\n", formatDuration(effective))
+				fmt.Fprintf(MessageWriter, "  "+t("terminal_sudo_approved")+"\n", formatDuration(t, effective))
 				// Still run break-glass age-based rotation check (no server signal
 				// available since we didn't contact the server, so rotateBefore is zero).
 				breakglass.MaybeRotateBreakglass(p.cfg, time.Time{})
@@ -237,7 +237,7 @@ func (p *PAMClient) Authenticate(username string) error {
 		origBreakglassEnabled := p.cfg.BreakglassEnabled
 		applyClientConfig(p, challenge)
 		if challenge.GraceRemaining > 0 {
-			fmt.Fprintf(MessageWriter, "  "+t("terminal_sudo_approved")+"\n", formatDuration(time.Duration(challenge.GraceRemaining)*time.Second))
+			fmt.Fprintf(MessageWriter, "  "+t("terminal_sudo_approved")+"\n", formatDuration(t, time.Duration(challenge.GraceRemaining)*time.Second))
 		} else {
 			fmt.Fprintf(MessageWriter, "  %s\n", t("terminal_sudo_approved_short"))
 		}
@@ -270,6 +270,13 @@ func (p *PAMClient) Authenticate(username string) error {
 	var consecutiveErrors int
 	deadline := time.Now().Add(p.cfg.Timeout)
 
+	// pollBackoff is the current exponential-backoff sleep duration used on
+	// poll errors.  It starts at 1s, doubles on each consecutive error, and is
+	// capped at 30s.  It resets to 1s on any successful (non-error) response,
+	// regardless of the challenge status (pending/approved/denied).
+	pollBackoff := time.Second
+	const pollBackoffMax = 30 * time.Second
+
 	// Initial delay before first poll — the challenge was just created,
 	// give the user a moment to start the approval flow.
 	if err := sleepWithContext(ctx, p.cfg.PollInterval); err != nil {
@@ -299,12 +306,19 @@ func (p *PAMClient) Authenticate(username string) error {
 				fmt.Fprintf(MessageWriter, "  %s\n", t("terminal_server_unreachable"))
 				return breakglass.AuthenticateBreakglass(username, p.cfg.BreakglassFile)
 			}
-			if err := sleepWithContext(ctx, p.cfg.PollInterval); err != nil {
+			// Exponential backoff on error: sleep for pollBackoff, then double it.
+			if err := sleepWithContext(ctx, pollBackoff); err != nil {
 				return err
+			}
+			pollBackoff *= 2
+			if pollBackoff > pollBackoffMax {
+				pollBackoff = pollBackoffMax
 			}
 			continue
 		}
+		// Successful (non-error) response — reset error counter and backoff.
 		consecutiveErrors = 0
+		pollBackoff = time.Second
 
 		switch challpkg.ChallengeStatus(status.Status) {
 		case challpkg.StatusApproved:
@@ -601,20 +615,31 @@ func (p *PAMClient) pollChallenge(challengeID string) (*pollResponse, error) {
 }
 
 // formatDuration formats a duration as a human-readable string like "3h 12m" or "47m".
-func formatDuration(d time.Duration) string {
+// t is a translation lookup function; if nil, English suffixes are used.
+func formatDuration(t func(string) string, d time.Duration) string {
+	lookup := func(key, fallback string) string {
+		if t != nil {
+			if v := t(key); v != key && v != "" {
+				return v
+			}
+		}
+		return fallback
+	}
 	if d <= 0 {
 		return "0s"
 	}
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
+	hSuffix := lookup("hour_abbr", "h")
+	mSuffix := lookup("minute_abbr", "m")
 	if h > 0 && m > 0 {
-		return fmt.Sprintf("%dh %dm", h, m)
+		return fmt.Sprintf("%d%s %d%s", h, hSuffix, m, mSuffix)
 	}
 	if h > 0 {
-		return fmt.Sprintf("%dh", h)
+		return fmt.Sprintf("%d%s", h, hSuffix)
 	}
 	if m > 0 {
-		return fmt.Sprintf("%dm", m)
+		return fmt.Sprintf("%d%s", m, mSuffix)
 	}
 	return fmt.Sprintf("%ds", int(d.Seconds()))
 }

@@ -25,6 +25,10 @@ import (
 // to prevent memory exhaustion from extremely large directories.
 const maxLDAPSearchResults = 10000
 
+// maxFilterLength caps the byte length of an LDAP filter string to prevent
+// CPU/memory exhaustion from pathologically large filters crafted by a client.
+const maxFilterLength = 65536
+
 // validUsernameRe matches usernames accepted by the server (consistent with
 // server.validUsername). Used to skip PocketID users whose names contain
 // characters that would be unsafe in LDAP DN values or sudoUser attributes.
@@ -154,8 +158,12 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 		return
 	}
 
-	// Anonymous bind — always allowed (read-only directory)
+	// Anonymous bind — allowed only when LDAPAllowAnonymous is true (the default).
 	if msg.UserName == "" {
+		if !s.cfg.LDAPAllowAnonymous {
+			resp.SetResultCode(gldap.ResultInsufficientAccessRights)
+			return
+		}
 		resp.SetResultCode(gldap.ResultSuccess)
 		return
 	}
@@ -1175,6 +1183,10 @@ const maxFilterDepth = 32
 func matchesFilter(filter, dn string, attrs map[string][]string) bool {
 	if filter == "" || filter == "(objectClass=*)" {
 		return true
+	}
+	if len(filter) > maxFilterLength {
+		slog.Warn("ldap: rejecting filter exceeding maximum length", "len", len(filter))
+		return false
 	}
 	filter = strings.TrimSpace(filter)
 	ok, _ := evalFilterStr(filter, attrs, 0)

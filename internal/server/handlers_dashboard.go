@@ -168,7 +168,10 @@ func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	s.store.CreateGraceSession(req.Username, req.Hostname, s.cfg.GracePeriod)
+	s.cfgMu.RLock()
+	gracePeriod := s.cfg.GracePeriod
+	s.cfgMu.RUnlock()
+	s.store.CreateGraceSession(req.Username, req.Hostname, gracePeriod)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -203,7 +206,7 @@ func (s *Server) buildPendingViews(username, lang string) []pendingView {
 			Username:      c.Username,
 			Hostname:      hostname,
 			Code:          c.UserCode,
-			ExpiresIn:     formatDuration(time.Until(c.ExpiresAt)),
+			ExpiresIn:     formatDuration(t, time.Until(c.ExpiresAt)),
 			AdminRequired: s.requiresAdminApproval(c.Hostname),
 		})
 	}
@@ -229,7 +232,7 @@ func (s *Server) buildAllPendingViews(lang string) []pendingView {
 			Username:      c.Username,
 			Hostname:      hostname,
 			Code:          c.UserCode,
-			ExpiresIn:     formatDuration(time.Until(c.ExpiresAt)),
+			ExpiresIn:     formatDuration(t, time.Until(c.ExpiresAt)),
 			AdminRequired: s.requiresAdminApproval(c.Hostname),
 		})
 	}
@@ -353,6 +356,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		dashHistory = dashHistory[:5]
 	}
 
+	s.cfgMu.RLock()
+	gracePeriod := s.cfg.GracePeriod
+	defaultPageSize := s.cfg.DefaultPageSize
+	s.cfgMu.RUnlock()
+
 	now := time.Now()
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
@@ -402,7 +410,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		{28800, "8h"},
 		{86400, "1d"},
 	}
-	graceSec := int(s.cfg.GracePeriod.Seconds())
+	graceSec := int(gracePeriod.Seconds())
 	if graceSec <= 0 {
 		graceSec = 86400
 	}
@@ -427,7 +435,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	activeMap := make(map[string]activeInfo)
 	for _, sess := range s.store.ActiveSessions(username) {
 		rem := time.Until(sess.ExpiresAt)
-		activeMap[sess.Hostname] = activeInfo{formatDuration(rem), int(rem.Seconds())}
+		activeMap[sess.Hostname] = activeInfo{formatDuration(t, rem), int(rem.Seconds())}
 	}
 
 	type hostAccessView struct {
@@ -525,7 +533,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			allSessions = append(allSessions, allSessionView{
 				Username:        sess.Username,
 				Hostname:        sess.Hostname,
-				Remaining:       formatDuration(time.Until(sess.ExpiresAt)),
+				Remaining:       formatDuration(t, time.Until(sess.ExpiresAt)),
 				ExtendDurations: extendDurationsFor(remSec),
 			})
 		}
@@ -545,7 +553,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(elevateDurations) == 0 {
-		elevateDurations = []durationOption{{graceSec, formatDuration(s.cfg.GracePeriod)}}
+		elevateDurations = []durationOption{{graceSec, formatDuration(t, gracePeriod)}}
 	}
 
 	// Read timezone from cookie for profile dropdown display
@@ -582,7 +590,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":           isAdmin,
 		"AdminTab":          "",
 		"BridgeMode":          s.isBridgeMode(),
-		"DefaultPageSize":     s.cfg.DefaultPageSize,
+		"DefaultPageSize":     defaultPageSize,
 		"Durations":           elevateDurations,
 		"PocketIDUnavailable": pocketIDUnavailable,
 	}); err != nil {
@@ -618,6 +626,11 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 	role := s.getSessionRole(r)
 	s.setSessionCookie(w, username, role)
 	isAdmin := role == "admin"
+
+	s.cfgMu.RLock()
+	gracePeriod := s.cfg.GracePeriod
+	defaultPageSize := s.cfg.DefaultPageSize
+	s.cfgMu.RUnlock()
 
 	// Target user: admin can view any user, others view themselves.
 	targetUser := username
@@ -723,7 +736,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 	// Active sessions for targetUser.
 	activeMap := make(map[string]string)
 	for _, sess := range s.store.ActiveSessions(targetUser) {
-		activeMap[sess.Hostname] = formatDuration(time.Until(sess.ExpiresAt))
+		activeMap[sess.Hostname] = formatDuration(t, time.Until(sess.ExpiresAt))
 	}
 
 	// Duration options for access page extend dropdowns.
@@ -738,7 +751,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		{28800, "8h"},
 		{86400, "1d"},
 	}
-	accessGraceSec := int(s.cfg.GracePeriod.Seconds())
+	accessGraceSec := int(gracePeriod.Seconds())
 	if accessGraceSec <= 0 {
 		accessGraceSec = 86400
 	}
@@ -778,7 +791,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		uActiveMap := make(map[string]uSessionInfo)
 		for _, sess := range s.store.ActiveSessions(u) {
 			rem := time.Until(sess.ExpiresAt)
-			uActiveMap[sess.Hostname] = uSessionInfo{formatDuration(rem), int(rem.Seconds())}
+			uActiveMap[sess.Hostname] = uSessionInfo{formatDuration(t, rem), int(rem.Seconds())}
 		}
 		var views []accessView
 		for _, h := range hosts {
@@ -898,7 +911,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(elevateDurations) == 0 {
-		elevateDurations = []durationOption{{accessGraceSec, formatDuration(s.cfg.GracePeriod)}}
+		elevateDurations = []durationOption{{accessGraceSec, formatDuration(t, gracePeriod)}}
 	}
 
 	dashTZ := "UTC"
@@ -929,7 +942,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":    isAdmin,
 		"AdminTab":        "",
 		"BridgeMode":      s.isBridgeMode(),
-		"DefaultPageSize": s.cfg.DefaultPageSize,
+		"DefaultPageSize": defaultPageSize,
 		"Durations":       elevateDurations,
 		"FilterUser":      accessFilterUser,
 		"Pending":         s.buildPendingViews(username, lang),
@@ -1108,6 +1121,10 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	s.setSessionCookie(w, username, role)
 	isAdmin := role == "admin"
 
+	s.cfgMu.RLock()
+	defaultPageSize := s.cfg.DefaultPageSize
+	s.cfgMu.RUnlock()
+
 	// Timezone handling: set cookie if tz param provided, then read from cookie
 	tzName := "UTC"
 	if tzParam := r.URL.Query().Get("tz"); tzParam != "" {
@@ -1159,7 +1176,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse per_page with validation
-	perPage := s.cfg.DefaultPageSize
+	perPage := defaultPageSize
 	if pp, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil {
 		validSizes := map[int]bool{15: true, 30: true, 50: true, 100: true}
 		if validSizes[pp] {
@@ -1517,7 +1534,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":         isAdmin,
 		"AdminTab":        "",
 		"BridgeMode":      s.isBridgeMode(),
-		"DefaultPageSize": s.cfg.DefaultPageSize,
+		"DefaultPageSize": defaultPageSize,
 		"CSRFToken":       historyCSRFToken,
 		"CSRFTs":          historyCSRFTs,
 		"Pending":         s.buildPendingViews(username, lang),

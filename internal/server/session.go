@@ -27,7 +27,7 @@ const sessionCookieTTL = 30 * time.Minute
 // The nonce is a random 16-char hex string that makes each issued token unique.
 func (s *Server) setSessionCookie(w http.ResponseWriter, username, role string) {
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	nonce, err := randutil.Hex(8)
+	nonce, err := randutil.Hex(16)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -69,7 +69,7 @@ func (s *Server) getSessionUser(r *http.Request) string {
 		if role != "admin" && role != "user" {
 			return ""
 		}
-		if !isHex(nonce) || len(nonce) != 16 {
+		if !isHex(nonce) || len(nonce) != 32 {
 			return ""
 		}
 		tsInt, err := strconv.ParseInt(ts, 10, 64)
@@ -110,7 +110,7 @@ func (s *Server) getSessionRole(r *http.Request) string {
 		if role != "admin" && role != "user" {
 			return "user"
 		}
-		if !isHex(nonce) || len(nonce) != 16 {
+		if !isHex(nonce) || len(nonce) != 32 {
 			return "user"
 		}
 		tsInt, err := strconv.ParseInt(ts, 10, 64)
@@ -264,7 +264,7 @@ func (s *Server) verifyFormAuth(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 	age := time.Since(time.Unix(tsInt, 0))
-	if age < 0 || age > 5*time.Minute {
+	if age < 0 || age > sessionCookieTTL {
 		revokeErrorPage(w, r, http.StatusForbidden, "form_expired", "form_expired_message")
 		return ""
 	}
@@ -315,7 +315,7 @@ func (s *Server) verifyJSONAdminAuth(w http.ResponseWriter, r *http.Request) str
 		http.Error(w, "invalid CSRF timestamp", http.StatusForbidden)
 		return ""
 	}
-	if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > 5*time.Minute {
+	if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > sessionCookieTTL {
 		http.Error(w, "CSRF token expired", http.StatusForbidden)
 		return ""
 	}

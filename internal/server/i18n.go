@@ -29,21 +29,32 @@ func setLanguageCookie(w http.ResponseWriter, r *http.Request) bool {
 	return i18npkg.SetLanguageCookie(w, r)
 }
 
-// formatDuration formats a duration for display in the UI.
-func formatDuration(d time.Duration) string {
+// formatDuration formats a duration for display in the UI using localized suffixes.
+// t is a translation lookup function (e.g. from T(lang)); if nil, English suffixes are used.
+func formatDuration(t func(string) string, d time.Duration) string {
+	lookup := func(key, fallback string) string {
+		if t != nil {
+			if v := t(key); v != key && v != "" {
+				return v
+			}
+		}
+		return fallback
+	}
 	if d <= 0 {
 		return "0s"
 	}
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
+	hSuffix := lookup("hour_abbr", "h")
+	mSuffix := lookup("minute_abbr", "m")
 	if h > 0 && m > 0 {
-		return fmt.Sprintf("%dh %dm", h, m)
+		return fmt.Sprintf("%d%s %d%s", h, hSuffix, m, mSuffix)
 	}
 	if h > 0 {
-		return fmt.Sprintf("%dh", h)
+		return fmt.Sprintf("%d%s", h, hSuffix)
 	}
 	if m > 0 {
-		return fmt.Sprintf("%dm", m)
+		return fmt.Sprintf("%d%s", m, mSuffix)
 	}
 	return fmt.Sprintf("%ds", int(d.Seconds()))
 }

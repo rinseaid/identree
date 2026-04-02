@@ -41,7 +41,16 @@ type NotifyData struct {
 // sendNotification fires the configured notification backend asynchronously.
 // It is a no-op when no backend is configured.
 func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapURL string) {
-	if s.cfg.NotifyBackend == "" {
+	s.cfgMu.RLock()
+	backend := s.cfg.NotifyBackend
+	timeout := s.cfg.NotifyTimeout
+	command := s.cfg.NotifyCommand
+	token := s.cfg.NotifyToken
+	notifyURL := s.cfg.NotifyURL
+	challengeTTL := s.cfg.ChallengeTTL
+	s.cfgMu.RUnlock()
+
+	if backend == "" {
 		return
 	}
 
@@ -52,7 +61,7 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 		UserCode:    ch.UserCode,
 		ApprovalURL: approvalURL,
 		OneTapURL:   oneTapURL,
-		ExpiresIn:   int(s.cfg.ChallengeTTL.Seconds()),
+		ExpiresIn:   int(challengeTTL.Seconds()),
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -74,16 +83,15 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 			return
 		}
 
-		timeout := s.cfg.NotifyTimeout
 		if timeout <= 0 {
 			timeout = notifyTimeout
 		}
 
 		var err error
-		if s.cfg.NotifyBackend == "custom" {
-			err = s.runNotifyCommand(d, timeout)
+		if backend == "custom" {
+			err = s.runNotifyCommand(d, timeout, command)
 		} else {
-			err = s.postNotifyWebhook(d, timeout)
+			err = s.postNotifyWebhook(d, timeout, backend, notifyURL, token)
 		}
 
 		if err != nil {
@@ -99,7 +107,15 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 // sendEventNotification fires a notification for non-challenge-creation events
 // (approved, rejected, auto_approved, revealed_breakglass). No-op if no backend configured.
 func (s *Server) sendEventNotification(d notify.WebhookData) {
-	if s.cfg.NotifyBackend == "" {
+	s.cfgMu.RLock()
+	backend := s.cfg.NotifyBackend
+	timeout := s.cfg.NotifyTimeout
+	command := s.cfg.NotifyCommand
+	token := s.cfg.NotifyToken
+	notifyURL := s.cfg.NotifyURL
+	s.cfgMu.RUnlock()
+
+	if backend == "" {
 		return
 	}
 	nd := NotifyData{
@@ -127,16 +143,15 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 			return
 		}
 
-		timeout := s.cfg.NotifyTimeout
 		if timeout <= 0 {
 			timeout = notifyTimeout
 		}
 
 		var err error
-		if s.cfg.NotifyBackend == "custom" {
-			err = s.runNotifyCommand(nd, timeout)
+		if backend == "custom" {
+			err = s.runNotifyCommand(nd, timeout, command)
 		} else {
-			err = s.postNotifyWebhook(nd, timeout)
+			err = s.postNotifyWebhook(nd, timeout, backend, notifyURL, token)
 		}
 		if err != nil {
 			notify.NotificationsTotal.WithLabelValues("failed").Inc()
@@ -149,7 +164,8 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 }
 
 // postNotifyWebhook formats the payload for the configured backend and POSTs it.
-func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration) error {
+// backend, notifyURL, and token are snapshotted config values passed by the caller.
+func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration, backend, notifyURL, token string) error {
 	wd := notify.WebhookData{
 		Event:       d.Event,
 		Username:    d.Username,
@@ -165,7 +181,7 @@ func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration) error {
 		body []byte
 		err  error
 	)
-	switch s.cfg.NotifyBackend {
+	switch backend {
 	case "ntfy":
 		body, err = notify.FormatWebhookNtfy(wd)
 	case "slack":
@@ -184,13 +200,13 @@ func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.NotifyURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, notifyURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("building request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if s.cfg.NotifyToken != "" {
-		req.Header.Set("Authorization", "Bearer "+s.cfg.NotifyToken)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := s.webhookClient.Do(req)
@@ -206,7 +222,8 @@ func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration) error {
 }
 
 // runNotifyCommand executes the custom notify command with NOTIFY_* env vars.
-func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration) error {
+// command is the snapshotted config value passed by the caller.
+func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -215,7 +232,7 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration) error {
 		effectiveURL = d.OneTapURL
 	}
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", s.cfg.NotifyCommand)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),

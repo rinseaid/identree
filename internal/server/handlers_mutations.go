@@ -148,21 +148,23 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify HMAC
+	// Get challenge and verify it's still pending (before consuming the one-tap token,
+	// so a stale-OIDC redirect doesn't permanently burn the single-use token).
+	// Must be loaded before HMAC verification so challenge.Username can be included
+	// in the MAC computation.
+	challenge, ok := s.store.Get(challengeID)
+	if !ok || challenge.Status != challpkg.StatusPending {
+		revokeErrorPage(w, r, http.StatusNotFound, "challenge_not_found", "challenge_expired_or_resolved")
+		return
+	}
+
+	// Verify HMAC — include the challenge username to bind the token to a specific user.
 	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-	mac.Write([]byte("onetap:" + challengeID + ":" + expiresStr))
+	mac.Write([]byte("onetap:" + challengeID + ":" + challenge.Username + ":" + expiresStr))
 	expectedHMAC := hex.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(expectedHMAC), []byte(providedHMAC)) != 1 {
 		slog.Warn("SECURITY invalid one-tap token", "remote_addr", remoteAddr(r))
 		revokeErrorPage(w, r, http.StatusForbidden, "invalid_request", "invalid_csrf")
-		return
-	}
-
-	// Get challenge and verify it's still pending (before consuming the one-tap token,
-	// so a stale-OIDC redirect doesn't permanently burn the single-use token).
-	challenge, ok := s.store.Get(challengeID)
-	if !ok || challenge.Status != challpkg.StatusPending {
-		revokeErrorPage(w, r, http.StatusNotFound, "challenge_not_found", "challenge_expired_or_resolved")
 		return
 	}
 

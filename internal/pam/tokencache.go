@@ -21,7 +21,9 @@ import (
 )
 
 // TokenCache manages cached OIDC id_tokens on the PAM client machine.
-// Tokens are stored at <CacheDir>/<username> with root-only permissions.
+// Tokens are stored at <CacheDir>/<hostname>/<username> with root-only
+// permissions. The hostname subdirectory prevents a token cached on one
+// host from being used on another host sharing the same cache directory.
 // On cache hit, the token is verified locally via JWKS (one network call
 // to the issuer on first use; go-oidc caches JWKS internally after that).
 // On miss or failure, the caller falls through to the full device flow.
@@ -30,13 +32,14 @@ type TokenCache struct {
 	Issuer   string
 	ClientID string
 
-	// providerOnce guards lazy initialization of verifier.
-	// go-oidc caches JWKS keys internally on the *oidc.Provider; caching the
-	// verifier here means we pay the two HTTP round-trips (OIDC discovery +
-	// JWKS fetch) at most once per process lifetime instead of on every Check.
-	providerOnce sync.Once
-	verifier     *oidc.IDTokenVerifier
-	verifierErr  error
+	// verifierMu guards lazy initialization of the OIDC verifier.
+	// Unlike sync.Once, the TTL-based pattern here retries after failures so
+	// that a temporary OIDC provider outage does not permanently block the
+	// cache for the process lifetime.
+	verifierMu     sync.Mutex
+	verifier       *oidc.IDTokenVerifier
+	verifierErr    error
+	verifierExpiry time.Time
 }
 
 // cachedToken is the on-disk format for a cached OIDC token.
@@ -59,7 +62,11 @@ func NewTokenCache(cacheDir, issuer, clientID string) *TokenCache {
 // open fd's Stat to avoid a TOCTOU race with a separate Lstat call), and nil on
 // success. Returns zero, zero time, and an error on any failure.
 func (tc *TokenCache) Check(username string) (time.Duration, time.Time, error) {
-	path := filepath.Join(tc.CacheDir, username)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("getting hostname: %w", err)
+	}
+	path := filepath.Join(tc.CacheDir, hostname, username)
 
 	// Read with O_NOFOLLOW to reject symlinks (same pattern as readBreakglassHash)
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
@@ -144,6 +151,13 @@ func (tc *TokenCache) Check(username string) (time.Duration, time.Time, error) {
 // Write caches an id_token for the given username after a successful device flow.
 // Uses atomic temp-file + rename to prevent partial reads.
 func (tc *TokenCache) Write(username, rawIDToken string) error {
+	// M8: Reject oversized tokens before touching the filesystem.
+	// A legitimate OIDC id_token is well under 64KB; anything larger is
+	// either malformed or a resource-exhaustion attempt.
+	if len(rawIDToken) > 65536 {
+		return fmt.Errorf("token too large")
+	}
+
 	// Parse the JWT to extract the exp claim (without verification — the server
 	// already verified it, we just need the expiry for quick cache-hit checks).
 	parts := strings.SplitN(rawIDToken, ".", 3)
@@ -169,13 +183,20 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 
 	expiresAt := time.Unix(claims.Exp, 0)
 
-	// Ensure cache directory exists with tight permissions.
+	// Resolve the hostname-specific cache directory.
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("getting hostname: %w", err)
+	}
+	hostCacheDir := filepath.Join(tc.CacheDir, hostname)
+
+	// Ensure per-hostname cache directory exists with tight permissions.
 	// MkdirAll does not fix permissions on existing directories, so
 	// Chmod afterwards to enforce 0700 even if pre-created with looser perms.
-	if err := os.MkdirAll(tc.CacheDir, 0700); err != nil {
+	if err := os.MkdirAll(hostCacheDir, 0700); err != nil {
 		return fmt.Errorf("creating cache directory: %w", err)
 	}
-	if err := os.Chmod(tc.CacheDir, 0700); err != nil {
+	if err := os.Chmod(hostCacheDir, 0700); err != nil {
 		return fmt.Errorf("enforcing cache directory permissions: %w", err)
 	}
 
@@ -191,7 +212,7 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 	// Atomic write: temp file + rename (same pattern as writeBreakglassFile).
 	// Permissions are set immediately after CreateTemp, before any data is written,
 	// so the id_token is never world-readable even transiently.
-	tmp, err := os.CreateTemp(tc.CacheDir, ".token-tmp-*")
+	tmp, err := os.CreateTemp(hostCacheDir, ".token-tmp-*")
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
@@ -219,13 +240,13 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 	}
 
 	// Atomic rename
-	path := filepath.Join(tc.CacheDir, username)
+	path := filepath.Join(hostCacheDir, username)
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
 		return fmt.Errorf("renaming to target: %w", err)
 	}
 	// Sync the parent directory so the rename is durable on power loss.
-	if d, err := os.Open(tc.CacheDir); err == nil {
+	if d, err := os.Open(hostCacheDir); err == nil {
 		_ = d.Sync()
 		d.Close()
 	}
@@ -235,7 +256,11 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 
 // Delete removes the cached token file for a given username.
 func (tc *TokenCache) Delete(username string) error {
-	path := filepath.Join(tc.CacheDir, username)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("getting hostname: %w", err)
+	}
+	path := filepath.Join(tc.CacheDir, hostname, username)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing cache file: %w", err)
 	}
@@ -244,7 +269,11 @@ func (tc *TokenCache) Delete(username string) error {
 
 // ModTime returns the modification time of the cached token file.
 func (tc *TokenCache) ModTime(username string) (time.Time, error) {
-	path := filepath.Join(tc.CacheDir, username)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("getting hostname: %w", err)
+	}
+	path := filepath.Join(tc.CacheDir, hostname, username)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("stating cache file: %w", err)
@@ -266,23 +295,39 @@ var oidcDiscoveryClient = &http.Client{
 	},
 }
 
-// getVerifier returns the cached OIDC verifier, initializing it on first call.
-// The verifier (and the *oidc.Provider it wraps) is created once per TokenCache
-// lifetime; go-oidc caches JWKS keys on the provider, so subsequent calls only
-// pay for key-set refresh when keys actually rotate, not a full discovery round-trip.
+// getVerifier returns the cached OIDC verifier, re-initializing it if the
+// previous attempt failed and the retry TTL has expired.
+//
+// On success the verifier is cached for 24 hours (JWKS key rotation is rare).
+// On failure the error is cached for 5 minutes so that a transient OIDC
+// provider outage does not permanently block the cache for the process lifetime
+// the way sync.Once would.
 func (tc *TokenCache) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, error) {
-	tc.providerOnce.Do(func() {
-		// Inject the hardened client so oidc.NewProvider uses it for the
-		// discovery and initial JWKS fetch.
-		initCtx := context.WithValue(context.Background(), oauth2.HTTPClient, oidcDiscoveryClient)
+	tc.verifierMu.Lock()
+	defer tc.verifierMu.Unlock()
 
-		provider, err := oidc.NewProvider(initCtx, tc.Issuer)
-		if err != nil {
-			tc.verifierErr = fmt.Errorf("discovering OIDC provider: %w", err)
-			return
+	// Re-initialize when the entry is expired/unset AND we don't yet have a
+	// working verifier (first call, or previous attempt failed).
+	if tc.verifierExpiry.IsZero() || time.Now().After(tc.verifierExpiry) {
+		if tc.verifier == nil {
+			// Inject the hardened client so oidc.NewProvider uses it for the
+			// discovery and initial JWKS fetch.
+			initCtx := context.WithValue(context.Background(), oauth2.HTTPClient, oidcDiscoveryClient)
+
+			provider, err := oidc.NewProvider(initCtx, tc.Issuer)
+			if err != nil {
+				tc.verifierErr = fmt.Errorf("discovering OIDC provider: %w", err)
+				tc.verifier = nil
+				// Short TTL on failure so we retry after a temporary outage.
+				tc.verifierExpiry = time.Now().Add(5 * time.Minute)
+			} else {
+				tc.verifier = provider.Verifier(&oidc.Config{ClientID: tc.ClientID})
+				tc.verifierErr = nil
+				// Long TTL on success; JWKS refresh is handled internally by go-oidc.
+				tc.verifierExpiry = time.Now().Add(24 * time.Hour)
+			}
 		}
-		tc.verifier = provider.Verifier(&oidc.Config{ClientID: tc.ClientID})
-	})
+	}
 
 	if tc.verifierErr != nil {
 		return nil, tc.verifierErr

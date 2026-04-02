@@ -21,7 +21,7 @@ set -euo pipefail
 # Usage: curl -fsSL {{.ServerURL}}/install.sh | sudo bash
 # Automated: SHARED_SECRET=xxx curl -fsSL {{.ServerURL}}/install.sh | sudo bash
 
-SERVER_URL={{.ServerURL}}
+SERVER_URL={{shellQuote .ServerURL}}
 MACHINE_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
 echo "IDENTREE_HOSTNAME=$MACHINE_HOSTNAME"
 INSTALL_DIR="/usr/local/bin"
@@ -355,11 +355,12 @@ func (s *Server) installServerURL() string {
 // renderInstallScript returns the rendered install script as bytes.
 // Used by the deploy handler to pipe the script directly over SSH.
 func (s *Server) renderInstallScript() ([]byte, error) {
-	tmpl, err := template.New("install").Parse(installScriptTmpl)
+	funcMap := template.FuncMap{"shellQuote": shellQuote}
+	tmpl, err := template.New("install").Funcs(funcMap).Parse(installScriptTmpl)
 	if err != nil {
 		return nil, err
 	}
-	data := struct{ ServerURL string }{ServerURL: shellQuote(s.installServerURL())}
+	data := struct{ ServerURL string }{ServerURL: s.installServerURL()}
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return nil, err
@@ -394,7 +395,8 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpl, err := template.New("install").Parse(installScriptTmpl)
+	funcMap := template.FuncMap{"shellQuote": shellQuote}
+	tmpl, err := template.New("install").Funcs(funcMap).Parse(installScriptTmpl)
 	if err != nil {
 		// Template is a compile-time constant; any parse error is a programmer bug.
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -404,7 +406,7 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	data := struct {
 		ServerURL string
 	}{
-		ServerURL: shellQuote(s.installServerURL()),
+		ServerURL: s.installServerURL(),
 	}
 
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -223,6 +224,13 @@ func runServer() {
 		}
 
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					buf := make([]byte, 64<<10)
+					n := runtime.Stack(buf, false)
+					slog.Error("goroutine panicked", "panic", r, "stack", string(buf[:n]))
+				}
+			}()
 			if lerr := ldapSrv.Start(ldapCtx); lerr != nil {
 				slog.Error("ldap server stopped", "err", lerr)
 			}
@@ -231,6 +239,13 @@ func runServer() {
 		// Full mode: periodic refresh + webhook-triggered refresh.
 		if cfg.APIKey != "" {
 			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						buf := make([]byte, 64<<10)
+						n := runtime.Stack(buf, false)
+						slog.Error("goroutine panicked", "panic", r, "stack", string(buf[:n]))
+					}
+				}()
 				ticker := time.NewTicker(cfg.LDAPRefreshInterval)
 				defer ticker.Stop()
 				for {
@@ -291,6 +306,13 @@ func runServer() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				buf := make([]byte, 64<<10)
+				n := runtime.Stack(buf, false)
+				slog.Error("goroutine panicked", "panic", r, "stack", string(buf[:n]))
+			}
+		}()
 		defer close(shutdownDone)
 		sig := <-sigCh
 		slog.Info("shutting down", "signal", sig)

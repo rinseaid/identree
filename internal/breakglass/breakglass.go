@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -659,10 +660,12 @@ func EscrowPassword(cfg *config.ClientConfig, hostname, password string, quiet b
 	req.Header.Set("Content-Type", "application/json")
 	if cfg.SharedSecret != "" {
 		req.Header.Set("X-Shared-Secret", cfg.SharedSecret)
-		// Per-host escrow token: HMAC(shared_secret, hostname) proves this host
-		// is authorized to escrow for its own hostname. Prevents a compromised
-		// host from planting a known password for a different host.
-		req.Header.Set("X-Escrow-Token",ComputeEscrowToken(cfg.SharedSecret, hostname))
+		// Per-host, time-bound escrow token: HMAC(shared_secret, "escrow:"+hostname+":"+timestamp)
+		// binds the token to the specific host and a narrow time window (±5 minutes),
+		// preventing replay attacks. The server reads the timestamp from X-Escrow-Ts.
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		req.Header.Set("X-Escrow-Ts", ts)
+		req.Header.Set("X-Escrow-Token", ComputeEscrowToken(cfg.SharedSecret, hostname, ts))
 	}
 
 	client := &http.Client{
@@ -691,12 +694,12 @@ func EscrowPassword(cfg *config.ClientConfig, hostname, password string, quiet b
 	return nil
 }
 
-// computeEscrowToken produces HMAC-SHA256(shared_secret, hostname) as a per-host
-// escrow authorization token. The server verifies this to ensure a host can only
-// escrow passwords for its own hostname.
-func ComputeEscrowToken(sharedSecret, hostname string) string {
+// computeEscrowToken produces HMAC-SHA256(shared_secret, "escrow:"+hostname+":"+timestamp)
+// as a per-host, time-bound escrow authorization token. Including a timestamp prevents
+// replay attacks — the server validates the token is within ±5 minutes.
+func ComputeEscrowToken(sharedSecret, hostname, timestamp string) string {
 	mac := hmac.New(sha256.New, []byte(sharedSecret))
-	mac.Write([]byte("escrow:" + hostname))
+	mac.Write([]byte("escrow:" + hostname + ":" + timestamp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

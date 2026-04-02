@@ -1109,6 +1109,10 @@ func (s *ChallengeStore) flushDirty() {
 // reapLoop removes expired challenges periodically and flushes dirty action-log
 // writes every 2 seconds.
 func (s *ChallengeStore) reapLoop() {
+	s.reapLoopWithBackoff(time.Second)
+}
+
+func (s *ChallengeStore) reapLoopWithBackoff(backoff time.Duration) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -1120,14 +1124,19 @@ func (s *ChallengeStore) reapLoop() {
 				return
 			default:
 			}
-			time.Sleep(5 * time.Second)
+			time.Sleep(backoff)
 			// Re-check stopCh after the sleep: Stop() may have been called while we slept.
 			select {
 			case <-s.stopCh:
 				return
 			default:
 			}
-			go s.reapLoop()
+			// Double backoff for next panic, capped at 30s.
+			nextBackoff := backoff * 2
+			if nextBackoff > 30*time.Second {
+				nextBackoff = 30 * time.Second
+			}
+			go s.reapLoopWithBackoff(nextBackoff)
 		}
 	}()
 	reapTicker := time.NewTicker(30 * time.Second)
@@ -1138,6 +1147,7 @@ func (s *ChallengeStore) reapLoop() {
 		select {
 		case <-reapTicker.C:
 			s.reap()
+			backoff = time.Second // reset on successful reap
 		case <-flushTicker.C:
 			s.flushDirty()
 		case <-s.stopCh:

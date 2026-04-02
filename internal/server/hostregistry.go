@@ -161,6 +161,26 @@ func (r *HostRegistry) HostsForUser(username string) []string {
 // validGroupName is the allowed character set for host group labels.
 var validGroupName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
 
+// reservedHostnames lists labels that must not be used as registered hostnames.
+var reservedHostnames = map[string]bool{
+	"localhost": true,
+	"admin":     true,
+	"root":      true,
+	"identree":  true,
+	"api":       true,
+	"www":       true,
+	"mail":      true,
+	"ftp":       true,
+	"ssh":       true,
+	"vpn":       true,
+	"gateway":   true,
+	"firewall":  true,
+	"router":    true,
+}
+
+// numericHostname matches hostnames that consist entirely of digits (e.g. "123").
+var numericHostname = regexp.MustCompile(`^[0-9]+$`)
+
 // AddHost registers a new host with a generated secret.
 // Returns the secret so the admin can configure the host.
 func (r *HostRegistry) AddHost(hostname string, users []string, group string) (string, error) {
@@ -169,6 +189,9 @@ func (r *HostRegistry) AddHost(hostname string, users []string, group string) (s
 	hostname = normalizeHostname(hostname)
 	if _, exists := r.hosts[hostname]; exists {
 		return "", fmt.Errorf("host %q is already registered", hostname)
+	}
+	if reservedHostnames[hostname] || numericHostname.MatchString(hostname) {
+		return "", fmt.Errorf("hostname is reserved")
 	}
 	for _, u := range users {
 		if u != "*" && !validUsername.MatchString(u) {

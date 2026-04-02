@@ -9,7 +9,7 @@ import (
 
 // templateFuncMap is the shared function map for all templates.
 var templateFuncMap = template.FuncMap{
-	"formatDuration": formatDuration,
+	"formatDuration": func(d time.Duration) string { return formatDuration(T("en"), d) },
 	"formatTime":     formatTime,
 	"eqInt":          func(a, b int) bool { return a == b },
 	"add":            func(a, b int) int { return a + b },
@@ -740,12 +740,12 @@ const pendingBarHTML = `{{if .Pending}}
   {{end}}{{else}}
   <span class="pbar-main"><strong>{{len .Pending}}</strong> {{call .T "pending_requests"}}</span>
   <div class="pbar-actions">
-    <button type="button" class="btn btn-sm btn-primary" onclick="document.getElementById('pending-modal').classList.add('open')">{{call .T "view"}} &rsaquo;</button>
+    <button type="button" class="btn btn-sm btn-primary" id="pending-modal-open-btn">{{call .T "view"}} &rsaquo;</button>
   </div>
   {{end}}
 </div>
 {{if gt (len .Pending) 1}}
-<div class="modal-overlay" id="pending-modal" onclick="if(event.target===this)this.classList.remove('open')">
+<div class="modal-overlay" id="pending-modal" onclick="if(event.target===this)closePendingModal()">
   <div class="modal-box pending-modal-box">
     <h3>{{call .T "pending_requests"}}</h3>
     <div class="pending-table{{if .IsAdmin}} pending-table--admin{{end}}">
@@ -796,12 +796,31 @@ const pendingBarHTML = `{{if .Pending}}
         <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
         <button type="submit" class="btn btn-ghost btn-danger btn-sm saction-confirm" data-confirm="{{call .T "confirm_reject_all"}}">{{call .T "reject_all"}}</button>
       </form>
-      <button type="button" class="btn" onclick="document.getElementById('pending-modal').classList.remove('open')">{{call .T "close"}}</button>
+      <button type="button" class="btn" onclick="closePendingModal()">{{call .T "close"}}</button>
     </div>
   </div>
 </div>
 <script nonce="{{.CSPNonce}}">
-document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('pending-modal');if(m)m.classList.remove('open');}});
+var _pendingModalPrevFocus=null;
+function openPendingModal(){
+  _pendingModalPrevFocus=document.activeElement;
+  var m=document.getElementById('pending-modal');
+  if(m){
+    m.classList.add('open');
+    var focusable=Array.from(m.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
+    if(focusable.length)setTimeout(function(){focusable[0].focus();},50);
+  }
+}
+function closePendingModal(){
+  var m=document.getElementById('pending-modal');
+  if(m)m.classList.remove('open');
+  if(_pendingModalPrevFocus)_pendingModalPrevFocus.focus();
+}
+(function(){
+  var openBtn=document.getElementById('pending-modal-open-btn');
+  if(openBtn)openBtn.addEventListener('click',openPendingModal);
+})();
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('pending-modal');if(m&&m.classList.contains('open'))closePendingModal();}});
 // Wire confirmation dialogs for ALL saction-confirm buttons (including single-challenge reject).
 document.querySelectorAll('.saction-confirm').forEach(function(btn){
   btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
@@ -2061,7 +2080,6 @@ const adminPageHTML = `<!DOCTYPE html>
       {{$v:=index .ConfigValues "IDENTREE_HISTORY_PAGE_SIZE"}}{{$lk:=index .ConfigLocked "IDENTREE_HISTORY_PAGE_SIZE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="misc" data-search="IDENTREE_HISTORY_PAGE_SIZE Number of entries shown per page in the history view."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_history_page_size"}}</div><div class="config-label-env">IDENTREE_HISTORY_PAGE_SIZE</div><div class="config-label-desc">Number of entries shown per page in the history view.</div></div><div class="config-row-control">{{if $lk}}<input type="number" value="{{$v}}" disabled class="config-input" style="max-width:120px"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{else}}<input type="number" name="IDENTREE_HISTORY_PAGE_SIZE" value="{{$v}}" class="config-input" style="max-width:120px" min="0" max="200" placeholder="10">{{end}}</div></div>
       {{$v:=index .ConfigValues "IDENTREE_SESSION_STATE_FILE"}}{{$lk:=index .ConfigLocked "IDENTREE_SESSION_STATE_FILE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="misc" data-search="IDENTREE_SESSION_STATE_FILE JSON file for persisting sessions, grace periods, and the action log."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_session_state_file"}}</div><div class="config-label-env">IDENTREE_SESSION_STATE_FILE</div><div class="config-label-desc">JSON file for persisting sessions, grace periods, and the action log.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_SESSION_STATE_FILE" value="{{$v}}" class="config-input" placeholder="/config/sessions.json">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
       {{$sc:=index .ConfigSecrets "IDENTREE_WEBHOOK_SECRET"}}<div class="config-table-row config-locked" data-section="misc" data-search="IDENTREE_WEBHOOK_SECRET HMAC secret for verifying Pocket ID webhook payloads."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_webhook_secret"}}</div><div class="config-label-env">IDENTREE_WEBHOOK_SECRET</div><div class="config-label-desc">HMAC secret for verifying Pocket ID webhook payloads.</div></div><div class="config-row-control"><span class="config-secret-badge{{if $sc}} configured{{end}}">{{if $sc}}{{call .T "configured"}}{{else}}{{call .T "not_configured"}}{{end}}</span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span style="font-size:0.75rem;color:var(--text-3)">env only</span></div></div>
-      {{$v:=index .ConfigValues "IDENTREE_DEV_LOGIN"}}{{$lk:=index .ConfigLocked "IDENTREE_DEV_LOGIN"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="misc" data-search="IDENTREE_DEV_LOGIN Skip OIDC and accept any username. For development only — never enable in production."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_dev_login"}}</div><div class="config-label-env">IDENTREE_DEV_LOGIN</div><div class="config-label-desc">Skip OIDC and accept any username. For development only — never enable in production.</div></div><div class="config-row-control">{{if $lk}}<input type="checkbox" disabled {{if eq $v "true"}}checked{{end}}>{{else}}<input type="checkbox" name="IDENTREE_DEV_LOGIN" value="true" {{if eq $v "true"}}checked{{end}}>{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
     </div>
     </form>
     <script nonce="{{.CSPNonce}}">

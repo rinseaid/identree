@@ -127,6 +127,12 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 
 	if !cfg.DevLoginEnabled {
+		// M15: warn when InsecureIssuerURLContext is used with an HTTPS ExternalURL,
+		// as this skips issuer validation in what appears to be a production deployment.
+		if cfg.IssuerPublicURL != "" && strings.HasPrefix(cfg.ExternalURL, "https://") {
+			slog.Warn("InsecureIssuerURLContext enabled in production (ExternalURL uses HTTPS) — issuer URL mismatch will not be rejected")
+		}
+
 		discoveryClient := &http.Client{
 			Timeout:   oidcDiscoveryTimeout,
 			Transport: oidcTransport,
@@ -134,20 +140,36 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 				return http.ErrUseLastResponse
 			},
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), oidcDiscoveryTimeout)
-		defer cancel()
-		ctx = context.WithValue(ctx, oauth2.HTTPClient, discoveryClient)
 
-		// When IssuerPublicURL is set, PocketID's APP_URL (and thus OIDC issuer) is
-		// the public hostname (e.g. localhost) while IssuerURL is the internal Docker
-		// hostname used for network reachability. Tell go-oidc to accept the public
-		// issuer in tokens while still fetching discovery from the internal URL.
-		if cfg.IssuerPublicURL != "" {
-			ctx = oidc.InsecureIssuerURLContext(ctx, cfg.IssuerPublicURL)
-		}
-		provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
-		if err != nil {
-			return nil, fmt.Errorf("OIDC discovery: %w", err)
+		// H5: retry OIDC discovery up to 5 times with exponential backoff (2, 4, 8, 16, 32 s).
+		oidcRetryDelays := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second}
+		var provider *oidc.Provider
+		for attempt := 0; attempt <= len(oidcRetryDelays); attempt++ {
+			if attempt > 0 {
+				delay := oidcRetryDelays[attempt-1]
+				slog.Info("OIDC discovery failed, retrying", "attempt", attempt, "delay", delay)
+				time.Sleep(delay)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), oidcDiscoveryTimeout)
+			ctx = context.WithValue(ctx, oauth2.HTTPClient, discoveryClient)
+
+			// When IssuerPublicURL is set, PocketID's APP_URL (and thus OIDC issuer) is
+			// the public hostname (e.g. localhost) while IssuerURL is the internal Docker
+			// hostname used for network reachability. Tell go-oidc to accept the public
+			// issuer in tokens while still fetching discovery from the internal URL.
+			if cfg.IssuerPublicURL != "" {
+				ctx = oidc.InsecureIssuerURLContext(ctx, cfg.IssuerPublicURL)
+			}
+			var err error
+			provider, err = oidc.NewProvider(ctx, cfg.IssuerURL)
+			cancel()
+			if err == nil {
+				break
+			}
+			if attempt == len(oidcRetryDelays) {
+				return nil, fmt.Errorf("OIDC discovery: %w", err)
+			}
+			slog.Warn("OIDC discovery attempt failed", "attempt", attempt+1, "err", err)
 		}
 
 		oidcConfig = oauth2.Config{

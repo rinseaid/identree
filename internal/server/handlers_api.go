@@ -344,7 +344,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 
 	approvalURL := fmt.Sprintf("%s/approve/%s", s.baseURL, challenge.UserCode)
 
-	oneTapToken := s.computeOneTapToken(challenge.ID, challenge.ExpiresAt)
+	oneTapToken := s.computeOneTapToken(challenge.ID, challenge.Username, challenge.ExpiresAt)
 	oneTapURL := ""
 	if oneTapToken != "" {
 		oneTapURL = s.baseURL + "/api/onetap/" + oneTapToken
@@ -544,13 +544,13 @@ func (s *Server) computeStatusHMAC(challengeID, username, status, rotateBefore, 
 
 // computeOneTapToken creates a time-limited, single-use HMAC token for one-tap approval.
 // Format: {challenge_id}.{expires_unix}.{hmac_hex}
-func (s *Server) computeOneTapToken(challengeID string, expiresAt time.Time) string {
+func (s *Server) computeOneTapToken(challengeID, username string, expiresAt time.Time) string {
 	if s.cfg.SharedSecret == "" {
 		return ""
 	}
 	expires := strconv.FormatInt(expiresAt.Unix(), 10)
 	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
-	mac.Write([]byte("onetap:" + challengeID + ":" + expires))
+	mac.Write([]byte("onetap:" + challengeID + ":" + username + ":" + expires))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	return challengeID + "." + expires + "." + sig
 }
@@ -663,8 +663,27 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	} else if s.cfg.SharedSecret != "" {
-		// No host registry: use HMAC escrow token tied to the specific hostname.
-		expectedToken := breakglass.ComputeEscrowToken(s.cfg.SharedSecret, req.Hostname)
+		// No host registry: use HMAC escrow token tied to the specific hostname and timestamp.
+		// Validate the timestamp is within ±5 minutes to prevent replay attacks.
+		tsHeader := r.Header.Get("X-Escrow-Ts")
+		if tsHeader == "" {
+			slog.Warn("AUTH_FAILURE missing escrow timestamp", "host", req.Hostname, "remote_addr", remoteAddr(r))
+			http.Error(w, "missing escrow timestamp", http.StatusForbidden)
+			return
+		}
+		tsUnix, err := strconv.ParseInt(tsHeader, 10, 64)
+		if err != nil {
+			slog.Warn("AUTH_FAILURE invalid escrow timestamp format", "host", req.Hostname, "remote_addr", remoteAddr(r))
+			http.Error(w, "invalid escrow timestamp", http.StatusForbidden)
+			return
+		}
+		tsDiff := time.Since(time.Unix(tsUnix, 0))
+		if tsDiff > 5*time.Minute || tsDiff < -5*time.Minute {
+			slog.Warn("AUTH_FAILURE escrow timestamp out of window", "host", req.Hostname, "remote_addr", remoteAddr(r), "diff", tsDiff)
+			http.Error(w, "escrow timestamp out of window", http.StatusForbidden)
+			return
+		}
+		expectedToken := breakglass.ComputeEscrowToken(s.cfg.SharedSecret, req.Hostname, tsHeader)
 		providedToken := r.Header.Get("X-Escrow-Token")
 		if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {
 			slog.Warn("AUTH_FAILURE invalid escrow token", "host", req.Hostname, "remote_addr", remoteAddr(r))
