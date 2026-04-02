@@ -46,34 +46,37 @@ func NewTokenCache(cacheDir, issuer, clientID string) *TokenCache {
 }
 
 // Check validates a cached token for the given username.
-// Returns the remaining validity duration and nil if the token is valid.
-// Returns zero and an error on any failure (caller should fall through to device flow).
-func (tc *TokenCache) Check(username string) (time.Duration, error) {
+// Returns the remaining validity duration, the file modification time (from the
+// open fd's Stat to avoid a TOCTOU race with a separate Lstat call), and nil on
+// success. Returns zero, zero time, and an error on any failure.
+func (tc *TokenCache) Check(username string) (time.Duration, time.Time, error) {
 	path := filepath.Join(tc.CacheDir, username)
 
 	// Read with O_NOFOLLOW to reject symlinks (same pattern as readBreakglassHash)
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		return 0, fmt.Errorf("opening cache file: %w", err)
+		return 0, time.Time{}, fmt.Errorf("opening cache file: %w", err)
 	}
 	defer f.Close()
 
-	// Validate file security
+	// Validate file security; capture mtime from the open fd to avoid a
+	// separate Lstat call that could race with a file replacement.
 	info, err := f.Stat()
 	if err != nil {
-		return 0, fmt.Errorf("stating cache file: %w", err)
+		return 0, time.Time{}, fmt.Errorf("stating cache file: %w", err)
 	}
+	mtime := info.ModTime()
 	if !info.Mode().IsRegular() {
-		return 0, fmt.Errorf("cache file is not a regular file")
+		return 0, time.Time{}, fmt.Errorf("cache file is not a regular file")
 	}
 	mode := info.Mode().Perm()
 	if mode&0077 != 0 {
-		return 0, fmt.Errorf("cache file has group/other permissions (mode %04o)", mode)
+		return 0, time.Time{}, fmt.Errorf("cache file has group/other permissions (mode %04o)", mode)
 	}
 	if uid, ok := config.FileOwnerUID(info); !ok {
-		return 0, fmt.Errorf("cannot determine cache file owner")
+		return 0, time.Time{}, fmt.Errorf("cannot determine cache file owner")
 	} else if uid != 0 {
-		return 0, fmt.Errorf("cache file not owned by root (uid=%d)", uid)
+		return 0, time.Time{}, fmt.Errorf("cache file not owned by root (uid=%d)", uid)
 	}
 
 	// Parse cached token (limit read size to prevent abuse).
@@ -81,22 +84,22 @@ func (tc *TokenCache) Check(username string) (time.Duration, error) {
 	// one call (common for small files) is not mistakenly treated as an error.
 	data, err := io.ReadAll(io.LimitReader(f, 16*1024))
 	if err != nil {
-		return 0, fmt.Errorf("reading cache file: %w", err)
+		return 0, time.Time{}, fmt.Errorf("reading cache file: %w", err)
 	}
 
 	var cached cachedToken
 	if err := json.Unmarshal(data, &cached); err != nil {
-		return 0, fmt.Errorf("parsing cache file: %w", err)
+		return 0, time.Time{}, fmt.Errorf("parsing cache file: %w", err)
 	}
 
 	if cached.IDToken == "" {
-		return 0, fmt.Errorf("cache file has no id_token")
+		return 0, time.Time{}, fmt.Errorf("cache file has no id_token")
 	}
 
 	// Quick expiry check before doing any crypto (30s clock-skew buffer)
 	remaining := time.Until(cached.ExpiresAt) - 30*time.Second
 	if remaining <= 0 {
-		return 0, fmt.Errorf("cached token expired")
+		return 0, time.Time{}, fmt.Errorf("cached token expired")
 	}
 
 	// Verify JWT signature, audience, and expiry via OIDC provider JWKS.
@@ -107,12 +110,12 @@ func (tc *TokenCache) Check(username string) (time.Duration, error) {
 
 	verifier, err := tc.getVerifier(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("creating OIDC verifier: %w", err)
+		return 0, time.Time{}, fmt.Errorf("creating OIDC verifier: %w", err)
 	}
 
 	idToken, err := verifier.Verify(ctx, cached.IDToken)
 	if err != nil {
-		return 0, fmt.Errorf("token verification failed: %w", err)
+		return 0, time.Time{}, fmt.Errorf("token verification failed: %w", err)
 	}
 
 	// Extract preferred_username and verify it matches the expected user
@@ -120,13 +123,13 @@ func (tc *TokenCache) Check(username string) (time.Duration, error) {
 		PreferredUsername string `json:"preferred_username"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
-		return 0, fmt.Errorf("parsing token claims: %w", err)
+		return 0, time.Time{}, fmt.Errorf("parsing token claims: %w", err)
 	}
 	if claims.PreferredUsername != username {
-		return 0, fmt.Errorf("token username %q does not match expected %q", claims.PreferredUsername, username)
+		return 0, time.Time{}, fmt.Errorf("token username %q does not match expected %q", claims.PreferredUsername, username)
 	}
 
-	return remaining, nil
+	return remaining, mtime, nil
 }
 
 // Write caches an id_token for the given username after a successful device flow.

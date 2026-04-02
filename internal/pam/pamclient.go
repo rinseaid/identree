@@ -142,17 +142,16 @@ func (p *PAMClient) Authenticate(username string) error {
 	// Also check the server for revocation signals — a revoked session takes
 	// precedence over the token cache.
 	if p.tokenCache != nil {
-		if tokenRemaining, err := p.tokenCache.Check(username); err == nil {
+		if tokenRemaining, cacheMtime, err := p.tokenCache.Check(username); err == nil {
 			// Check server for revocation and grace period (best-effort, 2s timeout)
 			graceStatus := p.queryGraceStatus(username)
 
 			// If the server reports a revocation that postdates our cache, invalidate it.
-			// Fail-closed: if we can't read the mtime OR if the mtime is before
-			// revocation time, treat as revoked (delete cache and re-authenticate).
+			// cacheMtime comes from Check()'s open-fd Stat, avoiding a TOCTOU race.
+			// Fail-closed: if mtime is before revocation time, treat as revoked.
 			skipCache := false
 			if graceStatus.revoked {
-				mtime, err := p.tokenCache.ModTime(username)
-				if err != nil || mtime.Before(graceStatus.revokeTime) {
+				if cacheMtime.Before(graceStatus.revokeTime) {
 					p.tokenCache.Delete(username)
 					skipCache = true
 				}
