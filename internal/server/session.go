@@ -313,8 +313,22 @@ func (s *Server) verifyFormAuth(w http.ResponseWriter, r *http.Request) string {
 // since JSON requests cannot include form values. Returns the username on success or writes
 // an HTTP error and returns "" on failure.
 func (s *Server) verifyJSONAdminAuth(w http.ResponseWriter, r *http.Request) string {
-	username := s.getSessionUser(r)
-	if username == "" || s.getSessionRole(r) != "admin" {
+	data, valid := s.parseSessionCookie(r)
+	if !valid {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return ""
+	}
+	username := data.Username
+	role := data.Role
+	// Enforce revokedAdminSessions downgrade for recently de-admined users.
+	if role == "admin" {
+		if revokedAt, ok := s.revokedAdminSessions.Load(username); ok {
+			if t, ok := revokedAt.(time.Time); ok && t.Unix() >= data.TsInt {
+				role = "user"
+			}
+		}
+	}
+	if username == "" || role != "admin" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return ""
 	}

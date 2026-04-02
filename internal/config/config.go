@@ -359,6 +359,16 @@ func LoadServerConfig() (*ServerConfig, error) {
 		slog.Warn("IDENTREE_SESSION_STATE_FILE is not set — grace sessions, revocations, and audit log will be lost on restart")
 	}
 
+	// Clamp LDAPRefreshInterval: 0 or negative would panic time.NewTicker.
+	// Minimum 10 seconds to prevent hammering the PocketID API.
+	if cfg.LDAPRefreshInterval <= 0 {
+		slog.Warn("config: IDENTREE_LDAP_REFRESH_INTERVAL must be positive; using default 300s", "value", cfg.LDAPRefreshInterval)
+		cfg.LDAPRefreshInterval = 300 * time.Second
+	} else if cfg.LDAPRefreshInterval < 10*time.Second {
+		slog.Warn("config: IDENTREE_LDAP_REFRESH_INTERVAL too low; clamping to 10s", "value", cfg.LDAPRefreshInterval)
+		cfg.LDAPRefreshInterval = 10 * time.Second
+	}
+
 	// LDAP shell and home directory defaults.
 	if cfg.LDAPEnabled {
 		if cfg.LDAPDefaultShell == "" {

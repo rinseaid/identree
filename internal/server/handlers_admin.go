@@ -784,13 +784,18 @@ func configSecretStatus(cfg *config.ServerConfig) map[string]bool {
 // isPrivateIP returns true if the given IP is loopback, link-local, private,
 // or multicast (RFC 1918 / RFC 4193 / RFC 3927 / RFC 1122 / IPv6 loopback).
 func isPrivateIP(ip net.IP) bool {
+	// Normalize IPv4-mapped IPv6 addresses (e.g. ::ffff:10.0.0.1) to their
+	// IPv4 representation so the 32-bit private ranges below match them.
+	if ip4 := ip.To4(); ip4 != nil {
+		ip = ip4
+	}
 	private := []net.IPNet{
-		{IP: net.ParseIP("0.0.0.0"), Mask: net.CIDRMask(8, 32)},     // this host network (RFC 1122)
-		{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(8, 32)},
-		{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)},
-		{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)},
-		{IP: net.ParseIP("169.254.0.0"), Mask: net.CIDRMask(16, 32)}, // link-local
-		{IP: net.ParseIP("224.0.0.0"), Mask: net.CIDRMask(4, 32)},   // IPv4 multicast
+		{IP: net.ParseIP("0.0.0.0").To4(), Mask: net.CIDRMask(8, 32)},     // this host network (RFC 1122)
+		{IP: net.ParseIP("10.0.0.0").To4(), Mask: net.CIDRMask(8, 32)},
+		{IP: net.ParseIP("172.16.0.0").To4(), Mask: net.CIDRMask(12, 32)},
+		{IP: net.ParseIP("192.168.0.0").To4(), Mask: net.CIDRMask(16, 32)},
+		{IP: net.ParseIP("169.254.0.0").To4(), Mask: net.CIDRMask(16, 32)}, // link-local
+		{IP: net.ParseIP("224.0.0.0").To4(), Mask: net.CIDRMask(4, 32)},   // IPv4 multicast
 		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},      // ULA
 		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},     // link-local IPv6
 		{IP: net.ParseIP("ff00::"), Mask: net.CIDRMask(8, 128)},      // IPv6 multicast

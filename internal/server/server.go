@@ -43,8 +43,6 @@ const escrowTimeout = 30 * time.Second
 const escrowMaxOutput = 1 << 20 // 1 MB
 const maxRequestBodySize = 1024
 
-var escrowSemaphore = make(chan struct{}, 5)
-
 const oidcDiscoveryTimeout = 30 * time.Second
 
 // Server is the identree auth server.
@@ -60,6 +58,7 @@ type Server struct {
 	verifier     *oidc.IDTokenVerifier
 	mux          *http.ServeMux
 	notifyWg     sync.WaitGroup
+	notifyMu     sync.Mutex // guards notifyShutdown + notifyWg.Add to prevent TOCTOU
 
 	sessionNonces  map[string]sessionNonceData
 	sessionNonceMu sync.Mutex
@@ -72,6 +71,9 @@ type Server struct {
 	ldapLastSyncMu sync.RWMutex
 
 	pocketIDClient *pocketid.PocketIDClient
+
+	// escrowSemaphore limits concurrent escrow operations.
+	escrowSemaphore chan struct{}
 
 	// escrowKey is the 32-byte AES key for the local escrow backend.
 	// Only set when EscrowBackend == "local".
@@ -109,10 +111,14 @@ type Server struct {
 	// It is never reset to false (a stopped listener causes the process to exit).
 	ldapBound atomic.Bool
 
-	// notifyShutdown is set to true before WaitForNotifications calls notifyWg.Wait().
-	// sendNotification and sendEventNotification check this flag before calling
-	// notifyWg.Add(1) to prevent a panic from Add-after-Wait.
+	// notifyShutdown is set to true (under notifyMu) before WaitForNotifications
+	// calls notifyWg.Wait(). sendNotification and sendEventNotification hold
+	// notifyMu while checking this flag and calling notifyWg.Add(1) to prevent
+	// a TOCTOU panic from Add-after-Wait.
 	notifyShutdown atomic.Bool
+
+	// stopCh is closed by Stop() to cancel background goroutines.
+	stopCh chan struct{}
 
 	// Recently-removed users: excluded from PocketID merge until cleared.
 	removedUsers   map[string]time.Time
@@ -252,7 +258,9 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		usedEscrowTokens:   make(map[string]time.Time),
 		revokedNonces:      make(map[string]time.Time),
 		prevAdminUsernames: make(map[string]bool),
+		escrowSemaphore: make(chan struct{}, 5),
 		ldapRefreshCh:  make(chan struct{}, 1),
+		stopCh:         make(chan struct{}),
 		oidcHTTPClient: oidcHTTPClient,
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
 		sudoRules:      store,
@@ -298,37 +306,42 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			cutoff := time.Now().Add(-revokedNoncesRetentionDur)
+		for {
+			select {
+			case <-ticker.C:
+				cutoff := time.Now().Add(-revokedNoncesRetentionDur)
 
-			s.revokedNoncesMu.Lock()
-			for nonce, revokedAt := range s.revokedNonces {
-				if revokedAt.Before(cutoff) {
-					delete(s.revokedNonces, nonce)
+				s.revokedNoncesMu.Lock()
+				for nonce, revokedAt := range s.revokedNonces {
+					if revokedAt.Before(cutoff) {
+						delete(s.revokedNonces, nonce)
+					}
 				}
+				s.revokedNoncesMu.Unlock()
+
+				// Prune revokedAdminSessions entries older than revokedNoncesRetentionDur.
+				// Any cookie issued before that point has already expired naturally.
+				s.revokedAdminSessions.Range(func(k, v any) bool {
+					if revokedAt, ok := v.(time.Time); ok && revokedAt.Before(cutoff) {
+						s.revokedAdminSessions.Delete(k)
+					}
+					return true
+				})
+
+				// Prune usedEscrowTokens entries older than the escrow token TTL (10 minutes).
+				// This mirrors the inline lazy-prune in handleBreakglassEscrow but ensures
+				// entries are cleaned up even when no new tokens arrive.
+				escrowCutoff := time.Now().Add(-10 * time.Minute)
+				s.usedEscrowTokensMu.Lock()
+				for k, t := range s.usedEscrowTokens {
+					if t.Before(escrowCutoff) {
+						delete(s.usedEscrowTokens, k)
+					}
+				}
+				s.usedEscrowTokensMu.Unlock()
+			case <-s.stopCh:
+				return
 			}
-			s.revokedNoncesMu.Unlock()
-
-			// Prune revokedAdminSessions entries older than revokedNoncesRetentionDur.
-			// Any cookie issued before that point has already expired naturally.
-			s.revokedAdminSessions.Range(func(k, v any) bool {
-				if revokedAt, ok := v.(time.Time); ok && revokedAt.Before(cutoff) {
-					s.revokedAdminSessions.Delete(k)
-				}
-				return true
-			})
-
-			// Prune usedEscrowTokens entries older than the escrow token TTL (10 minutes).
-			// This mirrors the inline lazy-prune in handleBreakglassEscrow but ensures
-			// entries are cleaned up even when no new tokens arrive.
-			escrowCutoff := time.Now().Add(-10 * time.Minute)
-			s.usedEscrowTokensMu.Lock()
-			for k, t := range s.usedEscrowTokens {
-				if t.Before(escrowCutoff) {
-					delete(s.usedEscrowTokens, k)
-				}
-			}
-			s.usedEscrowTokensMu.Unlock()
 		}
 	}()
 
@@ -336,15 +349,20 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			cutoff := time.Now().Add(-15 * time.Minute)
-			s.sessionNonceMu.Lock()
-			for nonce, data := range s.sessionNonces {
-				if data.issuedAt.Before(cutoff) {
-					delete(s.sessionNonces, nonce)
+		for {
+			select {
+			case <-ticker.C:
+				cutoff := time.Now().Add(-15 * time.Minute)
+				s.sessionNonceMu.Lock()
+				for nonce, data := range s.sessionNonces {
+					if data.issuedAt.Before(cutoff) {
+						delete(s.sessionNonces, nonce)
+					}
 				}
+				s.sessionNonceMu.Unlock()
+			case <-s.stopCh:
+				return
 			}
-			s.sessionNonceMu.Unlock()
 		}
 	}()
 
@@ -541,6 +559,7 @@ func (s *Server) isBridgeMode() bool {
 
 // Stop cleanly shuts down background resources.
 func (s *Server) Stop() {
+	close(s.stopCh)
 	s.store.Stop()
 }
 

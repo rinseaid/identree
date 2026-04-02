@@ -70,11 +70,14 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 		Reason:      ch.Reason,
 	}
 
+	s.notifyMu.Lock()
 	if s.notifyShutdown.Load() {
+		s.notifyMu.Unlock()
 		slog.Debug("notify: shutdown in progress, dropping notification", "event", d.Event)
 		return
 	}
 	s.notifyWg.Add(1)
+	s.notifyMu.Unlock()
 	go func() {
 		defer s.notifyWg.Done()
 		defer func() {
@@ -136,11 +139,14 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 		Reason:    d.Reason,
 		Actor:     d.Actor,
 	}
+	s.notifyMu.Lock()
 	if s.notifyShutdown.Load() {
+		s.notifyMu.Unlock()
 		slog.Debug("notify: shutdown in progress, dropping notification", "event", nd.Event)
 		return
 	}
 	s.notifyWg.Add(1)
+	s.notifyMu.Unlock()
 	go func() {
 		defer s.notifyWg.Done()
 		defer func() {
@@ -321,11 +327,11 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command s
 		"NOTIFY_EVENT=" + sanitizeEnvVal(d.Event),
 		"NOTIFY_USERNAME=" + d.Username,
 		"NOTIFY_HOSTNAME=" + d.Hostname,
-		"NOTIFY_USER_CODE=" + d.UserCode,
-		"NOTIFY_APPROVAL_URL=" + effectiveURL,
-		"NOTIFY_ONETAP_URL=" + d.OneTapURL,
+		"NOTIFY_USER_CODE=" + sanitizeEnvVal(d.UserCode),
+		"NOTIFY_APPROVAL_URL=" + sanitizeEnvVal(effectiveURL),
+		"NOTIFY_ONETAP_URL=" + sanitizeEnvVal(d.OneTapURL),
 		"NOTIFY_EXPIRES_IN=" + strconv.Itoa(d.ExpiresIn),
-		"NOTIFY_TIMESTAMP=" + d.Timestamp,
+		"NOTIFY_TIMESTAMP=" + sanitizeEnvVal(d.Timestamp),
 		"NOTIFY_REASON=" + sanitizeEnvVal(d.Reason),
 		"NOTIFY_ACTOR=" + sanitizeEnvVal(d.Actor),
 	}
@@ -344,7 +350,9 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command s
 // WaitForNotifications blocks until all in-flight notification goroutines
 // complete or the timeout expires.
 func (s *Server) WaitForNotifications(timeout time.Duration) {
+	s.notifyMu.Lock()
 	s.notifyShutdown.Store(true)
+	s.notifyMu.Unlock()
 	done := make(chan struct{})
 	go func() {
 		s.notifyWg.Wait()

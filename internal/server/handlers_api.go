@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rinseaid/identree/internal/breakglass"
 	challpkg "github.com/rinseaid/identree/internal/challenge"
@@ -260,12 +261,26 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Sanitize reason: strip leading/trailing whitespace and truncate to 500 chars.
+	// Sanitize reason: strip whitespace, truncate to 500 runes, reject control chars.
 	if req.Reason != "" {
 		req.Reason = strings.TrimSpace(req.Reason)
 		const maxReasonLen = 500
-		if len(req.Reason) > maxReasonLen {
-			req.Reason = req.Reason[:maxReasonLen]
+		if utf8.RuneCountInString(req.Reason) > maxReasonLen {
+			count := 0
+			for i := range req.Reason {
+				if count == maxReasonLen {
+					req.Reason = req.Reason[:i]
+					break
+				}
+				count++
+			}
+		}
+		// Reject reasons containing control characters to prevent log injection.
+		for _, r := range req.Reason {
+			if r < 0x20 && r != '\t' {
+				apiError(w, http.StatusBadRequest, "reason contains invalid characters")
+				return
+			}
 		}
 	}
 
@@ -284,13 +299,15 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Snapshot the rotation signal BEFORE creating the challenge so the value
-	// is set on the struct before it enters the store's map (avoids data race
-	// with concurrent Get() calls that copy the struct under RLock).
-	var rotateBefore string
+	// Snapshot the rotation signal under cfgMu before creating the challenge
+	// so the value is set on the struct before it enters the store's map (avoids
+	// data race with concurrent Get() calls that copy the struct under RLock).
+	s.cfgMu.RLock()
+	rotateBefore := ""
 	if !s.cfg.BreakglassRotateBefore.IsZero() {
 		rotateBefore = s.cfg.BreakglassRotateBefore.Format(time.RFC3339)
 	}
+	s.cfgMu.RUnlock()
 
 	challenge, err := s.store.Create(req.Username, req.Hostname, rotateBefore, req.Reason)
 	if err != nil {
@@ -546,7 +563,7 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 	// queried hostname regardless of whether the global shared secret or a
 	// per-host credential was used. This prevents a PAM client on host-B from
 	// querying grace-period state for host-A (Fix C1).
-	if s.hostRegistry.IsEnabled() {
+	if s.hostRegistry.IsEnabled() && !s.verifySharedSecret(r) {
 		provided := r.Header.Get("X-Shared-Secret")
 		if !s.hostRegistry.ValidateHost(hostname, provided) {
 			slog.Warn("AUTH_FAILURE grace-status hostname mismatch", "host", hostname, "remote_addr", remoteAddr(r))
@@ -804,8 +821,8 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 
 	// Limit concurrent escrow operations
 	select {
-	case escrowSemaphore <- struct{}{}:
-		defer func() { <-escrowSemaphore }()
+	case s.escrowSemaphore <- struct{}{}:
+		defer func() { <-s.escrowSemaphore }()
 	default:
 		apiError(w, http.StatusServiceUnavailable, "too many concurrent escrow operations")
 		return
@@ -983,7 +1000,7 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	}
 	// Also log against the actor themselves so it always appears in their history.
 	s.store.LogAction(actor, challpkg.ActionRevealedBreakglass, hostname, "", actor)
-	slog.Info("BREAKGLASS password revealed", "host", hostname, "admin", actor, "remote_addr", remoteAddr(r))
+	slog.Warn("BREAKGLASS password revealed", "host", hostname, "admin", actor, "remote_addr", remoteAddr(r))
 
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "revealed_breakglass",

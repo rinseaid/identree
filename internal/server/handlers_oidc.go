@@ -56,6 +56,12 @@ func (l *loginRateLimiter) allow(ip string) bool {
 	times = times[:j]
 	if len(times) >= loginRateMax {
 		l.seen[ip] = times
+		// Prune stale IPs even on reject to prevent unbounded map growth under attack.
+		for k, ts := range l.seen {
+			if k != ip && (len(ts) == 0 || ts[len(ts)-1].Before(cutoff)) {
+				delete(l.seen, k)
+			}
+		}
 		return false
 	}
 	l.seen[ip] = append(times, now)

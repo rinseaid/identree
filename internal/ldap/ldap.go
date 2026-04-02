@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -136,6 +137,8 @@ func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory, trigger string, exclud
 func (s *LDAPServer) Start(ctx context.Context) error {
 	srv, err := gldap.NewServer(
 		gldap.WithDisablePanicRecovery(),
+		gldap.WithReadTimeout(60*time.Second),
+		gldap.WithWriteTimeout(60*time.Second),
 		gldap.WithOnClose(func(connID int) {
 			s.authedConns.Delete(connID)
 		}),
@@ -176,10 +179,21 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 
 	// Anonymous bind — allowed only when LDAPAllowAnonymous is true (the default).
 	if msg.UserName == "" {
+		// RFC 4513 §5.1.2: a non-empty password with an empty DN is an
+		// "unauthenticated bind" which MUST be rejected to prevent clients
+		// from accidentally treating a failed password as a successful
+		// anonymous bind.
+		if msg.Password != "" {
+			resp.SetResultCode(gldap.ResultUnwillingToPerform)
+			return
+		}
 		if !s.cfg.LDAPAllowAnonymous {
 			resp.SetResultCode(gldap.ResultInsufficientAccessRights)
 			return
 		}
+		// Anonymous bind succeeds but is intentionally NOT registered in
+		// authedConns — anonymous sessions must not pass the authenticated
+		// connection check in the search handler.
 		resp.SetResultCode(gldap.ResultSuccess)
 		return
 	}
@@ -234,8 +248,13 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 			oid := ctrl.GetControlType()
 			// RFC 4511 §4.1.11: if an unknown control is marked critical the
 			// server MUST return unavailableCriticalExtension and MUST NOT
-			// process the request.
-			if cs, ok := ctrl.(*gldap.ControlString); ok && cs.Criticality {
+			// process the request. Check ControlString (the gldap catch-all for
+			// unknown OIDs) and any other control type that exposes Criticality.
+			critical := false
+			if cs, ok := ctrl.(*gldap.ControlString); ok {
+				critical = cs.Criticality
+			}
+			if critical {
 				slog.Warn("ldap: unknown critical control received, rejecting request",
 					"oid", oid)
 				resp.SetResultCode(gldap.ResultUnavailableCriticalExtension)
@@ -419,6 +438,10 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			slog.Warn("ldap: skipping user with username exceeding 64 bytes", "user", u.Username[:32]+"...")
 			continue
 		}
+		if reservedUsernames[u.Username] {
+			slog.Warn("ldap: skipping user with reserved system username", "username", u.Username)
+			continue
+		}
 		firstName := u.FirstName
 		if !isValidLDAPAttrValue(firstName) {
 			slog.Warn("ldap: stripping invalid characters from firstName", "user", u.Username)
@@ -440,7 +463,14 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			slog.Warn("ldap: skipping user — UID space exhausted", "user", u.Username)
 			continue
 		}
-		gid := uid // UPG: primary group GID == UID
+		// Assign a dedicated GID for the UPG via the GID map to avoid
+		// collisions with regular group GIDs. The same UUID key is used in
+		// searchGroups so the user's primary GID matches their UPG GID.
+		gid := s.uidmap.GID(u.ID)
+		if gid == -1 {
+			slog.Warn("ldap: skipping user — GID space exhausted", "user", u.Username)
+			continue
+		}
 		dn := fmt.Sprintf("uid=%s,%s", escapeDNValue(u.Username), peopleDN)
 		fullName := strings.TrimSpace(firstName + " " + lastName)
 		if fullName == "" {
@@ -643,9 +673,12 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 		sent++
 	}
 
-	// User Private Groups (one per user, GID == UID)
+	// User Private Groups (one per user)
 	for _, u := range dir.Users {
 		if !isValidLDAPAttrValue(u.Username) {
+			continue // same guard as searchPeople; keeps UPG consistent
+		}
+		if reservedUsernames[u.Username] {
 			continue // same guard as searchPeople; keeps UPG consistent
 		}
 		uid := s.uidmap.UID(u.ID)
@@ -653,12 +686,20 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 			slog.Warn("ldap: skipping UPG — UID space exhausted", "user", u.Username)
 			continue
 		}
+		// Assign a dedicated GID via the GID map to avoid collisions with
+		// regular group GIDs. The same UUID key is used in searchPeople so
+		// the user's primary GID matches their UPG GID.
+		gid := s.uidmap.GID(u.ID)
+		if gid == -1 {
+			slog.Warn("ldap: skipping UPG — GID space exhausted", "user", u.Username)
+			continue
+		}
 		dn := fmt.Sprintf("cn=%s,%s", escapeDNValue(u.Username), groupsDN)
 		// UPGs use the user's PocketID UUID as entryUUID for stable identity tracking.
 		attrs := map[string][]string{
 			"objectClass": {"top", "posixGroup"},
 			"cn":          {u.Username},
-			"gidNumber":   {fmt.Sprintf("%d", uid)},
+			"gidNumber":   {fmt.Sprintf("%d", gid)},
 			"memberUid":   {u.Username},
 			"entryUUID":   {u.ID},
 		}
@@ -727,7 +768,7 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 			continue // all explicit values were invalid — fail-closed
 		}
 		if len(sudoHosts) == 1 && sudoHosts[0] == "ALL" {
-			slog.Debug("sudo rule has sudoHost=ALL (permits execution on any host)", "group", g.Name)
+			slog.Info("sudo rule has sudoHost=ALL (permits execution on any host)", "group", g.Name)
 		}
 
 		// sudoCommand — required, no default
@@ -862,7 +903,7 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 			continue // all explicit values were invalid — fail-closed
 		}
 		if len(sudoHosts) == 1 && sudoHosts[0] == "ALL" {
-			slog.Debug("sudo rule has sudoHost=ALL (permits execution on any host)", "group", rule.Group)
+			slog.Info("sudo rule has sudoHost=ALL (permits execution on any host)", "group", rule.Group)
 		}
 
 		// sudoCommand
@@ -997,6 +1038,18 @@ var reservedGroupNames = map[string]bool{
 	"daemon": true, "bin": true, "sys": true, "staff": true, "operator": true,
 	"sshd": true, "docker": true, "lxd": true, "libvirt": true, "kvm": true,
 	"all": true, // sudoers ALL keyword
+}
+
+// reservedUsernames are system user names that must not be shadowed by IDP users.
+// An IDP user with one of these names would override a POSIX system account on
+// the client host, potentially granting unintended access.
+var reservedUsernames = map[string]bool{
+	"root": true, "daemon": true, "bin": true, "sys": true, "sync": true,
+	"games": true, "man": true, "lp": true, "mail": true, "news": true,
+	"uucp": true, "proxy": true, "www-data": true, "backup": true,
+	"list": true, "irc": true, "gnats": true, "nobody": true, "sshd": true,
+	"systemd-network": true, "systemd-resolve": true, "messagebus": true,
+	"_apt": true, "ntp": true, "postfix": true, "dovecot": true,
 }
 
 // isValidGroupName returns true if the group name is safe for use in LDAP entries.
@@ -1335,6 +1388,13 @@ func buildMemberUids(members []struct{ ID string `json:"id"` }, dir *pocketid.Us
 	for _, m := range members {
 		if u, ok := dir.ByUserID[m.ID]; ok {
 			if !isValidLDAPAttrValue(u.Username) {
+				continue
+			}
+			// Also validate against the full username regex so that names with
+			// special characters (%, @, etc.) cannot appear in sudoUser values
+			// where % is the LDAP group-membership syntax for sudoers.
+			if !validUsernameRe.MatchString(u.Username) {
+				slog.Warn("ldap: skipping user with unsafe username in sudoUser context", "username", u.Username)
 				continue
 			}
 			out = append(out, u.Username)

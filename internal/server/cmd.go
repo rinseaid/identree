@@ -437,6 +437,11 @@ func runServer() {
 	// Periodically flush session state to disk to minimize data loss on crash.
 	go func() {
 		defer close(periodicFlushDone)
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("periodic flush panic recovered", "panic", r)
+			}
+		}()
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
 		for {
@@ -502,7 +507,7 @@ func runServer() {
 				slog.Error("ldap refresh goroutine did not stop within 30s — forced shutdown may cause data race; check for stuck network calls")
 			}
 		}
-		srv.WaitForNotifications(5 * time.Second)
+		srv.WaitForNotifications(45 * time.Second)
 		periodicFlushCancel()
 		select {
 		case <-periodicFlushDone:

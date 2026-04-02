@@ -577,7 +577,7 @@ func (p *PAMClient) createChallenge(username string) (*challengeResponse, error)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		// Limit how much of the error response we read and sanitize for terminal safety
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		safe := sanitize.ForTerminal(string(b))

@@ -1,11 +1,9 @@
 package notify
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"text/template"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -156,20 +154,6 @@ func FormatWebhookNtfy(d WebhookData) ([]byte, error) {
 			{"action": "view", "label": "Approve", "url": d.BestApprovalURL()},
 		},
 	})
-}
-
-// FormatWebhookCustom renders tmpl as a Go text/template with d as data and
-// returns the result as the raw HTTP body (must be valid JSON for most receivers).
-func FormatWebhookCustom(d WebhookData, tmpl string) ([]byte, error) {
-	t, err := template.New("webhook").Parse(tmpl)
-	if err != nil {
-		return nil, err
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, d); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // WebhookClient is a hardened HTTP client for webhook delivery:
