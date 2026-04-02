@@ -680,6 +680,12 @@ func (s *ChallengeStore) LogActionAt(username, action, hostname, code, actor str
 		entry.Actor = actor
 	}
 	s.actionLog[username] = append(s.actionLog[username], entry)
+	// Cap in-memory growth; the disk-rotation prune (maxActionLogPrune) is a
+	// secondary backstop but only fires when the serialized state exceeds 1 MB.
+	if len(s.actionLog[username]) > maxActionLogPrune*2 {
+		entries := s.actionLog[username]
+		s.actionLog[username] = entries[len(entries)-maxActionLogPrune:]
+	}
 	s.dirty.Store(true)
 	s.mu.Unlock()
 }

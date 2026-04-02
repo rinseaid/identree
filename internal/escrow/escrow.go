@@ -422,7 +422,7 @@ func opConnectEscapeTitle(s string) string {
 
 func (b *opConnectBackend) findItem(ctx context.Context, vaultID, title string) (string, error) {
 	filter := `title eq "` + opConnectEscapeTitle(title) + `"`
-	path := fmt.Sprintf("%s/v1/vaults/%s/items?filter=%s", b.baseURL, vaultID, url.QueryEscape(filter))
+	path := fmt.Sprintf("%s/v1/vaults/%s/items?filter=%s", b.baseURL, url.PathEscape(vaultID), url.QueryEscape(filter))
 	respData, err := doJSONRequest(ctx, b.client, "GET", path, nil, "Bearer "+b.token)
 	if err != nil {
 		return "", err
@@ -658,7 +658,7 @@ func (b *bitwardenBackend) Store(ctx context.Context, hostname, password, vault 
 		if projectID != "" {
 			payload["projectIds"] = []string{projectID}
 		}
-		respData, err := doJSONRequest(ctx, b.client, "PUT", b.apiURL+"/secrets/"+existingID, payload, auth)
+		respData, err := doJSONRequest(ctx, b.client, "PUT", b.apiURL+"/secrets/"+url.PathEscape(existingID), payload, auth)
 		if err != nil {
 			return "", "", fmt.Errorf("bitwarden: update secret: %w", err)
 		}
