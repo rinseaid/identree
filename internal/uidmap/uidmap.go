@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -79,8 +80,10 @@ func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
 	if mode := info.Mode().Perm(); mode&0022 != 0 {
 		return nil, fmt.Errorf("uidmap: %s is group/world writable (mode %04o)", path, mode)
 	}
+	// Log a warning if not root-owned (identree may run as non-root in containers),
+	// but don't hard-fail — only writable checks are enforced above.
 	if uid, ok := config.FileOwnerUID(info); ok && uid != 0 {
-		return nil, fmt.Errorf("uidmap: %s is not owned by root (uid=%d)", path, uid)
+		slog.Warn("uidmap: file not owned by root; ensure only the identree process can write it", "path", path, "uid", uid)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxUIDMapBytes+1))
 	if err != nil {
