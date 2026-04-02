@@ -385,5 +385,6 @@
   "manual_download": "Manual download",
   "idp_user": "Identity provider user",
   "pocketid_unavailable": "PocketID is currently unavailable — group permissions may be stale.",
-  "ldap_sync_error": "LDAP sync error"
+  "ldap_sync_error": "LDAP sync error",
+  "reason_optional": "Reason (optional)"
 }

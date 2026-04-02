@@ -21,7 +21,7 @@ func newTestStore(ttl, gracePeriod time.Duration) *ChallengeStore {
 func TestCreate(t *testing.T) {
 	t.Run("basic creation returns a valid challenge", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -47,7 +47,7 @@ func TestCreate(t *testing.T) {
 
 	t.Run("pendingByUser is incremented on creation", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		_, err := s.Create("bob", "host1", "")
+		_, err := s.Create("bob", "host1", "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -58,7 +58,7 @@ func TestCreate(t *testing.T) {
 			t.Errorf("pendingByUser: got %d, want 1", count)
 		}
 
-		_, err = s.Create("bob", "host2", "")
+		_, err = s.Create("bob", "host2", "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -73,12 +73,12 @@ func TestCreate(t *testing.T) {
 	t.Run("maxChallengesPerUser rate limit", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
 		for i := 0; i < maxChallengesPerUser; i++ {
-			_, err := s.Create("carol", "host", "")
+			_, err := s.Create("carol", "host", "", "")
 			if err != nil {
 				t.Fatalf("unexpected error on create %d: %v", i+1, err)
 			}
 		}
-		_, err := s.Create("carol", "host", "")
+		_, err := s.Create("carol", "host", "", "")
 		if err == nil {
 			t.Fatal("expected error when exceeding per-user limit, got nil")
 		}
@@ -90,12 +90,12 @@ func TestCreate(t *testing.T) {
 	t.Run("maxChallengesPerUser limit does not affect other users", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
 		for i := 0; i < maxChallengesPerUser; i++ {
-			if _, err := s.Create("dave", "host", ""); err != nil {
+			if _, err := s.Create("dave", "host", "", ""); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		}
 		// A different user should still be able to create
-		_, err := s.Create("eve", "host", "")
+		_, err := s.Create("eve", "host", "", "")
 		if err != nil {
 			t.Errorf("other user blocked unexpectedly: %v", err)
 		}
@@ -113,7 +113,7 @@ func TestCreate(t *testing.T) {
 		s.totalPending = maxTotalChallenges
 		s.mu.Unlock()
 
-		_, err := s.Create("frank", "host", "")
+		_, err := s.Create("frank", "host", "", "")
 		if err == nil {
 			t.Fatal("expected error when total challenge cap is hit, got nil")
 		}
@@ -124,7 +124,7 @@ func TestCreate(t *testing.T) {
 
 	t.Run("challenge is retrievable by ID and code after creation", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -150,7 +150,7 @@ func TestCreate(t *testing.T) {
 func TestApprove(t *testing.T) {
 	t.Run("normal approval works", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -178,7 +178,7 @@ func TestApprove(t *testing.T) {
 
 	t.Run("double approval returns error", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, _ := s.Create("alice", "host1", "")
+		c, _ := s.Create("alice", "host1", "", "")
 		if err := s.Approve(c.ID, "alice"); err != nil {
 			t.Fatalf("first Approve error: %v", err)
 		}
@@ -191,7 +191,7 @@ func TestApprove(t *testing.T) {
 		// This tests the security fix: if revokeTokensBefore is set after
 		// the challenge was created, Approve must reject the challenge.
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -207,7 +207,7 @@ func TestApprove(t *testing.T) {
 
 	t.Run("expired challenge cannot be approved", func(t *testing.T) {
 		s := newTestStore(1*time.Millisecond, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -229,7 +229,7 @@ func TestApprove(t *testing.T) {
 
 	t.Run("pendingByUser is decremented after Approve", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, _ := s.Create("bob", "host1", "")
+		c, _ := s.Create("bob", "host1", "", "")
 		s.mu.RLock()
 		before := s.pendingByUser["bob"]
 		s.mu.RUnlock()
@@ -253,7 +253,7 @@ func TestAutoApproveIfWithinGracePeriod(t *testing.T) {
 		// Seed a grace session for alice on host1.
 		s.CreateGraceSession("alice", "host1", 10*time.Minute)
 
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -274,7 +274,7 @@ func TestAutoApproveIfWithinGracePeriod(t *testing.T) {
 	t.Run("outside grace period returns false", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 10*time.Minute)
 		// No grace session seeded — grace period has never been set.
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -291,7 +291,7 @@ func TestAutoApproveIfWithinGracePeriod(t *testing.T) {
 		s.lastApproval[graceKey("alice", "host1")] = time.Now().Add(-1 * time.Second)
 		s.mu.Unlock()
 
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -308,7 +308,7 @@ func TestAutoApproveIfWithinGracePeriod(t *testing.T) {
 		s.lastApproval[graceKey("alice", "host1")] = time.Now()
 		s.mu.Unlock()
 
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -325,11 +325,11 @@ func TestAutoApproveIfWithinGracePeriod(t *testing.T) {
 
 		// Create two separate challenges; the first concurrent call to each
 		// should succeed but only the appropriate challenge for each call.
-		c1, err := s.Create("alice", "host1", "")
+		c1, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create c1: %v", err)
 		}
-		c2, err := s.Create("alice", "host1", "")
+		c2, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create c2: %v", err)
 		}
@@ -367,7 +367,7 @@ func TestAutoApproveIfWithinGracePeriod(t *testing.T) {
 		s.mu.Lock()
 		s.lastApproval[graceKey("alice", "host1")] = time.Now().Add(10 * time.Minute)
 		s.mu.Unlock()
-		c, _ := s.Create("alice", "host1", "")
+		c, _ := s.Create("alice", "host1", "", "")
 		if s.AutoApproveIfWithinGracePeriod("alice", "host1", c.ID) {
 			t.Error("expected false when grace period is disabled")
 		}
@@ -445,7 +445,7 @@ func TestGracePeriodRaceRevocation(t *testing.T) {
 		s := newTestStore(5*time.Minute, 10*time.Minute)
 
 		// Create a challenge for alice on host1.
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -465,7 +465,7 @@ func TestGracePeriodRaceRevocation(t *testing.T) {
 		s := newTestStore(5*time.Minute, 10*time.Minute)
 
 		// Create a challenge (this snapshots revokeTokensBefore at creation time).
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -492,7 +492,7 @@ func TestGracePeriodRaceRevocation(t *testing.T) {
 
 		// Small sleep to ensure challenge CreatedAt is strictly after the revocation.
 		time.Sleep(time.Millisecond)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -567,7 +567,7 @@ func TestKnownHostsExcludesRemovedHosts(t *testing.T) {
 func TestDeny(t *testing.T) {
 	t.Run("deny removes challenge from pending and decrements counter", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -602,7 +602,7 @@ func TestDeny(t *testing.T) {
 
 	t.Run("double deny returns an error", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -726,7 +726,7 @@ func TestActionLogConstants(t *testing.T) {
 func TestSetNonce(t *testing.T) {
 	t.Run("nonce is stored on a fresh challenge", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -744,7 +744,7 @@ func TestSetNonce(t *testing.T) {
 
 	t.Run("second SetNonce on same challenge fails", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -759,7 +759,7 @@ func TestSetNonce(t *testing.T) {
 	t.Run("SetNonce on expired challenge fails", func(t *testing.T) {
 		// Create a store with a very short TTL so the challenge expires immediately.
 		s := newTestStore(time.Millisecond, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -782,7 +782,7 @@ func TestSetNonce(t *testing.T) {
 func TestConsumeOneTap(t *testing.T) {
 	t.Run("first consume succeeds", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -793,7 +793,7 @@ func TestConsumeOneTap(t *testing.T) {
 
 	t.Run("second consume of same nonce fails", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -807,7 +807,7 @@ func TestConsumeOneTap(t *testing.T) {
 
 	t.Run("consume on expired challenge fails", func(t *testing.T) {
 		s := newTestStore(time.Millisecond, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -829,7 +829,7 @@ func TestConsumeOneTap(t *testing.T) {
 func TestConsumeAndApprove(t *testing.T) {
 	t.Run("successfully consumes one-tap nonce and approves atomically", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 10*time.Minute)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -860,7 +860,7 @@ func TestConsumeAndApprove(t *testing.T) {
 
 	t.Run("second call on same challenge ID fails (already approved)", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -875,7 +875,7 @@ func TestConsumeAndApprove(t *testing.T) {
 
 	t.Run("call on expired challenge fails", func(t *testing.T) {
 		s := newTestStore(time.Millisecond, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -887,7 +887,7 @@ func TestConsumeAndApprove(t *testing.T) {
 
 	t.Run("call after session revocation fails", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -907,7 +907,7 @@ func TestConsumeAndApprove(t *testing.T) {
 
 	t.Run("approval is reflected via Get after ConsumeAndApprove", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -929,7 +929,7 @@ func TestConsumeAndApprove(t *testing.T) {
 
 	t.Run("grace session is created when grace period is configured", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 10*time.Minute)
-		c, err := s.Create("alice", "host1", "")
+		c, err := s.Create("alice", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -943,7 +943,7 @@ func TestConsumeAndApprove(t *testing.T) {
 
 	t.Run("pendingByUser is decremented after ConsumeAndApprove", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		c, err := s.Create("bob", "host1", "")
+		c, err := s.Create("bob", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -1007,7 +1007,7 @@ func TestAllActiveSessions(t *testing.T) {
 	t.Run("only approved sessions appear — pending challenges do not", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 10*time.Minute)
 		// Create a pending challenge; it should NOT appear in AllActiveSessions.
-		_, err := s.Create("carol", "host1", "")
+		_, err := s.Create("carol", "host1", "", "")
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}

@@ -87,6 +87,12 @@ func (s *Server) getSessionUser(r *http.Request) string {
 		if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
 			return ""
 		}
+		s.revokedNoncesMu.Lock()
+		_, revoked := s.revokedNonces[nonce]
+		s.revokedNoncesMu.Unlock()
+		if revoked {
+			return ""
+		}
 		return username
 	}
 	return ""
@@ -127,6 +133,21 @@ func (s *Server) getSessionRole(r *http.Request) string {
 		expected := hex.EncodeToString(mac.Sum(nil))
 		if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
 			return "user"
+		}
+		s.revokedNoncesMu.Lock()
+		_, revoked := s.revokedNonces[nonce]
+		s.revokedNoncesMu.Unlock()
+		if revoked {
+			return "user"
+		}
+		// C5: if the cookie claims admin but the user was removed from admin
+		// groups after this cookie was issued, downgrade to "user".
+		if role == "admin" {
+			if revokedAt, ok := s.revokedAdminSessions.Load(username); ok {
+				if revokedAt.(time.Time).Unix() > tsInt {
+					return "user"
+				}
+			}
 		}
 		return role
 	}

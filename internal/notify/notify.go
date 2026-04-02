@@ -35,6 +35,7 @@ type WebhookData struct {
 	OneTapURL   string
 	ExpiresIn   int
 	Timestamp   string
+	Reason      string `json:"reason,omitempty"`
 }
 
 // BestApprovalURL returns the one-tap URL if available, otherwise the dashboard URL.
@@ -51,7 +52,7 @@ func FormatWebhookRaw(d WebhookData) ([]byte, error) {
 	if event == "" {
 		event = "challenge_created"
 	}
-	return json.Marshal(map[string]interface{}{
+	payload := map[string]interface{}{
 		"event":        event,
 		"username":     d.Username,
 		"hostname":     d.Hostname,
@@ -60,7 +61,11 @@ func FormatWebhookRaw(d WebhookData) ([]byte, error) {
 		"onetap_url":   d.OneTapURL,
 		"expires_in":   d.ExpiresIn,
 		"timestamp":    d.Timestamp,
-	})
+	}
+	if d.Reason != "" {
+		payload["reason"] = d.Reason
+	}
+	return json.Marshal(payload)
 }
 
 // FormatWebhookApprise returns a payload suitable for an Apprise API endpoint.

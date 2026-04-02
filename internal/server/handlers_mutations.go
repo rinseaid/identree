@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -74,6 +75,10 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Approve the challenge
 	if err := s.store.Approve(challengeID, username); err != nil {
+		if errors.Is(err, challpkg.ErrDiskWriteFailed) {
+			apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
+			return
+		}
 		revokeErrorPage(w, r, http.StatusInternalServerError, "approval_failed", "approval_failed_message")
 		return
 	}
@@ -88,7 +93,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	if hostname == "" {
 		hostname = "(unknown)"
 	}
-	s.store.LogAction(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, username)
+	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, username, challenge.Reason)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "challenge_approved",
@@ -96,6 +101,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		Hostname:  hostname,
 		UserCode:  challenge.UserCode,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Reason:    challenge.Reason,
 	})
 
 	// Redirect back to the dashboard with flash cookie
@@ -283,6 +289,10 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	// under a single lock to eliminate the TOCTOU window where another goroutine could
 	// approve the same challenge between ConsumeOneTap and Approve.
 	if err := s.store.ConsumeAndApprove(challengeID, approver); err != nil {
+		if errors.Is(err, challpkg.ErrDiskWriteFailed) {
+			apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
+			return
+		}
 		revokeErrorPage(w, r, http.StatusConflict, "challenge_expired_or_resolved", "challenge_expired_or_resolved")
 		return
 	}
@@ -290,7 +300,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	challengesApproved.Inc()
 	challpkg.ActiveChallenges.Dec()
 	challengeDuration.Observe(time.Since(challenge.CreatedAt).Seconds())
-	s.store.LogAction(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, approver)
+	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, approver, challenge.Reason)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
 	slog.Info("ONETAP_APPROVED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
 
@@ -409,7 +419,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 			if hostname == "" {
 				hostname = "(unknown)"
 			}
-			s.store.LogAction(username, challpkg.ActionApproved, hostname, c.UserCode, username)
+			s.store.LogActionWithReason(username, challpkg.ActionApproved, hostname, c.UserCode, username, c.Reason)
 			count++
 			slog.Info("BULK_APPROVE_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
 			s.sendEventNotification(notify.WebhookData{
@@ -418,6 +428,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 				Hostname:  hostname,
 				UserCode:  c.UserCode,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				Reason:    c.Reason,
 			})
 		}
 	}
@@ -633,7 +644,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 		hostname = "(unknown)"
 	}
 	slog.Info("REJECTED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
-	s.store.LogAction(challenge.Username, challpkg.ActionRejected, hostname, challenge.UserCode, username)
+	s.store.LogActionWithReason(challenge.Username, challpkg.ActionRejected, hostname, challenge.UserCode, username, challenge.Reason)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "challenge_rejected",
@@ -641,6 +652,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 		Hostname:  hostname,
 		UserCode:  challenge.UserCode,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Reason:    challenge.Reason,
 	})
 
 	s.setFlashCookie(w, "rejected:"+hostname)
@@ -672,7 +684,7 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 			if hostname == "" {
 				hostname = "(unknown)"
 			}
-			s.store.LogAction(username, challpkg.ActionRejected, hostname, c.UserCode, username)
+			s.store.LogActionWithReason(username, challpkg.ActionRejected, hostname, c.UserCode, username, c.Reason)
 			count++
 			slog.Info("BULK_REJECT_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
 			s.sendEventNotification(notify.WebhookData{
@@ -681,6 +693,7 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 				Hostname:  hostname,
 				UserCode:  c.UserCode,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				Reason:    c.Reason,
 			})
 		}
 	}

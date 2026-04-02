@@ -225,6 +225,7 @@ func runServer() {
 			srv.ldapLastSyncMu.Unlock()
 		}
 
+		srv.ldapBound.Store(true)
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -235,6 +236,7 @@ func runServer() {
 			}()
 			if lerr := ldapSrv.Start(ldapCtx); lerr != nil {
 				slog.Error("ldap server stopped", "err", lerr)
+				srv.ldapBound.Store(false)
 			}
 		}()
 
@@ -273,6 +275,9 @@ func runServer() {
 						srv.ldapLastErrorMu.Lock()
 						srv.ldapLastError = nil
 						srv.ldapLastErrorMu.Unlock()
+						srv.cfgMu.Lock()
+						srv.updateAdminRevocations(adminUsernamesFromDirectory(dir, srv.cfg.AdminGroups))
+						srv.cfgMu.Unlock()
 					case <-srv.ldapRefreshCh:
 						dir, ferr := srv.pocketIDClient.FetchDirectory()
 						if ferr != nil {
@@ -292,6 +297,9 @@ func runServer() {
 						srv.ldapLastErrorMu.Lock()
 						srv.ldapLastError = nil
 						srv.ldapLastErrorMu.Unlock()
+						srv.cfgMu.Lock()
+						srv.updateAdminRevocations(adminUsernamesFromDirectory(dir, srv.cfg.AdminGroups))
+						srv.cfgMu.Unlock()
 					}
 				}
 			}()

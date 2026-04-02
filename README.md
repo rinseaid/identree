@@ -376,6 +376,17 @@ go build -trimpath \
 
 ---
 
+## Upgrading
+
+See [docs/upgrading.md](docs/upgrading.md) for:
+
+- Backup and rollback procedures
+- Config variable renames and deprecations
+- Breaking changes (escrow HKDF salt, etc.)
+- Known limitations
+
+---
+
 ## Migrating from pam-pocketid + glauth-pocketid
 
 identree replaces both. Migration is non-breaking.

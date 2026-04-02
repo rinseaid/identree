@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,6 +37,7 @@ type NotifyData struct {
 	OneTapURL   string
 	ExpiresIn   int
 	Timestamp   string
+	Reason      string
 }
 
 // sendNotification fires the configured notification backend asynchronously.
@@ -63,6 +65,7 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 		OneTapURL:   oneTapURL,
 		ExpiresIn:   int(challengeTTL.Seconds()),
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+		Reason:      ch.Reason,
 	}
 
 	s.notifyWg.Add(1)
@@ -124,6 +127,7 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 		Hostname:  d.Hostname,
 		UserCode:  d.UserCode,
 		Timestamp: d.Timestamp,
+		Reason:    d.Reason,
 	}
 	s.notifyWg.Add(1)
 	go func() {
@@ -163,7 +167,8 @@ func (s *Server) sendEventNotification(d notify.WebhookData) {
 	}()
 }
 
-// postNotifyWebhook formats the payload for the configured backend and POSTs it.
+// postNotifyWebhook formats the payload for the configured backend and POSTs it,
+// retrying up to 3 times with exponential backoff on transient (non-4xx) failures.
 // backend, notifyURL, and token are snapshotted config values passed by the caller.
 func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration, backend, notifyURL, token string) error {
 	wd := notify.WebhookData{
@@ -175,6 +180,7 @@ func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration, backend,
 		OneTapURL:   d.OneTapURL,
 		ExpiresIn:   d.ExpiresIn,
 		Timestamp:   d.Timestamp,
+		Reason:      d.Reason,
 	}
 
 	var (
@@ -197,6 +203,47 @@ func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration, backend,
 		return fmt.Errorf("formatting payload: %w", err)
 	}
 
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(1<<uint(attempt-1)) * time.Second) // 1s, 2s
+		}
+		lastErr = s.sendWebhookOnce(body, timeout, notifyURL, token)
+		if lastErr == nil {
+			return nil
+		}
+		// Don't retry on 4xx responses — they indicate a permanent client error
+		// (bad URL, bad token, etc.) that retrying won't fix.
+		if isPermanentWebhookError(lastErr) {
+			return lastErr
+		}
+		slog.Warn("notify: webhook attempt failed", "attempt", attempt+1, "err", lastErr)
+	}
+	return lastErr
+}
+
+// isPermanentWebhookError reports whether err was caused by a 4xx HTTP response.
+func isPermanentWebhookError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// webhookStatusError is set by sendWebhookOnce for HTTP-level failures.
+	var se *webhookStatusError
+	return errors.As(err, &se) && se.status >= 400 && se.status < 500
+}
+
+// webhookStatusError carries the HTTP status code from a failed webhook delivery.
+type webhookStatusError struct {
+	status int
+	body   string
+}
+
+func (e *webhookStatusError) Error() string {
+	return fmt.Sprintf("server returned %d: %s", e.status, e.body)
+}
+
+// sendWebhookOnce performs a single HTTP POST of body to notifyURL.
+func (s *Server) sendWebhookOnce(body []byte, timeout time.Duration, notifyURL, token string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -216,7 +263,7 @@ func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration, backend,
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("server returned %d: %s", resp.StatusCode, sanitize.ForTerminal(string(respBody)))
+		return &webhookStatusError{status: resp.StatusCode, body: sanitize.ForTerminal(string(respBody))}
 	}
 	return nil
 }
@@ -224,6 +271,16 @@ func (s *Server) postNotifyWebhook(d NotifyData, timeout time.Duration, backend,
 // runNotifyCommand executes the custom notify command with NOTIFY_* env vars.
 // command is the snapshotted config value passed by the caller.
 func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command string) error {
+	// Validate user-controlled values before placing them in the shell environment.
+	// Even though env vars aren't interpolated by sh -c directly, a command that
+	// echoes $NOTIFY_HOSTNAME or $NOTIFY_USERNAME into a sub-invocation could
+	// still be exploited if the values contain shell metacharacters.
+	if !validHostname.MatchString(d.Hostname) || !validUsername.MatchString(d.Username) {
+		slog.Error("notify: custom backend: refusing to execute with invalid hostname/username",
+			"hostname", d.Hostname, "username", d.Username)
+		return fmt.Errorf("notify: invalid hostname or username for custom backend")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -244,6 +301,7 @@ func (s *Server) runNotifyCommand(d NotifyData, timeout time.Duration, command s
 		"NOTIFY_ONETAP_URL=" + d.OneTapURL,
 		"NOTIFY_EXPIRES_IN=" + strconv.Itoa(d.ExpiresIn),
 		"NOTIFY_TIMESTAMP=" + d.Timestamp,
+		"NOTIFY_REASON=" + d.Reason,
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer

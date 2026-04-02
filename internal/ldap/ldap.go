@@ -209,6 +209,30 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		return
 	}
 
+	// RFC 2696 SimplePagedResults — identree holds the full directory in memory
+	// and always returns results in a single pass, so paging is a no-op here.
+	// We detect and acknowledge the control so clients (SSSD in particular) do
+	// not treat the missing response control as an error. If gldap ever gains
+	// a first-class paged-response API this can be upgraded.
+	//
+	// Limitation: we do not return a paged-results response control in the
+	// SearchResultDone, which means some strict clients may log a warning.
+	// Returning all results in one response is RFC 2696-compliant for page 0
+	// (i.e. size == 0 means "I support paging but don't restrict the page now").
+	for _, ctrl := range msg.Controls {
+		if ctrl.GetControlType() == gldap.ControlTypePaging {
+			if pc, ok := ctrl.(*gldap.ControlPaging); ok {
+				slog.Debug("ldap: SimplePagedResults control received — returning all results in one page",
+					"requested_page_size", pc.PagingSize)
+			} else {
+				slog.Debug("ldap: SimplePagedResults control received")
+			}
+			// No break — log all controls for observability.
+		} else {
+			slog.Debug("ldap: unknown control received (ignored)", "oid", ctrl.GetControlType())
+		}
+	}
+
 	// Enforce authentication requirement: if anonymous access is disabled,
 	// reject any search from a connection that has not completed a successful
 	// authenticated bind.
@@ -253,10 +277,10 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		case scope == baseLower && msg.Scope == gldap.BaseObject:
 			s.sendRootDSE(w, req, base)
 		case scope == sudoersDN || strings.HasSuffix(scope, ","+sudoersDN):
-			truncated = s.searchSudoersFromStore(w, req, filter, base, limit)
+			truncated = s.searchSudoersFromStore(w, req, filter, msg.Attributes, base, limit)
 		case scope == baseLower:
 			// Subtree from root in bridge mode — only serve sudoers.
-			truncated = s.searchSudoersFromStore(w, req, filter, base, limit)
+			truncated = s.searchSudoersFromStore(w, req, filter, msg.Attributes, base, limit)
 		}
 		if truncated {
 			resp.SetResultCode(gldap.ResultSizeLimitExceeded)
@@ -281,23 +305,23 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		s.sendRootDSE(w, req, base)
 
 	case scope == peopleDN || strings.HasSuffix(scope, ","+peopleDN):
-		truncated = s.searchPeople(w, req, filter, dir, userHosts, base, limit)
+		truncated = s.searchPeople(w, req, filter, msg.Attributes, dir, userHosts, base, limit)
 
 	case scope == groupsDN || strings.HasSuffix(scope, ","+groupsDN):
-		truncated = s.searchGroups(w, req, filter, dir, base, limit)
+		truncated = s.searchGroups(w, req, filter, msg.Attributes, dir, base, limit)
 
 	case scope == sudoersDN || strings.HasSuffix(scope, ","+sudoersDN):
-		truncated = s.searchSudoers(w, req, filter, dir, base, limit)
+		truncated = s.searchSudoers(w, req, filter, msg.Attributes, dir, base, limit)
 
 	case scope == baseLower:
 		// Subtree from root — serve everything. Note: SizeLimit is applied
 		// per sub-search; aggregate may exceed msg.SizeLimit in practice.
-		truncated = s.searchPeople(w, req, filter, dir, userHosts, base, limit)
+		truncated = s.searchPeople(w, req, filter, msg.Attributes, dir, userHosts, base, limit)
 		if !truncated {
-			truncated = s.searchGroups(w, req, filter, dir, base, limit)
+			truncated = s.searchGroups(w, req, filter, msg.Attributes, dir, base, limit)
 		}
 		if !truncated {
-			truncated = s.searchSudoers(w, req, filter, dir, base, limit)
+			truncated = s.searchSudoers(w, req, filter, msg.Attributes, dir, base, limit)
 		}
 	}
 	if truncated {
@@ -319,8 +343,10 @@ func (s *LDAPServer) sendRootDSE(w *gldap.ResponseWriter, req *gldap.Request, ba
 
 // searchPeople sends posixAccount + shadowAccount entries.
 // userHosts is the precomputed username→[]host map from the last Refresh().
+// requestedAttrs is the client's Attributes list from the search message; used
+// to filter the response via filterAttrs.
 // Returns true if the result set was truncated by limit.
-func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, userHosts map[string][]string, base string, limit int) bool {
+func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, filter string, requestedAttrs []string, dir *pocketid.UserDirectory, userHosts map[string][]string, base string, limit int) bool {
 	peopleDN := "ou=people," + base
 
 	// OU container
@@ -436,6 +462,11 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			accountStatus = "inactive"
 		}
 
+		// NOTE: The DN uses uid=<username> which changes if the user renames in
+		// PocketID. This breaks SSSD's cached identity. entryUUID below is the
+		// PocketID UUID — it is stable across renames and SSSD can use it for
+		// reliable identity tracking (ldap_search_base_by_entryuuid). The DN
+		// format is kept as-is to avoid breaking existing SSSD deployments.
 		attrs := map[string][]string{
 			"objectClass":      {"top", "posixAccount", "shadowAccount", "inetOrgPerson"},
 			"uid":              {u.Username},
@@ -451,6 +482,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			"shadowMax":        {"99999"},
 			"shadowWarning":    {"7"},
 			"accountStatus":    {accountStatus},
+			"entryUUID":        {u.ID},
 		}
 		// RFC 4519 forbids empty attribute values; only emit optional attrs when non-empty.
 		if firstName != "" {
@@ -486,7 +518,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 			slog.Warn("ldap: searchPeople result cap reached, truncating response", "limit", limit)
 			return true
 		}
-		entry := req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs))
+		entry := req.NewSearchResponseEntry(dn, gldap.WithAttributes(filterAttrs(attrs, requestedAttrs)))
 		w.Write(entry)
 		sent++
 	}
@@ -494,8 +526,10 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 }
 
 // searchGroups sends posixGroup entries for PocketID groups and User Private Groups.
+// requestedAttrs is the client's Attributes list from the search message; used
+// to filter the response via filterAttrs.
 // Returns true if the result set was truncated by limit.
-func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, base string, limit int) bool {
+func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, filter string, requestedAttrs []string, dir *pocketid.UserDirectory, base string, limit int) bool {
 	groupsDN := "ou=groups," + base
 	peopleDN := "ou=people," + base
 
@@ -534,11 +568,15 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 			name = g.Name
 		}
 
+		// NOTE: The DN uses cn=<groupname> which changes if the group is renamed
+		// in PocketID. entryUUID (the PocketID group UUID) is stable across
+		// renames and allows SSSD to track identity reliably.
 		attrs := map[string][]string{
 			"objectClass": {"top", "posixGroup"},
 			"cn":          {g.Name},
 			"description": {name},
 			"gidNumber":   {fmt.Sprintf("%d", gid)},
+			"entryUUID":   {g.ID},
 		}
 		if len(memberUids) > 0 {
 			attrs["memberUid"] = memberUids
@@ -552,7 +590,7 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 			slog.Warn("ldap: searchGroups result cap reached, truncating response", "limit", limit)
 			return true
 		}
-		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(filterAttrs(attrs, requestedAttrs))))
 		sent++
 	}
 
@@ -567,11 +605,13 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 			continue
 		}
 		dn := fmt.Sprintf("cn=%s,%s", escapeDNValue(u.Username), groupsDN)
+		// UPGs use the user's PocketID UUID as entryUUID for stable identity tracking.
 		attrs := map[string][]string{
 			"objectClass": {"top", "posixGroup"},
 			"cn":          {u.Username},
 			"gidNumber":   {fmt.Sprintf("%d", uid)},
 			"memberUid":   {u.Username},
+			"entryUUID":   {u.ID},
 		}
 		if !matchesFilter(filter, dn, attrs) {
 			continue
@@ -580,7 +620,7 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 			slog.Warn("ldap: searchGroups (UPG) result cap reached, truncating response", "limit", limit)
 			return true
 		}
-		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(filterAttrs(attrs, requestedAttrs))))
 		sent++
 	}
 	return false
@@ -597,8 +637,10 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 //
 // A group is emitted only if it has at least one sudo-related claim and all
 // required fields pass validation. Security validation mirrors glauth-pocketid.
+// requestedAttrs is the client's Attributes list from the search message; used
+// to filter the response via filterAttrs.
 // Returns true if the result set was truncated by limit.
-func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, filter string, dir *pocketid.UserDirectory, base string, limit int) bool {
+func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, filter string, requestedAttrs []string, dir *pocketid.UserDirectory, base string, limit int) bool {
 	sudoersDN := "ou=sudoers," + base
 
 	ouAttrs := map[string][]string{
@@ -706,7 +748,7 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 			slog.Warn("ldap: searchSudoers result cap reached, truncating response", "limit", limit)
 			return true
 		}
-		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(filterAttrs(attrs, requestedAttrs))))
 		sent++
 	}
 	return false
@@ -715,8 +757,10 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 // searchSudoersFromStore emits sudoRole entries from the bridge-mode rules store.
 // sudoUser is set to %groupname (LDAP group membership syntax for sudoers) since
 // individual usernames are not known in bridge mode.
+// requestedAttrs is the client's Attributes list from the search message; used
+// to filter the response via filterAttrs.
 // Returns true if the result set was truncated by limit.
-func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.Request, filter, base string, limit int) bool {
+func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.Request, filter string, requestedAttrs []string, base string, limit int) bool {
 	sudoersDN := "ou=sudoers," + base
 
 	ouAttrs := map[string][]string{
@@ -835,7 +879,7 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 			slog.Warn("ldap: searchSudoersFromStore result cap reached, truncating response", "limit", limit)
 			return true
 		}
-		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		w.Write(req.NewSearchResponseEntry(dn, gldap.WithAttributes(filterAttrs(attrs, requestedAttrs))))
 		sent++
 	}
 	return false
@@ -1145,6 +1189,55 @@ func buildUserHostMap(groups []pocketid.PocketIDAdminGroup, dir *pocketid.UserDi
 		userHosts[user] = deduped
 	}
 	return userHosts
+}
+
+// ── Attribute filtering ───────────────────────────────────────────────────────
+
+// filterAttrs filters an attribute map to only include attributes requested by
+// the client (msg.Attributes). This enforces correctness (clients only see what
+// they ask for) and ensures future sensitive fields are not accidentally returned.
+//
+// Special values per RFC 4511 §4.5.1:
+//   - empty slice  → return all attributes (client made no restriction)
+//   - "*"          → return all user attributes (same as empty for identree)
+//   - "1.1"        → return no attributes (only the DN is meaningful)
+//
+// "objectClass" is always included as it is operationally required by most LDAP
+// clients and is never sensitive.
+func filterAttrs(attrs map[string][]string, requested []string) map[string][]string {
+	if len(requested) == 0 {
+		return attrs // no restriction — return everything
+	}
+	for _, r := range requested {
+		switch r {
+		case "*":
+			return attrs // explicit "all user attributes"
+		case "1.1":
+			// Return no attributes — only the DN itself is meaningful.
+			result := make(map[string][]string, 1)
+			if oc, ok := attrs["objectClass"]; ok {
+				result["objectClass"] = oc
+			}
+			return result
+		}
+	}
+	reqSet := make(map[string]bool, len(requested))
+	for _, r := range requested {
+		reqSet[strings.ToLower(r)] = true
+	}
+	result := make(map[string][]string, len(reqSet))
+	for k, v := range attrs {
+		if reqSet[strings.ToLower(k)] {
+			result[k] = v
+		}
+	}
+	// Always include objectClass — required by most clients and not sensitive.
+	if _, included := result["objectClass"]; !included {
+		if oc, ok := attrs["objectClass"]; ok {
+			result["objectClass"] = oc
+		}
+	}
+	return result
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -228,18 +228,33 @@ PAM_LINE='auth    required    pam_exec.so    stdout /usr/local/bin/identree'
 
 for PAM_FILE in /etc/pam.d/sudo /etc/pam.d/sudo-i; do
     [ -f "$PAM_FILE" ] || continue
-    if grep -q "identree" "$PAM_FILE" 2>/dev/null; then
-        echo "PAM already configured: $PAM_FILE"
-        continue
+    if grep -q "pam_exec.*identree" "$PAM_FILE" 2>/dev/null; then
+        echo "identree PAM line already present in $PAM_FILE, skipping"
+    else
+        cp "$PAM_FILE" "${PAM_FILE}.bak"
+        # Insert before the first auth or @include line
+        awk -v line="$PAM_LINE" '
+            !done && /^(auth[[:space:]]|@include)/ { print line; done=1 }
+            { print }
+        ' "${PAM_FILE}.bak" > "$PAM_FILE"
+        echo "Updated $PAM_FILE (original saved as ${PAM_FILE}.bak)"
     fi
-    cp "$PAM_FILE" "${PAM_FILE}.bak"
-    # Insert before the first auth or @include line
-    awk -v line="$PAM_LINE" '
-        !done && /^(auth[[:space:]]|@include)/ { print line; done=1 }
-        { print }
-    ' "${PAM_FILE}.bak" > "$PAM_FILE"
-    echo "Updated $PAM_FILE (original saved as ${PAM_FILE}.bak)"
 done
+
+# ── nsswitch.conf ─────────────────────────────────────────────────────────────
+
+NSS_FILE="/etc/nsswitch.conf"
+if [ -f "$NSS_FILE" ]; then
+    for NSS_DB in passwd group; do
+        if grep -qE "^${NSS_DB}:.*\bldap\b" "$NSS_FILE" 2>/dev/null; then
+            echo "nsswitch.conf: ldap already present in ${NSS_DB}: line, skipping"
+        else
+            # Append ldap after the existing sources on the matching line
+            sed -i "s/^\(${NSS_DB}:[[:space:]]*.*\)$/\1 ldap/" "$NSS_FILE"
+            echo "nsswitch.conf: added ldap to ${NSS_DB}: line"
+        fi
+    done
+fi
 
 # ── Initial break-glass password ─────────────────────────────────────────────
 

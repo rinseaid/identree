@@ -74,6 +74,25 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "invalid_csrf", http.StatusForbidden)
 				return
 			}
+
+			// Server-side session revocation: extract the nonce from the current
+			// session cookie and add it to revokedNonces so that the same cookie
+			// cannot be replayed before it naturally expires.
+			if cookie, err := r.Cookie(sessionCookieName); err == nil {
+				parts := strings.SplitN(cookie.Value, ":", 5)
+				if len(parts) == 5 {
+					nonce := parts[3]
+					s.revokedNoncesMu.Lock()
+					s.revokedNonces[nonce] = time.Now()
+					s.revokedNoncesMu.Unlock()
+				}
+			}
+
+			// Revoke all active grace sessions for this user so sudo access
+			// ends immediately on signout (Fix 2).
+			for _, sess := range s.store.ActiveSessions(username) {
+				s.store.RevokeSession(sess.Username, sess.Hostname)
+			}
 		}
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: strings.HasPrefix(s.cfg.ExternalURL, "https://")})
@@ -185,6 +204,7 @@ type pendingView struct {
 	Code          string
 	ExpiresIn     string
 	AdminRequired bool
+	Reason        string
 }
 
 // buildPendingViews fetches pending challenges for username and converts them
@@ -208,6 +228,7 @@ func (s *Server) buildPendingViews(username, lang string) []pendingView {
 			Code:          c.UserCode,
 			ExpiresIn:     formatDuration(t, time.Until(c.ExpiresAt)),
 			AdminRequired: s.requiresAdminApproval(c.Hostname),
+			Reason:        c.Reason,
 		})
 	}
 	return views
@@ -238,6 +259,7 @@ func (s *Server) buildAllPendingViews(lang string) []pendingView {
 			Code:          c.UserCode,
 			ExpiresIn:     formatDuration(t, time.Until(c.ExpiresAt)),
 			AdminRequired: s.requiresAdminApproval(c.Hostname),
+			Reason:        c.Reason,
 		})
 	}
 	return views
@@ -352,6 +374,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			Action:    e.Action,
 			Hostname:  e.Hostname,
 			Code:      e.Code,
+			Reason:    e.Reason,
 		})
 	}
 	// Limit dashboard to most recent 5 entries
@@ -1204,6 +1227,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 				Action:    e.Action,
 				Hostname:  e.Hostname,
 				Code:      e.Code,
+				Reason:    e.Reason,
 			})
 		}
 	}
@@ -1494,6 +1518,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 			Username:      e.Username,
 			FormattedTime: e.Timestamp.In(tzLoc).Format("2006-01-02 15:04"),
 			TimeAgo:       timeAgoI18n(e.Timestamp, t),
+			Reason:        e.Reason,
 		})
 	}
 
@@ -1578,9 +1603,9 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/csv")
 			w.Header().Set("Content-Disposition", "attachment; filename=identree-history.csv")
 			cw := csv.NewWriter(w)
-			cw.Write([]string{"username", "timestamp", "action", "hostname", "code", "actor"})
+			cw.Write([]string{"username", "timestamp", "action", "hostname", "code", "actor", "reason"})
 			for _, e := range allHistory {
-				cw.Write([]string{e.Username, e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor})
+				cw.Write([]string{e.Username, e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor, e.Reason})
 			}
 			cw.Flush()
 		case "json":
@@ -1600,9 +1625,9 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
 		w.Header().Set("Content-Disposition", "attachment; filename=identree-history.csv")
 		cw := csv.NewWriter(w)
-		cw.Write([]string{"timestamp", "action", "hostname", "code", "actor"})
+		cw.Write([]string{"timestamp", "action", "hostname", "code", "actor", "reason"})
 		for _, e := range history {
-			cw.Write([]string{e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor})
+			cw.Write([]string{e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor, e.Reason})
 		}
 		cw.Flush()
 	case "json":

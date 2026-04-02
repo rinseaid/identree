@@ -229,6 +229,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Hostname string `json:"hostname"`
+		Reason   string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		apiError(w, http.StatusBadRequest, "invalid request body")
@@ -257,6 +258,15 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Sanitize reason: strip leading/trailing whitespace and truncate to 500 chars.
+	if req.Reason != "" {
+		req.Reason = strings.TrimSpace(req.Reason)
+		const maxReasonLen = 500
+		if len(req.Reason) > maxReasonLen {
+			req.Reason = req.Reason[:maxReasonLen]
+		}
+	}
+
 	// Authenticate: try global shared secret, then per-host secret from registry.
 	// We parse the body first so we have the hostname for per-host auth.
 	authorized, errMsg := s.authenticateChallenge(r, req.Hostname, req.Username)
@@ -280,7 +290,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		rotateBefore = s.cfg.BreakglassRotateBefore.Format(time.RFC3339)
 	}
 
-	challenge, err := s.store.Create(req.Username, req.Hostname, rotateBefore)
+	challenge, err := s.store.Create(req.Username, req.Hostname, rotateBefore, req.Reason)
 	if err != nil {
 		// Rate limit errors are returned by the store when too many challenges exist
 		if errors.Is(err, challpkg.ErrTooManyChallenges) || errors.Is(err, challpkg.ErrTooManyPerUser) {
@@ -317,13 +327,14 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		if hostname == "" {
 			hostname = "(unknown)"
 		}
-		s.store.LogAction(req.Username, challpkg.ActionAutoApproved, hostname, challenge.UserCode, "")
+		s.store.LogActionWithReason(req.Username, challpkg.ActionAutoApproved, hostname, challenge.UserCode, "", challenge.Reason)
 		s.sendEventNotification(notify.WebhookData{
 			Event:     "auto_approved",
 			Username:  req.Username,
 			Hostname:  hostname,
 			UserCode:  challenge.UserCode,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Reason:    challenge.Reason,
 		})
 
 		w.Header().Set("Content-Type", "application/json")
@@ -422,6 +433,10 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read hostname from the request query string so we can verify it matches
+	// the challenge's origin host (Fix C1).
+	reqHostname := strings.ToLower(strings.TrimSuffix(r.URL.Query().Get("hostname"), "."))
+
 	challenge, ok := s.store.Get(id)
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
@@ -429,6 +444,16 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewEncoder(w).Encode(map[string]string{"status": string(challpkg.StatusExpired)}); err != nil {
 			slog.Error("writing JSON response", "err", err)
 		}
+		return
+	}
+
+	// Enforce hostname binding: the polling client's hostname MUST match the
+	// challenge's origin hostname, regardless of whether the global shared secret
+	// or a per-host credential was used for authentication. This prevents a PAM
+	// client on host-B from polling and consuming an approval meant for host-A.
+	if challenge.Hostname != reqHostname {
+		slog.Warn("AUTH_FAILURE poll hostname mismatch", "challenge_host", challenge.Hostname, "req_host", reqHostname, "remote_addr", remoteAddr(r))
+		apiError(w, http.StatusForbidden, "hostname mismatch")
 		return
 	}
 
@@ -508,13 +533,15 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "invalid hostname")
 		return
 	}
-	// When using per-host credentials, restrict the caller to its own hostname
-	// to prevent cross-host grace period and revocation-timestamp disclosure.
-	if s.hostRegistry.IsEnabled() && !s.verifySharedSecret(r) {
+	// Enforce hostname binding: the requesting client's hostname MUST match the
+	// queried hostname regardless of whether the global shared secret or a
+	// per-host credential was used. This prevents a PAM client on host-B from
+	// querying grace-period state for host-A (Fix C1).
+	if s.hostRegistry.IsEnabled() {
 		provided := r.Header.Get("X-Shared-Secret")
 		if !s.hostRegistry.ValidateHost(hostname, provided) {
-			slog.Warn("AUTH_FAILURE grace-status credential does not match hostname", "host", hostname, "remote_addr", remoteAddr(r))
-			apiError(w, http.StatusForbidden, "credential does not match hostname")
+			slog.Warn("AUTH_FAILURE grace-status hostname mismatch", "host", hostname, "remote_addr", remoteAddr(r))
+			apiError(w, http.StatusForbidden, "hostname mismatch")
 			return
 		}
 	}

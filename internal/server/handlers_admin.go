@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -198,30 +199,27 @@ func deriveEscrowLink(backend, escrowURL, escrowPath, itemID, vaultID, webURL, h
 	return ""
 }
 
+// healthCheckResult holds the outcome of a single /healthz check.
+type healthCheckResult struct {
+	disk       string // "ok" or "not_writable"
+	ldapSync   string // "ok" or "stale" (empty when LDAP disabled)
+	pocketid   string // "ok" or "unreachable" (empty when in bridge mode)
+	oidc       string // "ok" or "unreachable"
+	ldapServer string // "ok" or "not_started" (empty when LDAP disabled)
+}
+
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	var failing []string
 
-	if s.cfg.LDAPEnabled {
-		interval := s.cfg.LDAPRefreshInterval
-		if interval <= 0 {
-			interval = 5 * time.Minute
-		}
-		s.ldapLastSyncMu.RLock()
-		last := s.ldapLastSync
-		s.ldapLastSyncMu.RUnlock()
-		if !last.IsZero() && time.Since(last) > 2*interval {
-			failing = append(failing, `"ldap":"stale"`)
-		}
+	res := healthCheckResult{
+		disk: "ok",
 	}
 
+	// ── 1. Disk writability (cached 10 s) ────────────────────────────────────
 	if path := s.cfg.SessionStateFile; path != "" {
-		// Cache the filesystem writability check for 10 seconds to avoid
-		// continuous disk I/O when the endpoint is polled by a load balancer.
 		s.healthzMu.Lock()
 		stateOK := s.healthzStateOK
 		if time.Since(s.healthzLast) > 10*time.Second {
@@ -239,17 +237,151 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		}
 		s.healthzMu.Unlock()
 		if !stateOK {
-			failing = append(failing, `"state_file":"not_writable"`)
+			res.disk = "not_writable"
 		}
 	}
 
-	if len(failing) > 0 {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"status":"degraded","checks":{` + strings.Join(failing, ",") + `}}`))
-		return
+	// ── 2. LDAP sync staleness ────────────────────────────────────────────────
+	if s.cfg.LDAPEnabled {
+		res.ldapSync = "ok"
+		interval := s.cfg.LDAPRefreshInterval
+		if interval <= 0 {
+			interval = 5 * time.Minute
+		}
+		s.ldapLastSyncMu.RLock()
+		last := s.ldapLastSync
+		s.ldapLastSyncMu.RUnlock()
+		if !last.IsZero() && time.Since(last) > 2*interval {
+			res.ldapSync = "stale"
+		}
 	}
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok"}`))
+
+	// ── 3. LDAP server bound ──────────────────────────────────────────────────
+	if s.cfg.LDAPEnabled {
+		if s.ldapBound.Load() {
+			res.ldapServer = "ok"
+		} else {
+			res.ldapServer = "not_started"
+		}
+	}
+
+	// ── 4. External connectivity checks (cached 30 s) ────────────────────────
+	// These are "degraded" failures only — the server can still serve LDAP from
+	// cache even when PocketID or the OIDC issuer is temporarily unreachable.
+	s.healthzConnMu.Lock()
+	needRefresh := time.Since(s.healthzConnLast) > 30*time.Second
+	pocketIDOK := s.healthzPocketIDOK
+	oidcOK := s.healthzOIDCOK
+	s.healthzConnMu.Unlock()
+
+	if needRefresh {
+		probeClient := &http.Client{Timeout: 2 * time.Second}
+
+		// PocketID API probe (full mode only — bridge mode has no API key).
+		newPocketIDOK := true
+		if s.cfg.APIKey != "" && s.cfg.APIURL != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			req, err := http.NewRequestWithContext(ctx, http.MethodHead,
+				strings.TrimRight(s.cfg.APIURL, "/")+"/api/v1/users", nil)
+			if err == nil {
+				resp, rerr := probeClient.Do(req)
+				if rerr != nil || resp.StatusCode >= 500 {
+					newPocketIDOK = false
+				}
+				if resp != nil {
+					resp.Body.Close()
+				}
+			}
+			cancel()
+		}
+
+		// OIDC issuer probe.
+		newOIDCOK := true
+		if s.cfg.IssuerURL != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+				strings.TrimRight(s.cfg.IssuerURL, "/")+"/.well-known/openid-configuration", nil)
+			if err == nil {
+				resp, rerr := probeClient.Do(req)
+				if rerr != nil || resp.StatusCode >= 500 {
+					newOIDCOK = false
+				}
+				if resp != nil {
+					resp.Body.Close()
+				}
+			}
+			cancel()
+		}
+
+		s.healthzConnMu.Lock()
+		s.healthzPocketIDOK = newPocketIDOK
+		s.healthzOIDCOK = newOIDCOK
+		s.healthzConnLast = time.Now()
+		s.healthzConnMu.Unlock()
+
+		pocketIDOK = newPocketIDOK
+		oidcOK = newOIDCOK
+	}
+
+	// Populate connectivity results.
+	if s.cfg.APIKey != "" && s.cfg.APIURL != "" {
+		if pocketIDOK {
+			res.pocketid = "ok"
+		} else {
+			res.pocketid = "unreachable"
+		}
+	}
+	if s.cfg.IssuerURL != "" {
+		if oidcOK {
+			res.oidc = "ok"
+		} else {
+			res.oidc = "unreachable"
+		}
+	}
+
+	// ── Build response ────────────────────────────────────────────────────────
+	// Critical failures (disk unwritable, LDAP sync stale, LDAP server not
+	// started) → 503 "unhealthy".
+	// Degraded failures (PocketID or OIDC unreachable) → 200 "degraded" because
+	// the server can continue serving LDAP queries from its in-memory cache.
+	criticalFail := res.disk == "not_writable" ||
+		res.ldapSync == "stale" ||
+		res.ldapServer == "not_started"
+	degradedFail := res.pocketid == "unreachable" || res.oidc == "unreachable"
+
+	checksJSON := buildChecksJSON(res)
+
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case criticalFail:
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"unhealthy","checks":{` + checksJSON + `}}`))
+	case degradedFail:
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"degraded","checks":{` + checksJSON + `}}`))
+	default:
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok","checks":{` + checksJSON + `}}`))
+	}
+}
+
+// buildChecksJSON serialises a healthCheckResult as a JSON object body
+// (without the surrounding braces) for inlining into the response.
+func buildChecksJSON(res healthCheckResult) string {
+	pairs := []string{`"disk":"` + res.disk + `"`}
+	if res.ldapSync != "" {
+		pairs = append(pairs, `"ldap_sync":"`+res.ldapSync+`"`)
+	}
+	if res.pocketid != "" {
+		pairs = append(pairs, `"pocketid":"`+res.pocketid+`"`)
+	}
+	if res.oidc != "" {
+		pairs = append(pairs, `"oidc":"`+res.oidc+`"`)
+	}
+	if res.ldapServer != "" {
+		pairs = append(pairs, `"ldap_server":"`+res.ldapServer+`"`)
+	}
+	return strings.Join(pairs, ",")
 }
 
 
@@ -714,7 +846,7 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 	} {
 		if v := values[key]; v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
-				return fmt.Errorf("invalid duration for %s: %q", key, v)
+				return fmt.Errorf("invalid duration for %s %q: %w", key, v, err)
 			}
 		}
 	}
@@ -724,7 +856,7 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 	} {
 		if v := values[key]; v != "" {
 			if _, err := strconv.Atoi(v); err != nil {
-				return fmt.Errorf("invalid integer for %s: %q", key, v)
+				return fmt.Errorf("invalid integer for %s %q: %w", key, v, err)
 			}
 		}
 	}
@@ -868,6 +1000,10 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 			if fmt.Sprintf("%v", newGroups) != fmt.Sprintf("%v", s.cfg.AdminGroups) {
 				slog.Info("ADMIN_GROUPS_CHANGED", "actor", actor,
 					"old_groups", s.cfg.AdminGroups, "new_groups", newGroups)
+				// C5: admin groups changed — revoke all previously-known admin
+				// sessions. The next directory refresh will rebuild prevAdminUsernames
+				// with the correct membership for the new groups.
+				s.updateAdminRevocations(map[string]bool{})
 			}
 			s.cfg.AdminGroups = newGroups
 		}
@@ -2164,6 +2300,65 @@ func (s *Server) handleGetUserClaims(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleAdminTestNotification sends a test notification via the configured backend
+// and returns the result as JSON so operators can verify their webhook setup.
+// POST /api/admin/test-notification
+func (s *Server) handleAdminTestNotification(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	actor := s.verifyJSONAdminAuth(w, r)
+	if actor == "" {
+		return
+	}
+
+	s.cfgMu.RLock()
+	backend := s.cfg.NotifyBackend
+	timeout := s.cfg.NotifyTimeout
+	command := s.cfg.NotifyCommand
+	token := s.cfg.NotifyToken
+	notifyURL := s.cfg.NotifyURL
+	s.cfgMu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if backend == "" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "no notification backend configured"})
+		return
+	}
+
+	d := NotifyData{
+		Event:     "test",
+		Username:  "test-user",
+		Hostname:  "test-host",
+		UserCode:  "TEST-001",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if timeout <= 0 {
+		timeout = notifyTimeout
+	}
+
+	var err error
+	if backend == "custom" {
+		err = s.runNotifyCommand(d, timeout, command)
+	} else {
+		err = s.postNotifyWebhook(d, timeout, backend, notifyURL, token)
+	}
+
+	if err != nil {
+		slog.Warn("admin test-notification failed", "actor", actor, "backend", backend, "err", err)
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	slog.Info("admin test-notification sent", "actor", actor, "backend", backend)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
 
 // handleAdminRestart exits the process so the container/process supervisor can restart it,

@@ -586,7 +586,11 @@ func (p *PAMClient) createChallenge(username string) (*challengeResponse, error)
 }
 
 func (p *PAMClient) pollChallenge(challengeID string) (*pollResponse, error) {
-	req, err := http.NewRequest(http.MethodGet, p.cfg.ServerURL+"/api/challenge/"+challengeID, nil)
+	pollURL := p.cfg.ServerURL + "/api/challenge/" + challengeID
+	if p.hostname != "" {
+		pollURL += "?hostname=" + neturl.QueryEscape(p.hostname)
+	}
+	req, err := http.NewRequest(http.MethodGet, pollURL, nil)
 	if err != nil {
 		return nil, err
 	}

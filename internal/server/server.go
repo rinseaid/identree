@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -81,9 +82,20 @@ type Server struct {
 	authFailRL *authFailTracker   // per-IP auth-failure backoff on /api/challenge
 
 	// healthz filesystem check cache: avoids disk I/O on every probe.
-	healthzMu       sync.Mutex
-	healthzLast     time.Time
-	healthzStateOK  bool
+	healthzMu      sync.Mutex
+	healthzLast    time.Time
+	healthzStateOK bool
+
+	// healthzConn caches the external connectivity probe results (PocketID + OIDC)
+	// for 30 seconds to avoid hammering external services on every probe.
+	healthzConnMu     sync.Mutex
+	healthzConnLast   time.Time
+	healthzPocketIDOK bool
+	healthzOIDCOK     bool
+
+	// ldapBound is set to true once the LDAP listener goroutine has started.
+	// It is never reset to false (a stopped listener causes the process to exit).
+	ldapBound atomic.Bool
 
 	// Recently-removed users: excluded from PocketID merge until cleared.
 	removedUsers   map[string]time.Time
@@ -106,6 +118,23 @@ type Server struct {
 	// keyed by "hostname:timestamp" to prevent replay within the 5-minute window.
 	usedEscrowTokens   map[string]time.Time
 	usedEscrowTokensMu sync.Mutex
+
+	// revokedNonces tracks nonces of server-side-revoked session cookies.
+	// Entries are keyed by nonce and hold the revocation time; they are pruned
+	// once sessionCookieTTL has elapsed (the cookie would have expired anyway).
+	revokedNonces   map[string]time.Time
+	revokedNoncesMu sync.Mutex
+
+	// revokedAdminSessions maps username → time.Time of the most recent admin
+	// role revocation. getSessionRole() uses this to downgrade "admin" cookies
+	// that were issued before the revocation time. Entries are pruned
+	// periodically once sessionCookieTTL has elapsed.
+	revokedAdminSessions sync.Map
+
+	// prevAdminUsernames holds the set of usernames that were members of an
+	// AdminGroups-matching group as of the last successful directory refresh or
+	// live config update.  Protected by cfgMu.
+	prevAdminUsernames map[string]bool
 }
 
 var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
@@ -205,6 +234,8 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		authFailRL:    newAuthFailTracker(),
 		removedUsers:       make(map[string]time.Time),
 		usedEscrowTokens:   make(map[string]time.Time),
+		revokedNonces:      make(map[string]time.Time),
+		prevAdminUsernames: make(map[string]bool),
 		ldapRefreshCh:  make(chan struct{}, 1),
 		oidcHTTPClient: oidcHTTPClient,
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
@@ -247,6 +278,32 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		slog.Error("IDENTREE_WEBHOOK_SECRET is not set — incoming PocketID webhooks are unauthenticated; this is a DoS vector in production")
 	}
 
+	// Periodically prune revokedNonces entries that have outlived sessionCookieTTL.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			cutoff := time.Now().Add(-sessionCookieTTL)
+
+			s.revokedNoncesMu.Lock()
+			for nonce, revokedAt := range s.revokedNonces {
+				if revokedAt.Before(cutoff) {
+					delete(s.revokedNonces, nonce)
+				}
+			}
+			s.revokedNoncesMu.Unlock()
+
+			// Prune revokedAdminSessions entries older than sessionCookieTTL.
+			// Any cookie issued before that point has already expired naturally.
+			s.revokedAdminSessions.Range(func(k, v any) bool {
+				if v.(time.Time).Before(cutoff) {
+					s.revokedAdminSessions.Delete(k)
+				}
+				return true
+			})
+		}
+	}()
+
 	s.registerRoutes()
 	return s, nil
 }
@@ -260,6 +317,49 @@ func (s *Server) ldapSyncError() string {
 		return ""
 	}
 	return fmt.Sprintf("%s (at %s)", s.ldapLastError.Error(), s.ldapLastErrorAt.Format("15:04:05"))
+}
+
+// updateAdminRevocations compares newAdminUsernames against the previously-known
+// admin set (s.prevAdminUsernames) and records a revocation timestamp for any
+// username that has been removed. It also updates s.prevAdminUsernames.
+//
+// Callers MUST hold s.cfgMu (write lock) before calling this method because
+// both prevAdminUsernames and AdminGroups are protected by that mutex.
+func (s *Server) updateAdminRevocations(newAdminUsernames map[string]bool) {
+	now := time.Now()
+	for username := range s.prevAdminUsernames {
+		if !newAdminUsernames[username] {
+			s.revokedAdminSessions.Store(username, now)
+			slog.Info("admin role revoked for user removed from admin groups", "user", username)
+		}
+	}
+	s.prevAdminUsernames = newAdminUsernames
+}
+
+// adminUsernamesFromDirectory returns the set of usernames that belong to at
+// least one group whose name matches an entry in adminGroups.
+// adminGroups must be a snapshot taken under cfgMu.
+func adminUsernamesFromDirectory(dir *pocketid.UserDirectory, adminGroups []string) map[string]bool {
+	if dir == nil || len(adminGroups) == 0 {
+		return map[string]bool{}
+	}
+	adminGroupSet := make(map[string]bool, len(adminGroups))
+	for _, g := range adminGroups {
+		adminGroupSet[g] = true
+	}
+	result := make(map[string]bool)
+	for i := range dir.Groups {
+		g := &dir.Groups[i]
+		if !adminGroupSet[g.Name] {
+			continue
+		}
+		for _, m := range g.Members {
+			if u, ok := dir.ByUserID[m.ID]; ok && u.Username != "" {
+				result[u.Username] = true
+			}
+		}
+	}
+	return result
 }
 
 // removedUsersSnapshot returns a snapshot of recently-removed usernames for use
@@ -330,6 +430,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/admin/users/claims", s.handleUpdateUserClaims)
 	s.mux.HandleFunc("/api/admin/users/claims-json", s.handleGetUserClaims)
 	s.mux.HandleFunc("/api/admin/restart", s.handleAdminRestart)
+	s.mux.HandleFunc("/api/admin/test-notification", s.handleAdminTestNotification)
 
 	// Sudo rules (bridge mode only)
 	s.mux.HandleFunc("/admin/sudo-rules", s.handleAdminSudoRules)

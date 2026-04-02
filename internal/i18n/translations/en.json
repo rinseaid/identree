@@ -372,8 +372,7 @@
   "cfg_session_state_file": "Session State File",
   "cfg_webhook_secret": "Webhook Secret",
   "cfg_dev_login": "Dev Login",
-  "n_keys": "%d keys"
-,
+  "n_keys": "%d keys",
   "skip_to_content": "Skip to content",
   "hide": "Hide",
   "breakglass_password": "Break-glass password",
@@ -386,5 +385,6 @@
   "manual_download": "Manual download",
   "idp_user": "Identity provider user",
   "pocketid_unavailable": "PocketID is currently unavailable — group permissions may be stale.",
-  "ldap_sync_error": "LDAP sync error"
+  "ldap_sync_error": "LDAP sync error",
+  "reason_optional": "Reason (optional)"
 }

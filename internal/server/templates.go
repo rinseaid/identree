@@ -713,19 +713,20 @@ const sharedCSS = `
 // pending sudo challenges: inline approve/reject for a single challenge,
 // or a "Review" button opening a modal table for multiple.
 const pendingBarHTML = `{{if .Pending}}
-<div class="pending-bar">
+<div class="pending-bar" aria-live="polite" aria-atomic="false">
   <span class="pbar-icon">&#x26A0;</span>
   {{if eq (len .Pending) 1}}{{with index .Pending 0}}
   <span class="pbar-main">
-    {{if $.IsAdmin}}<strong class="pbar-host">{{.Username}}</strong><span class="pbar-sep">@</span>{{end}}<strong class="pbar-host">{{.Hostname}}</strong><span class="pbar-sep">·</span><span class="pbar-code">{{.Code}}</span><span class="pbar-sep">·</span><span class="pbar-exp">{{call $.T "expires_in"}} {{.ExpiresIn}}</span>
+    {{if $.IsAdmin}}<strong class="pbar-host">{{.Username}}</strong><span class="pbar-sep">@</span>{{end}}<strong class="pbar-host">{{.Hostname}}</strong><span class="pbar-sep">·</span><span class="pbar-code">{{.Code}}</span><span class="pbar-sep">·</span><span class="pbar-exp">{{call $.T "expires_in"}} {{.ExpiresIn}}</span>{{if .Reason}}<span class="pbar-sep">·</span><span class="challenge-reason" style="font-size:0.8125rem;color:var(--text-2);font-style:italic">"{{.Reason}}"</span>{{end}}
   </span>
   <div class="pbar-actions">
     {{if or (not .AdminRequired) $.IsAdmin}}
-    <form method="POST" action="/api/challenges/approve">
+    <form method="POST" action="/api/challenges/approve" style="display:flex;align-items:center;gap:4px">
       <input type="hidden" name="challenge_id" value="{{.ID}}">
       <input type="hidden" name="username" value="{{$.Username}}">
       <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
       <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+      <input type="text" name="reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:120px">
       <button type="submit" class="btn btn-success btn-sm">{{call $.T "approve"}}</button>
     </form>
     {{end}}
@@ -759,7 +760,7 @@ const pendingBarHTML = `{{if .Pending}}
       {{range .Pending}}
       <div class="pending-table-row" role="row">
         {{if $.IsAdmin}}<div class="gtcol" role="cell"><span class="pill user">{{.Username}}</span></div>{{end}}
-        <div class="gtcol" role="cell"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}</div>
+        <div class="gtcol" role="cell"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}{{if .Reason}}<span class="challenge-reason" style="display:block;font-size:0.75rem;color:var(--text-2);font-style:italic;margin-top:2px">"{{.Reason}}"</span>{{end}}</div>
         <div class="gtcol" role="cell"><span class="row-code" style="display:inline">{{.Code}}</span></div>
         <div class="gtcol" role="cell"><span style="font-size:0.8125rem;color:var(--text-2)">{{.ExpiresIn}}</span></div>
         <div class="gtcol pending-table-actions" role="cell">
@@ -769,6 +770,7 @@ const pendingBarHTML = `{{if .Pending}}
             <input type="hidden" name="username" value="{{$.Username}}">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+            <input type="text" name="reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:140px;margin-right:4px">
             <button type="submit" class="btn btn-success btn-sm">{{call $.T "approve"}}</button>
           </form>
           {{end}}
@@ -873,6 +875,7 @@ type historyViewEntry struct {
 	Username      string
 	FormattedTime string
 	TimeAgo       string
+	Reason        string
 }
 
 // timelineEntry represents one hour-slot in the 24-hour activity timeline.
@@ -1021,13 +1024,36 @@ const dashboardHTML = `<!DOCTYPE html>
       filterBtn.addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();activeOnly=!activeOnly;localStorage.setItem('pam_active_only',activeOnly?'1':'0');applyFilter();}});
     }
   });
-  var es = new EventSource('/api/events');
-  es.addEventListener('update', function(e) { location.reload(); });
-  es.onerror = function() { setTimeout(function() { if (es.readyState === 2) location.reload(); }, 60000); };
+  function connectSSE(url, onMessage, onError) {
+    var delay = 1000;
+    var es;
+    function connect() {
+      es = new EventSource(url);
+      es.addEventListener('update', onMessage);
+      es.onerror = function() {
+        es.close();
+        if (onError) onError(es);
+        setTimeout(connect, delay);
+        delay = Math.min(delay * 2, 30000);
+      };
+    }
+    connect();
+    return function() { if (es) es.close(); };
+  }
+  var _dashSSECleanup = connectSSE('/api/events', function(e) {
+    if (e && e.data && e.data.indexOf('401') !== -1) { window.location.href = '/login'; return; }
+    location.reload();
+  }, function(es) {
+    // on repeated errors, check if session expired by a quick fetch
+  });
+  window.addEventListener('beforeunload', function() { _dashSSECleanup(); });
   document.querySelectorAll('.saction-btn[type=submit]').forEach(function(btn){
-    btn.closest('form').addEventListener('submit',function(){
+    btn.addEventListener('click',function(e){
+      if(btn.dataset.confirm){if(!confirm(btn.dataset.confirm)){return;}}
+      e.preventDefault();
       btn.disabled=true;
       btn.style.opacity='0.6';
+      btn.closest('form').submit();
     });
   });
   </script>
@@ -1308,9 +1334,16 @@ const dashboardHTML = `<!DOCTYPE html>
       document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
       filterUser();
     })();
-    // L5: prevent double-submit on approve/reject forms
+    // L5: prevent double-submit on approve/reject forms — intercept click, not submit
     document.querySelectorAll('.list form, .bulk-row form').forEach(function(f){
-      f.addEventListener('submit',function(){var btn=f.querySelector('button[type=submit]');if(btn){btn.disabled=true;}});
+      var btn=f.querySelector('button[type=submit]');
+      if(!btn)return;
+      btn.addEventListener('click',function(e){
+        if(btn.dataset.confirm){if(!confirm(btn.dataset.confirm)){return;}}
+        e.preventDefault();
+        btn.disabled=true;
+        f.submit();
+      });
     });
     </script>
     {{end}}{{/* end non-admin branch */}}
@@ -1450,6 +1483,15 @@ const historyPageHTML = `<!DOCTYPE html>
       if(ffc)ffc.addEventListener('click',function(){document.querySelectorAll('#history-gtable .gtcol-filter-input').forEach(function(inp){inp.value='';});filterHistory();});
     })();
   });
+  // Fix 4: Poll every 30 seconds and reload if no unsaved filter state
+  setInterval(function(){
+    if(!document.querySelector('form.dirty')){
+      fetch(window.location.href,{method:'HEAD'}).then(function(r){
+        if(r.status===401){window.location.href='/login';return;}
+        location.reload();
+      }).catch(function(){});
+    }
+  },30000);
   </script>
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
@@ -1765,6 +1807,7 @@ const adminPageHTML = `<!DOCTYPE html>
       document.getElementById('deploy-key-invalid').style.display='none';
       fetch('/api/deploy/pubkey',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},_csrf),body:JSON.stringify({private_key:pem})})
       .then(function(r){
+        if(r.status===401){window.location.href='/login';return;}
         if(!r.ok){return r.text().then(function(t){throw new Error(t||r.statusText);});}
         return r.json();
       })
@@ -1804,7 +1847,7 @@ const adminPageHTML = `<!DOCTYPE html>
       var _deployUsers=[];
       var sel=document.getElementById('deploy-pocketid-user');
       sel.innerHTML='<option value="">'+_t.loadingUsers+'</option>';
-      fetch('/api/deploy/users').then(function(r){return r.json();}).then(function(users){
+      fetch('/api/deploy/users').then(function(r){if(r.status===401){window.location.href='/login';return Promise.reject('401');}return r.json();}).then(function(users){
         _deployUsers=users||[];
         sel.innerHTML='<option value="">(none)</option>';
         _deployUsers.forEach(function(u){
@@ -1891,10 +1934,12 @@ const adminPageHTML = `<!DOCTYPE html>
         deploySubmitBtn.textContent=_t.starting;
         fetch('/api/deploy',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},_csrf),body:JSON.stringify({hostname:host,port:port,ssh_user:sshUser,private_key:deployPrivKey,pocketid_user:pocketidUser})})
         .then(function(r){
+          if(r.status===401){window.location.href='/login';return;}
           if(!r.ok){if(r.status===403){throw new Error(_t.deployForbidden);}return r.text().then(function(t){throw new Error(t||r.statusText);});}
           return r.json();
         })
         .then(function(data){
+          if(!data)return;
           deployPrivKey=''; // clear key from memory once submitted
           deploySubmitBtn.disabled=false;
           deploySubmitBtn.textContent=_t.deployRun;
@@ -1903,16 +1948,19 @@ const adminPageHTML = `<!DOCTYPE html>
           var logEl=document.getElementById('deploy-log');
           var statusEl=document.getElementById('deploy-status');
           var es=new EventSource('/api/deploy/stream/'+data.id);
+          var _deployUnload=function(){es.close();};
+          window.addEventListener('beforeunload',_deployUnload);
           es.addEventListener('message',function(e){
             logEl.textContent+=e.data+'\n';
             logEl.scrollTop=logEl.scrollHeight;
           });
           es.addEventListener('status',function(e){
             es.close();
+            window.removeEventListener('beforeunload',_deployUnload);
             if(e.data==='done'){statusEl.textContent='\u2713 '+_t.deployOk;statusEl.className='deploy-status ok';deployDone=true;}
             else{statusEl.textContent='\u2717 '+_t.deployFailed;statusEl.className='deploy-status err';}
           });
-          es.onerror=function(){es.close();if(!statusEl.textContent){statusEl.textContent=_t.connLost;statusEl.className='deploy-status err';}};
+          es.onerror=function(){es.close();window.removeEventListener('beforeunload',_deployUnload);if(!statusEl.textContent){statusEl.textContent=_t.connLost;statusEl.className='deploy-status err';}};
         })
         .catch(function(err){
           deploySubmitBtn.disabled=false;
@@ -1933,10 +1981,13 @@ const adminPageHTML = `<!DOCTYPE html>
     list.classList.toggle('visible',!open);
     chip.classList.toggle('open',!open);
   });
-  document.querySelectorAll('.saction-btn[type=submit]').forEach(function(btn){
-    btn.closest('form').addEventListener('submit',function(){
+  document.querySelectorAll('.saction-btn[type=submit]:not(.config-save-btn)').forEach(function(btn){
+    btn.addEventListener('click',function(e){
+      if(btn.dataset.confirm){if(!confirm(btn.dataset.confirm)){return;}}
+      e.preventDefault();
       btn.disabled=true;
       btn.style.opacity='0.6';
+      btn.closest('form').submit();
     });
   });
   </script>
@@ -2153,9 +2204,15 @@ const adminPageHTML = `<!DOCTYPE html>
       (function(){
         var configForm=document.querySelector('form[action="/admin/config"]');
         if(!configForm)return;
-        configForm.addEventListener('submit',function(e){
-          var btn=e.submitter||configForm.querySelector('.config-save-btn:focus')||configForm.querySelector('.config-save-btn');
-          if(btn){btn.disabled=true;btn.textContent='Saving…';}
+        // Intercept click on each save button before submission (Fix 2)
+        configForm.querySelectorAll('.config-save-btn').forEach(function(btn){
+          btn.addEventListener('click',function(e){
+            e.preventDefault();
+            btn.disabled=true;
+            btn.textContent='Saving\u2026';
+            submitted=true;
+            configForm.submit();
+          });
         });
       })();
 
@@ -2385,7 +2442,7 @@ const adminPageHTML = `<!DOCTYPE html>
           var saveBtn=form.querySelector('button[type=submit]');
           if(saveBtn)saveBtn.disabled=true;
           fetch(form.action,{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(form))})
-            .then(function(r){return r.ok?r.json():r.text().then(function(t){throw new Error(t);});})
+            .then(function(r){if(r.status===401){window.location.href='/login';return;}return r.ok?r.json():r.text().then(function(t){throw new Error(t);});})
             .then(function(){
               var ok=document.createElement('span');
               ok.textContent=' ✓ Saved';ok.style.cssText='color:var(--success);font-size:0.8125rem;font-weight:600';
@@ -2575,7 +2632,7 @@ const adminPageHTML = `<!DOCTYPE html>
           var saveBtn=form.querySelector('button[type=submit]');
           if(saveBtn)saveBtn.disabled=true;
           fetch(form.action,{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(form))})
-            .then(function(r){return r.ok?r.json():r.text().then(function(t){throw new Error(t);});})
+            .then(function(r){if(r.status===401){window.location.href='/login';return;}return r.ok?r.json():r.text().then(function(t){throw new Error(t);});})
             .then(function(){
               var ok=document.createElement('span');
               ok.textContent=' ✓ Saved';ok.style.cssText='color:var(--success);font-size:0.8125rem;font-weight:600';
@@ -2696,6 +2753,7 @@ const adminPageHTML = `<!DOCTYPE html>
           btn.disabled=true;
           fetch('/api/breakglass/reveal',{method:'POST',body:body,headers:{'Content-Type':'application/x-www-form-urlencoded'}})
             .then(function(r){
+              if(r.status===401){window.location.href='/login';return;}
               if(!r.ok)return r.text().then(function(t){throw new Error(t.trim()||r.statusText);});
               return r.json();
             })
@@ -2724,7 +2782,7 @@ const adminPageHTML = `<!DOCTYPE html>
                 if(!rotated){
                   rotated=true;
                   fetch('/api/hosts/rotate',{method:'POST',body:body,headers:{'Content-Type':'application/x-www-form-urlencoded'}})
-                    .then(function(rr){if(rr.ok&&rotateNote)rotateNote.style.display='block';})
+                    .then(function(rr){if(rr.status===401){window.location.href='/login';return;}if(rr.ok&&rotateNote)rotateNote.style.display='block';})
                     .catch(function(){});
                 }
               };
@@ -3022,7 +3080,7 @@ const adminPageHTML = `<!DOCTYPE html>
     var pam=document.getElementById('remove-pam')?document.getElementById('remove-pam').checked:true;
     var files=document.getElementById('remove-files')?document.getElementById('remove-files').checked:true;
     fetch('/api/deploy/uninstall-script?pam='+pam+'&files='+files)
-      .then(function(r){return r.text();})
+      .then(function(r){if(r.status===401){window.location.href='/login';return Promise.reject('401');}return r.text();})
       .then(function(t){removeScriptContent=t;if(removeScriptEl)removeScriptEl.textContent=t;})
       .catch(function(){if(removeScriptEl)removeScriptEl.textContent='(failed to load)';});
   }
@@ -3130,21 +3188,24 @@ const adminPageHTML = `<!DOCTYPE html>
         removeConfirmBtn.disabled=true;
         removeConfirmBtn.textContent='Removing\u2026';
         fetch('/api/deploy/remove',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},_csrf),body:JSON.stringify(payload)})
-          .then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error(t);});return r.json();})
+          .then(function(r){if(r.status===401){window.location.href='/login';return Promise.reject('401');}if(!r.ok)return r.text().then(function(t){throw new Error(t);});return r.json();})
           .then(function(data){
             document.getElementById('remove-form-area').style.display='none';
             document.getElementById('remove-log-area').style.display='';
             var logEl=document.getElementById('remove-log');
             var statusEl=document.getElementById('remove-status');
             var es=new EventSource('/api/deploy/stream/'+data.id);
+            var _removeUnload=function(){es.close();};
+            window.addEventListener('beforeunload',_removeUnload);
             es.addEventListener('message',function(e){logEl.textContent+=e.data+'\n';logEl.scrollTop=logEl.scrollHeight;});
             es.addEventListener('status',function(e){
               es.close();
+              window.removeEventListener('beforeunload',_removeUnload);
               removeCloseBtn.setAttribute('data-reload','1');
               if(e.data==='done'){statusEl.textContent='\u2713 Host removed successfully.';statusEl.className='deploy-status ok';}
               else{statusEl.textContent='\u2717 Removal failed.';statusEl.className='deploy-status err';}
             });
-            es.onerror=function(){es.close();if(!statusEl.textContent){statusEl.textContent='Connection lost.';statusEl.className='deploy-status err';}};
+            es.onerror=function(){es.close();window.removeEventListener('beforeunload',_removeUnload);if(!statusEl.textContent){statusEl.textContent='Connection lost.';statusEl.className='deploy-status err';}};
           })
           .catch(function(err){
             removeConfirmBtn.disabled=false;
@@ -3156,7 +3217,7 @@ const adminPageHTML = `<!DOCTYPE html>
         removeConfirmBtn.disabled=true;
         removeConfirmBtn.textContent='Removing\u2026';
         fetch('/api/hosts/remove-host',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},_csrf),body:JSON.stringify(payload)})
-          .then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error(t);});return r.json();})
+          .then(function(r){if(r.status===401){window.location.href='/login';return Promise.reject('401');}if(!r.ok)return r.text().then(function(t){throw new Error(t);});return r.json();})
           .then(function(){
             document.getElementById('remove-form-area').style.display='none';
             document.getElementById('remove-log-area').style.display='';
@@ -3548,15 +3609,16 @@ const accessPageHTML = `<!DOCTYPE html>
       {{range .AllPendingQueue}}
       <div class="pending-table-row" role="row">
         <div role="cell"><span class="pill user">{{.Username}}</span></div>
-        <div role="cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
+        <div role="cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{if .Reason}}<span class="challenge-reason" style="display:block;font-size:0.75rem;color:var(--text-2);font-style:italic;margin-top:2px">"{{.Reason}}"</span>{{end}}</div>
         <div role="cell"><span class="code">{{.Code}}</span></div>
         <div role="cell">{{.ExpiresIn}}</div>
         <div role="cell" style="text-align:right;display:flex;gap:6px;justify-content:flex-end">
-          <form method="POST" action="/api/challenges/approve" class="saction-form">
+          <form method="POST" action="/api/challenges/approve" class="saction-form" style="display:flex;align-items:center;gap:4px">
             <input type="hidden" name="username" value="{{$.Username}}">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
             <input type="hidden" name="challenge_id" value="{{.ID}}">
+            <input type="text" name="reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:120px">
             <button type="submit" class="saction-btn saction-btn--approve">{{call $.T "approve"}}</button>
           </form>
           <form method="POST" action="/api/challenges/reject" class="saction-form">

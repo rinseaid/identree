@@ -73,6 +73,10 @@ var (
 	ErrTooManyChallenges           = errors.New("too many active challenges")
 	ErrTooManyPerUser              = errors.New("too many pending challenges for user")
 	ErrSessionSufficientlyExtended = errors.New("session already has sufficient remaining time")
+	// ErrDiskWriteFailed is returned when Approve or ConsumeAndApprove cannot
+	// durably persist the approval to disk. Callers should propagate this as a
+	// 503 so the PAM client retries rather than caching a potentially lost approval.
+	ErrDiskWriteFailed = errors.New("challenge: disk write failed, please retry")
 )
 
 // ChallengeStatus represents the state of a sudo challenge.
@@ -117,6 +121,10 @@ type Challenge struct {
 	// Hostname of the machine requesting sudo (sent by PAM client, optional)
 	Hostname string `json:"hostname,omitempty"`
 
+	// Reason is a human-readable description of why sudo is being requested.
+	// Populated from the API request body; optional.
+	Reason string `json:"reason,omitempty"`
+
 	// BreakglassRotateBefore is the server's rotation signal at challenge creation time.
 	// Stored per-challenge so the HMAC is consistent even if the server config changes
 	// between challenge creation and poll-time approval.
@@ -143,15 +151,24 @@ type Challenge struct {
 // ActionLogEntry records an action taken on the dashboard (approval, revocation, etc.).
 type ActionLogEntry struct {
 	Timestamp time.Time `json:"timestamp"`
-	Action    string    `json:"action"`         // "approved", "revoked", "auto_approved"
+	Action    string    `json:"action"`          // "approved", "revoked", "auto_approved"
 	Hostname  string    `json:"hostname"`
 	Code      string    `json:"code,omitempty"`
-	Actor     string    `json:"actor,omitempty"` // who performed the action (empty = self)
+	Actor     string    `json:"actor,omitempty"`  // who performed the action (empty = self)
+	Reason    string    `json:"reason,omitempty"` // reason for the sudo request (set at challenge creation)
 }
 
 // maxActionLogPrune is the per-user entry limit applied when the state file
 // exceeds 1 MB and gets rotated.  Between rotations the log grows unbounded.
 const maxActionLogPrune = 1000
+
+// archivedUserEntries is the JSON Lines record written to sessions.archive.jsonl
+// when action log entries are dropped during state-file rotation.
+type archivedUserEntries struct {
+	Username   string           `json:"username"`
+	Entries    []ActionLogEntry `json:"entries"`
+	ArchivedAt string           `json:"archived_at"`
+}
 
 // EscrowRecord stores metadata about a host's escrowed break-glass password.
 type EscrowRecord struct {
@@ -250,8 +267,9 @@ func graceKey(username, hostname string) string {
 }
 
 // Create generates a new challenge for the given username, optional hostname,
-// and optional BreakglassRotateBefore snapshot (set before insertion to avoid data races).
-func (s *ChallengeStore) Create(username, hostname, breakglassRotateBefore string) (*Challenge, error) {
+// optional BreakglassRotateBefore snapshot (set before insertion to avoid data races),
+// and optional reason string describing why sudo is being requested.
+func (s *ChallengeStore) Create(username, hostname, breakglassRotateBefore, reason string) (*Challenge, error) {
 	id, err := randutil.Hex(16)
 	if err != nil {
 		return nil, fmt.Errorf("generating challenge ID: %w", err)
@@ -293,6 +311,7 @@ func (s *ChallengeStore) Create(username, hostname, breakglassRotateBefore strin
 		UserCode:               code,
 		Username:               username,
 		Hostname:               hostname,
+		Reason:                 reason,
 		BreakglassRotateBefore: breakglassRotateBefore,
 		RevokeTokensBefore:     revokeTokensBefore,
 		Status:                 StatusPending,
@@ -394,13 +413,14 @@ func (s *ChallengeStore) SetRequestedGrace(id string, d time.Duration) {
 
 // Approve marks a challenge as approved by the given identity.
 func (s *ChallengeStore) Approve(id string, approvedBy string) error {
+	now := time.Now() // snapshot once to avoid expiry/approval time skew
 	s.mu.Lock()
 	c, ok := s.challenges[id]
 	if !ok {
 		s.mu.Unlock()
 		return fmt.Errorf("challenge not found")
 	}
-	if time.Now().After(c.ExpiresAt) {
+	if now.After(c.ExpiresAt) {
 		s.mu.Unlock()
 		return fmt.Errorf("challenge expired")
 	}
@@ -416,22 +436,22 @@ func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 	}
 	c.Status = StatusApproved
 	c.ApprovedBy = approvedBy
-	c.ApprovedAt = time.Now()
+	c.ApprovedAt = now
 	if s.gracePeriod > 0 {
 		key := graceKey(c.Username, c.Hostname)
 		graceDur := c.RequestedGrace
 		if graceDur == 0 {
 			graceDur = s.gracePeriod
 		}
-		s.lastApproval[key] = time.Now().Add(graceDur)
+		s.lastApproval[key] = now.Add(graceDur)
 	}
 	graceSessions.Set(float64(len(s.lastApproval)))
 	s.decPending(c.Username)
 	data, rotate := s.marshalStateLocked()
 	s.mu.Unlock()
-	// Fix 5: if the disk write fails, set dirty so the next flush retries.
 	if !s.writeStateToDisk(data, rotate) {
 		s.dirty.Store(true)
+		return ErrDiskWriteFailed
 	}
 	return nil
 }
@@ -648,6 +668,7 @@ type ActionLogEntryWithUser struct {
 	Action    string    `json:"action"`
 	Hostname  string    `json:"hostname"`
 	Code      string    `json:"code,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
 }
 
 // AllActionHistoryWithUsers returns merged action log across all users (with
@@ -665,6 +686,7 @@ func (s *ChallengeStore) AllActionHistoryWithUsers() []ActionLogEntryWithUser {
 				Action:    e.Action,
 				Hostname:  e.Hostname,
 				Code:      e.Code,
+				Reason:    e.Reason,
 			})
 		}
 	}
@@ -678,6 +700,29 @@ func (s *ChallengeStore) AllActionHistoryWithUsers() []ActionLogEntryWithUser {
 // actor is who performed the action; if empty or equal to username (self-action), Actor is not stored.
 func (s *ChallengeStore) LogAction(username, action, hostname, code, actor string) {
 	s.LogActionAt(username, action, hostname, code, actor, time.Now())
+}
+
+// LogActionWithReason records an action in the per-user action log, including an optional
+// reason string from the originating challenge.
+func (s *ChallengeStore) LogActionWithReason(username, action, hostname, code, actor, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := ActionLogEntry{
+		Timestamp: time.Now(),
+		Action:    action,
+		Hostname:  hostname,
+		Code:      code,
+		Reason:    reason,
+	}
+	if actor != "" && actor != username {
+		entry.Actor = actor
+	}
+	s.actionLog[username] = append(s.actionLog[username], entry)
+	if len(s.actionLog[username]) > maxActionLogPrune*2 {
+		entries := s.actionLog[username]
+		s.actionLog[username] = entries[len(entries)-maxActionLogPrune:]
+	}
+	s.dirty.Store(true)
 }
 
 // LogActionAt records an action with an explicit timestamp (for seeding test data).
@@ -1027,9 +1072,10 @@ func (s *ChallengeStore) ConsumeOneTap(challengeID string) error {
 // under a single lock acquisition, eliminating the TOCTOU window between separate
 // ConsumeOneTap and Approve calls where another goroutine could approve the same challenge.
 func (s *ChallengeStore) ConsumeAndApprove(challengeID, approvedBy string) error {
+	now := time.Now() // snapshot once to avoid expiry/approval time skew
 	s.mu.Lock()
 	c, ok := s.challenges[challengeID]
-	if !ok || time.Now().After(c.ExpiresAt) {
+	if !ok || now.After(c.ExpiresAt) {
 		s.mu.Unlock()
 		return fmt.Errorf("challenge not found or expired")
 	}
@@ -1050,22 +1096,22 @@ func (s *ChallengeStore) ConsumeAndApprove(challengeID, approvedBy string) error
 	s.oneTapUsed[challengeID] = true
 	c.Status = StatusApproved
 	c.ApprovedBy = approvedBy
-	c.ApprovedAt = time.Now()
+	c.ApprovedAt = now
 	if s.gracePeriod > 0 {
 		key := graceKey(c.Username, c.Hostname)
 		graceDur := c.RequestedGrace
 		if graceDur == 0 {
 			graceDur = s.gracePeriod
 		}
-		s.lastApproval[key] = time.Now().Add(graceDur)
+		s.lastApproval[key] = now.Add(graceDur)
 	}
 	graceSessions.Set(float64(len(s.lastApproval)))
 	s.decPending(c.Username)
 	data, rotate := s.marshalStateLocked()
 	s.mu.Unlock()
-	// Fix 5: if the disk write fails, set dirty so the next flush retries.
 	if !s.writeStateToDisk(data, rotate) {
 		s.dirty.Store(true)
+		return ErrDiskWriteFailed
 	}
 	return nil
 }
@@ -1294,6 +1340,21 @@ func (s *ChallengeStore) loadState() {
 		return
 	}
 	defer f.Close()
+
+	// Non-blocking exclusive flock: if another process already holds the lock,
+	// a second identree instance is running against the same state file.
+	// Log an error and abort loading rather than risk split-brain corruption.
+	if flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); flockErr != nil {
+		if flockErr == syscall.EWOULDBLOCK {
+			slog.Error("challenge: another identree instance holds the state file lock — refusing to load to prevent data corruption", "path", s.persistPath)
+		} else {
+			slog.Error("challenge: failed to flock state file on load", "path", s.persistPath, "err", flockErr)
+		}
+		return
+	}
+	// Release the lock immediately — we only needed it to detect concurrent instances.
+	// writeStateToDisk will reacquire it for each write.
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	info, err := f.Stat()
 	if err != nil {
 		slog.Warn("cannot stat session state file — starting fresh", "err", err)
@@ -1340,6 +1401,18 @@ func (s *ChallengeStore) loadState() {
 		slog.Warn("corrupt session state file — starting fresh", "path", s.persistPath, "err", err)
 		return
 	}
+	// Version migration check (Fix 3 / C4).
+	switch {
+	case state.Version == 0:
+		// Legacy file written before versioning was introduced — compatible as-is.
+		slog.Info("challenge: loaded legacy v0 state, upgrading to v1")
+	case state.Version > 1:
+		// File was written by a newer identree binary. Load it anyway but warn.
+		slog.Warn("challenge: state file is from a newer version", "version", state.Version)
+	}
+	// Normalise version so the next write upgrades the on-disk format.
+	state.Version = 1
+
 	const maxStateMapEntries = 100_000
 	const maxGraceSessionTTL = 90 * 24 * time.Hour   // grace sessions > 90 days in future are suspect
 	const maxRevokeTokensAge = 30 * 24 * time.Hour    // revoke timestamps > 30 days in future are suspect
@@ -1484,10 +1557,24 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 	// the fresh file starts small.  The caller (writeStateToDisk) will rotate
 	// archive files before writing the new data.
 	if len(d) > 1_000_000 {
+		// Collect dropped entries for archiving before we truncate them.
+		archivedAt := time.Now().UTC().Format(time.RFC3339)
+		var toArchive []archivedUserEntries
 		for user, entries := range s.actionLog {
 			if len(entries) > maxActionLogPrune {
+				dropped := entries[:len(entries)-maxActionLogPrune]
+				toArchive = append(toArchive, archivedUserEntries{
+					Username:   user,
+					Entries:    dropped,
+					ArchivedAt: archivedAt,
+				})
 				s.actionLog[user] = entries[len(entries)-maxActionLogPrune:]
 			}
+		}
+		// Write dropped entries to the rotating archive file (best-effort).
+		if len(toArchive) > 0 && s.persistPath != "" {
+			archivePath := filepath.Join(filepath.Dir(s.persistPath), "sessions.archive.jsonl")
+			s.appendToArchive(archivePath, toArchive)
 		}
 		state.ActionLog = make(map[string][]ActionLogEntry)
 		for user, entries := range s.actionLog {
@@ -1505,17 +1592,82 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 	return d, false
 }
 
+// appendToArchive appends the given archived user entries to the JSONL archive file,
+// rotating it if it exceeds 10 MB. Each entry is written as a single JSON line.
+// Called from marshalStateLocked (under the write lock) for disk I/O only; does not
+// re-acquire s.mu. Best-effort: errors are logged but do not fail the caller.
+func (s *ChallengeStore) appendToArchive(archivePath string, entries []archivedUserEntries) {
+	const maxArchiveSize = 10 << 20 // 10 MB
+
+	// Rotate archive if it has grown too large.
+	if info, err := os.Stat(archivePath); err == nil && info.Size() >= maxArchiveSize {
+		rotated := archivePath + ".1"
+		if err := os.Rename(archivePath, rotated); err != nil {
+			slog.Warn("challenge: failed to rotate archive file", "path", archivePath, "err", err)
+			// Continue — we'll still try to append/create a fresh file.
+		}
+	}
+
+	f, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	if err != nil {
+		slog.Warn("challenge: failed to open archive file", "path", archivePath, "err", err)
+		return
+	}
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	for _, item := range entries {
+		if err := enc.Encode(item); err != nil {
+			slog.Warn("challenge: failed to write archive entry", "err", err)
+		}
+	}
+}
+
+// flockWithTimeout acquires an exclusive advisory flock on f within the given
+// timeout. Returns nil on success, an error if the lock cannot be acquired.
+func flockWithTimeout(f *os.File, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if err != syscall.EWOULDBLOCK {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("flock timeout after %s", timeout)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // writeStateToDisk atomically writes data to the persist file.
 // If needsRotation is true the current file is archived (sessions.json →
 // sessions.json.1 etc.) before the new file is written.
 // No-op when data is nil (persistPath was empty or marshal failed).
-// Serialises concurrent writers via s.diskMu.
+// Serialises concurrent writers via s.diskMu and an advisory flock.
 func (s *ChallengeStore) writeStateToDisk(data []byte, needsRotation bool) bool {
 	if data == nil {
 		return true
 	}
 	s.diskMu.Lock()
 	defer s.diskMu.Unlock()
+
+	// Acquire an exclusive advisory flock on the destination file to prevent a
+	// second identree instance from writing concurrently. Create the file if it
+	// does not yet exist so we always have a file descriptor to lock.
+	lockFile, err := os.OpenFile(s.persistPath, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		slog.Error("challenge: cannot open state file for locking", "err", err)
+		return false
+	}
+	defer lockFile.Close()
+	if err := flockWithTimeout(lockFile, 5*time.Second); err != nil {
+		slog.Error("challenge: cannot acquire flock on state file", "err", err)
+		return false
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) //nolint:errcheck
 
 	if needsRotation {
 		s.rotateStateFiles()
