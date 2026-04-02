@@ -91,6 +91,19 @@ func NewUIDMap(path string, firstUID, firstGID int) (*UIDMap, error) {
 			delete(m.data.GIDs, uuid)
 		}
 	}
+	// Ensure NextUID/NextGID is strictly above all already-assigned values.
+	// Guards against corruption where the counter was reset below existing
+	// entries, which would cause the next new assignment to collide.
+	for _, uid := range m.data.UIDs {
+		if uid >= m.data.NextUID {
+			m.data.NextUID = uid + 1
+		}
+	}
+	for _, gid := range m.data.GIDs {
+		if gid >= m.data.NextGID {
+			m.data.NextGID = gid + 1
+		}
+	}
 	return m, nil
 }
 
