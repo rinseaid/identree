@@ -390,6 +390,8 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.verifyAPISecret(r) {
+		authFailures.Inc()
+		slog.Warn("AUTH_FAILURE grace-status invalid shared secret", "remote_addr", remoteAddr(r))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

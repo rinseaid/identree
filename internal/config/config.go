@@ -513,6 +513,11 @@ func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 		return nil, fmt.Errorf("IDENTREE_SERVER_URL is required")
 	}
 
+	// Clamp PollInterval: 0 or negative would cause a tight loop.
+	if cfg.PollInterval < time.Second {
+		cfg.PollInterval = 2 * time.Second
+	}
+
 	return cfg, nil
 }
 

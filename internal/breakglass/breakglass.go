@@ -231,6 +231,11 @@ func writeBreakglassFile(path, hash, hostname, passwordType string) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("writing hash: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("syncing temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		return fmt.Errorf("closing temp file: %w", err)
