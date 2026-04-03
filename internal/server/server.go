@@ -196,7 +196,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		},
 	}
 
-	if !cfg.DevLoginEnabled {
+	if cfg.IssuerURL != "" && cfg.ClientID != "" {
 		if cfg.IssuerPublicURL != "" {
 			slog.Warn("InsecureIssuerURLContext: OIDC issuer URL mismatch validation is DISABLED — ID token issuer claim will not be verified against configured IssuerURL; only use IssuerPublicURL in controlled split-routing environments")
 		}
