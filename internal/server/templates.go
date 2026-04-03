@@ -764,22 +764,10 @@ const pendingBarHTML = `{{if .Pending}}
         <div class="gtcol" role="cell"><span style="font-size:0.8125rem;color:var(--text-2)">{{.ExpiresIn}}</span></div>
         <div class="gtcol pending-table-actions" role="cell">
           {{if or (not .AdminRequired) $.IsAdmin}}
-          <form method="POST" action="/api/challenges/approve">
-            <input type="hidden" name="challenge_id" value="{{.ID}}">
-            <input type="hidden" name="username" value="{{$.Username}}">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-            <input type="text" name="reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:140px;margin-right:4px">
-            <button type="submit" class="btn btn-success btn-sm">{{call $.T "approve"}}</button>
-          </form>
+          <input type="text" class="pending-row-reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:140px;margin-right:4px">
+          <button type="button" class="btn btn-success btn-sm pending-row-approve" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "approve"}}</button>
           {{end}}
-          <form method="POST" action="/api/challenges/reject">
-            <input type="hidden" name="challenge_id" value="{{.ID}}">
-            <input type="hidden" name="username" value="{{$.Username}}">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-            <button type="submit" class="btn btn-ghost btn-danger btn-sm">{{call $.T "reject"}}</button>
-          </form>
+          <button type="button" class="btn btn-ghost btn-danger btn-sm pending-row-reject" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "reject"}}</button>
         </div>
       </div>
       {{end}}
@@ -830,6 +818,25 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=docum
 // Wire confirmation dialogs for ALL saction-confirm buttons (including single-challenge reject).
 document.querySelectorAll('.saction-confirm').forEach(function(btn){
   btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+});
+// Per-row approve/reject in modal: fetch, remove row, close modal if empty.
+document.querySelectorAll('.pending-row-approve,.pending-row-reject').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    var row=btn.closest('.pending-table-row');
+    var action=btn.classList.contains('pending-row-approve')?'approve':'reject';
+    var reasonInput=row&&row.querySelector('.pending-row-reason');
+    var body='challenge_id='+encodeURIComponent(btn.dataset.id)
+      +'&username='+encodeURIComponent(btn.dataset.username)
+      +'&csrf_token='+encodeURIComponent(btn.dataset.csrf)
+      +'&csrf_ts='+encodeURIComponent(btn.dataset.csrfTs)
+      +(reasonInput?'&reason='+encodeURIComponent(reasonInput.value):'');
+    fetch('/api/challenges/'+action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
+      .then(function(){
+        if(row)row.remove();
+        var remaining=document.querySelectorAll('#pending-modal .pending-table-row');
+        if(!remaining.length)closePendingModal();
+      });
+  });
 });
 (function(){
   var pm=document.getElementById('pending-modal');
@@ -3613,6 +3620,7 @@ const accessPageHTML = `<!DOCTYPE html>
         filterAccess();
       });
       (function(){var ftb=document.getElementById('access-admin-filter-toggle');var ftr=document.getElementById('access-admin-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
+      (function(){var ftb=document.getElementById('access-user-filter-toggle');var ftr=document.getElementById('access-user-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       filterAccess();
       document.querySelectorAll('.access-saction-confirm').forEach(function(btn){btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});});
       document.querySelectorAll('.elevate-toggle').forEach(function(btn){
@@ -3783,12 +3791,12 @@ const accessPageHTML = `<!DOCTYPE html>
     {{else}}
     <div class="access-table" id="access-table" role="table" aria-label="{{call .T "access"}}">
       <div class="access-table-header" role="row">
-        <div class="gtcol gtcol-ahost" role="columnheader"><span class="col-sort-link">{{call .T "host"}}</span></div>
+        <div class="gtcol gtcol-ahost" role="columnheader" style="gap:8px;align-items:center"><button type="button" class="filter-toggle-btn" id="access-user-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><span class="col-sort-link">{{call .T "host"}}</span></div>
         <div class="gtcol gtcol-aperms" role="columnheader"><span class="col-sort-link">{{call .T "commands"}}</span></div>
         <div class="gtcol gtcol-asession" role="columnheader"><span class="col-sort-link">{{call .T "sessions"}}</span></div>
         <div class="gtcol gtcol-aactions" role="columnheader"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
-      <div class="access-table-filter">
+      <div class="access-table-filter" id="access-user-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="ahost" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="aperms" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
         <div></div>
