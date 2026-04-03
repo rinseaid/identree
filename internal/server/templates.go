@@ -745,7 +745,7 @@ const pendingBarHTML = `{{if .Pending}}
   {{end}}
 </div>
 {{if gt (len .Pending) 1}}
-<div class="modal-overlay" id="pending-modal" onclick="if(event.target===this)closePendingModal()">
+<div class="modal-overlay" id="pending-modal">
   <div class="modal-box pending-modal-box">
     <h3>{{call .T "pending_requests"}}</h3>
     <div class="pending-table{{if .IsAdmin}} pending-table--admin{{end}}" role="table" aria-label="{{call .T "pending_requests"}}">
@@ -784,20 +784,23 @@ const pendingBarHTML = `{{if .Pending}}
       </div>
       {{end}}
     </div>
-    <div class="modal-actions">
-      <form method="POST" action="/api/challenges/approve-all" style="display:inline">
-        <input type="hidden" name="username" value="{{.Username}}">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
-        <button type="submit" class="btn btn-success btn-sm saction-confirm" data-confirm="{{call .T "confirm_approve_all"}}">{{call .T "approve_all"}}</button>
-      </form>
-      <form method="POST" action="/api/challenges/reject-all" style="display:inline">
-        <input type="hidden" name="username" value="{{.Username}}">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
-        <button type="submit" class="btn btn-ghost btn-danger btn-sm saction-confirm" data-confirm="{{call .T "confirm_reject_all"}}">{{call .T "reject_all"}}</button>
-      </form>
-      <button type="button" class="btn" onclick="closePendingModal()">{{call .T "close"}}</button>
+    <div class="pending-table-row{{if .IsAdmin}} pending-table--admin{{end}}" style="border-top:1px solid var(--border);border-bottom:none;padding-top:12px;margin-top:4px">
+      {{if .IsAdmin}}<div></div>{{end}}
+      <div></div><div></div><div></div>
+      <div class="pending-table-actions">
+        <form method="POST" action="/api/challenges/approve-all" style="display:inline">
+          <input type="hidden" name="username" value="{{.Username}}">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+          <button type="submit" class="btn btn-success btn-sm saction-confirm" data-confirm="{{call .T "confirm_approve_all"}}">{{call .T "approve_all"}}</button>
+        </form>
+        <form method="POST" action="/api/challenges/reject-all" style="display:inline">
+          <input type="hidden" name="username" value="{{.Username}}">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+          <button type="submit" class="btn btn-ghost btn-danger btn-sm saction-confirm" data-confirm="{{call .T "confirm_reject_all"}}">{{call .T "reject_all"}}</button>
+        </form>
+      </div>
     </div>
   </div>
 </div>
@@ -820,6 +823,8 @@ function closePendingModal(){
 (function(){
   var openBtn=document.getElementById('pending-modal-open-btn');
   if(openBtn)openBtn.addEventListener('click',openPendingModal);
+  var overlay=document.getElementById('pending-modal');
+  if(overlay)overlay.addEventListener('click',function(e){if(e.target===overlay)closePendingModal();});
 })();
 document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('pending-modal');if(m&&m.classList.contains('open'))closePendingModal();}});
 // Wire confirmation dialogs for ALL saction-confirm buttons (including single-challenge reject).
