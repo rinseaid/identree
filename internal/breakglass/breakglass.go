@@ -645,8 +645,8 @@ func EscrowPassword(cfg *config.ClientConfig, hostname, password string, quiet b
 	if cfg.ServerURL == "" {
 		return fmt.Errorf("IDENTREE_SERVER_URL not configured")
 	}
-	if strings.HasPrefix(cfg.ServerURL, "http://") {
-		return fmt.Errorf("refusing to escrow break-glass password over plaintext HTTP; use https://")
+	if strings.HasPrefix(cfg.ServerURL, "http://") && !cfg.InsecureAllowHTTPEscrow {
+		return fmt.Errorf("refusing to escrow break-glass password over plaintext HTTP; use https:// or set IDENTREE_INSECURE_ALLOW_HTTP_ESCROW=true")
 	}
 
 	payload := map[string]string{

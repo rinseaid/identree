@@ -132,10 +132,6 @@ func (s *Server) handleDevSeedHistory(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if addr := remoteAddr(r); addr != "127.0.0.1" && addr != "::1" {
-		http.NotFound(w, r)
-		return
-	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -165,10 +161,6 @@ func (s *Server) handleDevSeedHistory(w http.ResponseWriter, r *http.Request) {
 // POST /dev/seed-session  body: {"username":"alice","hostname":"prod-web-01"}
 func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.DevLoginEnabled {
-		http.NotFound(w, r)
-		return
-	}
-	if addr := remoteAddr(r); addr != "127.0.0.1" && addr != "::1" {
 		http.NotFound(w, r)
 		return
 	}

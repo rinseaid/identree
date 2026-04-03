@@ -186,11 +186,12 @@ type ClientConfig struct {
 	Timeout      time.Duration // default 120s
 
 	// Break-glass
-	BreakglassEnabled      bool
-	BreakglassFile         string // default /etc/identree-breakglass
-	BreakglassRotationDays int    // default 90
-	BreakglassPasswordType string // random, passphrase, alphanumeric
-	BreakglassBcryptCost   int    // bcrypt cost for hashing break-glass passwords (default 12, min 10, max 31)
+	BreakglassEnabled        bool
+	BreakglassFile           string // default /etc/identree-breakglass
+	BreakglassRotationDays   int    // default 90
+	BreakglassPasswordType   string // random, passphrase, alphanumeric
+	BreakglassBcryptCost     int    // bcrypt cost for hashing break-glass passwords (default 12, min 10, max 31)
+	InsecureAllowHTTPEscrow  bool   // allow escrow over plain HTTP (test environments only — never use in production)
 
 	// Token cache
 	TokenCacheEnabled  bool
@@ -758,11 +759,12 @@ func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 		PollInterval: getDuration(2*time.Second, "IDENTREE_POLL_INTERVAL", "PAM_POCKETID_POLL_INTERVAL"),
 		Timeout:      getDuration(120*time.Second, "IDENTREE_TIMEOUT", "PAM_POCKETID_TIMEOUT"),
 
-		BreakglassEnabled:      getBool(true, "IDENTREE_BREAKGLASS_ENABLED", "PAM_POCKETID_BREAKGLASS_ENABLED"),
-		BreakglassFile:         stringDefault(get("IDENTREE_BREAKGLASS_FILE", "PAM_POCKETID_BREAKGLASS_FILE"), "/etc/identree-breakglass"),
-		BreakglassRotationDays: getInt(90, "IDENTREE_BREAKGLASS_ROTATION_DAYS", "PAM_POCKETID_BREAKGLASS_ROTATION_DAYS"),
-		BreakglassPasswordType: stringDefault(get("IDENTREE_BREAKGLASS_PASSWORD_TYPE", "PAM_POCKETID_BREAKGLASS_PASSWORD_TYPE"), "random"),
-		BreakglassBcryptCost:   getInt(12, "IDENTREE_BREAKGLASS_BCRYPT_COST"),
+		BreakglassEnabled:       getBool(true, "IDENTREE_BREAKGLASS_ENABLED", "PAM_POCKETID_BREAKGLASS_ENABLED"),
+		BreakglassFile:          stringDefault(get("IDENTREE_BREAKGLASS_FILE", "PAM_POCKETID_BREAKGLASS_FILE"), "/etc/identree-breakglass"),
+		BreakglassRotationDays:  getInt(90, "IDENTREE_BREAKGLASS_ROTATION_DAYS", "PAM_POCKETID_BREAKGLASS_ROTATION_DAYS"),
+		BreakglassPasswordType:  stringDefault(get("IDENTREE_BREAKGLASS_PASSWORD_TYPE", "PAM_POCKETID_BREAKGLASS_PASSWORD_TYPE"), "random"),
+		BreakglassBcryptCost:    getInt(12, "IDENTREE_BREAKGLASS_BCRYPT_COST"),
+		InsecureAllowHTTPEscrow: getBool(false, "IDENTREE_INSECURE_ALLOW_HTTP_ESCROW"),
 
 		TokenCacheEnabled:  getBool(true, "IDENTREE_TOKEN_CACHE_ENABLED", "PAM_POCKETID_TOKEN_CACHE_ENABLED"),
 		TokenCacheDir:      stringDefault(get("IDENTREE_TOKEN_CACHE_DIR", "PAM_POCKETID_TOKEN_CACHE_DIR"), "/run/identree"),

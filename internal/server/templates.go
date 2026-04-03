@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"html/template"
 	"strings"
 	"time"
@@ -853,16 +852,10 @@ func formatTime(t time.Time) string {
 // timeAgoI18n formats a time as a localized human-readable relative string.
 func timeAgoI18n(when time.Time, t func(string) string) string {
 	d := time.Since(when)
-	switch {
-	case d < time.Minute:
+	if d < time.Minute {
 		return t("just_now")
-	case d < time.Hour:
-		return fmt.Sprintf("%d%s %s", int(d.Minutes()), t("minute_abbr"), t("ago"))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%d%s %s", int(d.Hours()), t("hour_abbr"), t("ago"))
-	default:
-		return fmt.Sprintf("%d%s %s", int(d.Hours()/24), t("day_abbr"), t("ago"))
 	}
+	return formatDuration(t, d) + " " + t("ago")
 }
 
 // historyViewEntry is a pre-formatted history entry for the template.

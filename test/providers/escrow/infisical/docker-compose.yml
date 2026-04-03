@@ -187,6 +187,7 @@ services:
 
       # identree — updated after setup.sh restarts identree
       IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
       IDENTREE_SHARED_SECRET: "test-shared-secret-infisical-escrow"
     cap_add:
       - NET_ADMIN

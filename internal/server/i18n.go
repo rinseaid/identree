@@ -43,10 +43,24 @@ func formatDuration(t func(string) string, d time.Duration) string {
 	if d <= 0 {
 		return "0s"
 	}
-	h := int(d.Hours())
+	days := int(d.Hours()) / 24
+	h := int(d.Hours()) % 24
 	m := int(d.Minutes()) % 60
+	dSuffix := lookup("day_abbr", "d")
 	hSuffix := lookup("hour_abbr", "h")
 	mSuffix := lookup("minute_abbr", "m")
+	if days > 0 && h > 0 && m > 0 {
+		return fmt.Sprintf("%d%s %d%s %d%s", days, dSuffix, h, hSuffix, m, mSuffix)
+	}
+	if days > 0 && h > 0 {
+		return fmt.Sprintf("%d%s %d%s", days, dSuffix, h, hSuffix)
+	}
+	if days > 0 && m > 0 {
+		return fmt.Sprintf("%d%s %d%s", days, dSuffix, m, mSuffix)
+	}
+	if days > 0 {
+		return fmt.Sprintf("%d%s", days, dSuffix)
+	}
 	if h > 0 && m > 0 {
 		return fmt.Sprintf("%d%s %d%s", h, hSuffix, m, mSuffix)
 	}

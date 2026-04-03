@@ -82,6 +82,7 @@ services:
       LDAP_URI: "ldap://identree:3389"
       LDAP_BASE: "dc=test,dc=local"
       IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
       IDENTREE_SHARED_SECRET: "test-shared-secret-1234567890abc"
     cap_add:
       - NET_ADMIN

@@ -121,6 +121,7 @@ services:
 
       # identree
       IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
       IDENTREE_SHARED_SECRET: "test-shared-secret-lldap-dex-1234"
     cap_add:
       - NET_ADMIN
