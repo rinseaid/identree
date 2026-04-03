@@ -2816,9 +2816,8 @@ const adminPageHTML = `<!DOCTYPE html>
       document.querySelectorAll('.reveal-password-btn').forEach(function(btn){
         btn.addEventListener('click',function(){
           var hostname=btn.dataset.hostname;
-          var body=new URLSearchParams({hostname:hostname,username:btn.dataset.username,csrf_token:btn.dataset.csrf,csrf_ts:btn.dataset.ts});
           btn.disabled=true;
-          fetch('/api/breakglass/reveal',{method:'POST',body:body,headers:{'Content-Type':'application/x-www-form-urlencoded'}})
+          fetch('/api/breakglass/reveal',{method:'POST',body:JSON.stringify({hostname:hostname}),headers:Object.assign({'Content-Type':'application/json'},_csrf)})
             .then(function(r){
               if(r.status===401){window.location.href='/login';return;}
               if(!r.ok)return r.text().then(function(t){throw new Error(t.trim()||r.statusText);});
