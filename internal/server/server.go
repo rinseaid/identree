@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -240,10 +241,26 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 			slog.Warn("OIDC discovery attempt failed", "attempt", attempt+1, "err", err)
 		}
 
+		endpoint := provider.Endpoint()
+		// When IssuerPublicURL is set, PocketID's discovery document advertises
+		// its token endpoint using the public hostname (e.g. localhost:1411).
+		// The server-side token exchange must reach PocketID via the internal
+		// Docker hostname instead, so rewrite the token URL back to IssuerURL.
+		if cfg.IssuerPublicURL != "" {
+			if pub, perr := url.Parse(cfg.IssuerPublicURL); perr == nil {
+				if internal, ierr := url.Parse(cfg.IssuerURL); ierr == nil {
+					if tok, terr := url.Parse(endpoint.TokenURL); terr == nil && tok.Host == pub.Host {
+						tok.Scheme = internal.Scheme
+						tok.Host = internal.Host
+						endpoint.TokenURL = tok.String()
+					}
+				}
+			}
+		}
 		oidcConfig = oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
-			Endpoint:     provider.Endpoint(),
+			Endpoint:     endpoint,
 			RedirectURL:  strings.TrimRight(cfg.ExternalURL, "/") + "/callback",
 			Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups"},
 		}
