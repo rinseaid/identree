@@ -110,12 +110,6 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Restrict dev login to loopback connections — prevents accidental exposure
-	// if the server is reachable from outside localhost.
-	if addr := remoteAddr(r); addr != "127.0.0.1" && addr != "::1" {
-		http.NotFound(w, r)
-		return
-	}
 	user := r.URL.Query().Get("user")
 	role := r.URL.Query().Get("role")
 	if user == "" || !validUsername.MatchString(user) {
