@@ -190,6 +190,9 @@ func (r *HostRegistry) AddHost(hostname string, users []string, group string) (s
 	if _, exists := r.hosts[hostname]; exists {
 		return "", fmt.Errorf("host %q is already registered", hostname)
 	}
+	if !validHostname.MatchString(hostname) {
+		return "", fmt.Errorf("invalid hostname format")
+	}
 	if reservedHostnames[hostname] || numericHostname.MatchString(hostname) {
 		return "", fmt.Errorf("hostname is reserved")
 	}

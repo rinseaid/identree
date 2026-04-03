@@ -1538,6 +1538,60 @@ func evalOr(s string, attrs map[string][]string, depth int) bool {
 	return false
 }
 
+// unescapeFilterValue decodes RFC 4515 escape sequences (\XX where XX is a hex
+// byte) in an LDAP filter assertion value, converting them to their literal byte
+// equivalents.  Any malformed escape sequence is left as-is.
+func unescapeFilterValue(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s // fast path: no escape sequences present
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if s[i] == '\\' && i+2 < len(s) && isLDAPHexByte(s[i+1]) && isLDAPHexByte(s[i+2]) {
+			b.WriteByte(ldapHexVal(s[i+1])<<4 | ldapHexVal(s[i+2]))
+			i += 3
+		} else {
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String()
+}
+
+// containsUnescapedStar reports whether s contains a literal unescaped '*' character.
+// An '*' immediately following a valid \XX escape is treated as escaped (\2a → '*')
+// and does NOT count.
+func containsUnescapedStar(s string) bool {
+	i := 0
+	for i < len(s) {
+		if s[i] == '\\' && i+2 < len(s) && isLDAPHexByte(s[i+1]) && isLDAPHexByte(s[i+2]) {
+			i += 3 // skip the escape sequence
+		} else if s[i] == '*' {
+			return true
+		} else {
+			i++
+		}
+	}
+	return false
+}
+
+func isLDAPHexByte(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+func ldapHexVal(c byte) byte {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0'
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10
+	default: // 'A'-'F'
+		return c - 'A' + 10
+	}
+}
+
 // evalSimple evaluates a bare attr=value, attr=*, or attr=*sub* expression.
 func evalSimple(expr string, attrs map[string][]string) bool {
 	idx := strings.IndexByte(expr, '=')
@@ -1566,9 +1620,9 @@ func evalSimple(expr string, attrs map[string][]string) bool {
 	}
 
 	// Substring: *value*, value*, *value
-	if strings.Contains(value, "*") {
+	if containsUnescapedStar(value) {
 		for _, v := range vals {
-			if ldapSubstringMatch(strings.ToLower(v), strings.ToLower(value)) {
+			if ldapSubstringMatchRaw(strings.ToLower(v), value) {
 				return true
 			}
 		}
@@ -1576,7 +1630,7 @@ func evalSimple(expr string, attrs map[string][]string) bool {
 	}
 
 	// Equality (case-insensitive for LDAP)
-	lv := strings.ToLower(value)
+	lv := strings.ToLower(unescapeFilterValue(value))
 	for _, v := range vals {
 		if strings.ToLower(v) == lv {
 			return true
@@ -1595,29 +1649,53 @@ func attrValuesCaseInsensitive(attrs map[string][]string, name string) ([]string
 	return nil, false
 }
 
-// ldapSubstringMatch implements simple glob matching for LDAP substring filters.
-// Pattern uses * as wildcard, e.g. "alice*" or "*@example.com" or "*alice*".
-func ldapSubstringMatch(value, pattern string) bool {
-	parts := strings.Split(pattern, "*")
-	if len(parts) == 1 {
-		return value == pattern
+// ldapSubstringMatchRaw implements RFC 4515 substring filter matching against a
+// normalised (lowercased) attribute value.  rawPattern is the raw filter
+// assertion value — it may contain RFC 4515 escape sequences (\XX) and uses
+// unescaped '*' characters as wildcard separators.
+func ldapSubstringMatchRaw(value, rawPattern string) bool {
+	// Split rawPattern on unescaped '*' characters, unescaping each segment.
+	var parts []string
+	var cur strings.Builder
+	i := 0
+	for i < len(rawPattern) {
+		if rawPattern[i] == '\\' && i+2 < len(rawPattern) && isLDAPHexByte(rawPattern[i+1]) && isLDAPHexByte(rawPattern[i+2]) {
+			cur.WriteByte(ldapHexVal(rawPattern[i+1])<<4 | ldapHexVal(rawPattern[i+2]))
+			i += 3
+		} else if rawPattern[i] == '*' {
+			parts = append(parts, strings.ToLower(cur.String()))
+			cur.Reset()
+			i++
+		} else {
+			cur.WriteByte(rawPattern[i])
+			i++
+		}
 	}
+	parts = append(parts, strings.ToLower(cur.String()))
+
+	// RFC 4515 §4.5.1: parts[0]=initial, parts[1:-1]=any, parts[-1]=final.
 	pos := 0
-	for i, part := range parts {
+	for idx, part := range parts {
 		if part == "" {
 			continue
 		}
-		idx := strings.Index(value[pos:], part)
-		if idx < 0 {
-			return false
+		switch {
+		case idx == 0: // initial — value must start with this part
+			if !strings.HasPrefix(value[pos:], part) {
+				return false
+			}
+			pos += len(part)
+		case idx == len(parts)-1: // final — value must end with this part
+			if !strings.HasSuffix(value[pos:], part) {
+				return false
+			}
+		default: // any — part must appear somewhere after pos
+			rel := strings.Index(value[pos:], part)
+			if rel < 0 {
+				return false
+			}
+			pos += rel + len(part)
 		}
-		if i == 0 && !strings.HasPrefix(value, part) {
-			return false
-		}
-		if i == len(parts)-1 && !strings.HasSuffix(value, part) {
-			return false
-		}
-		pos += idx + len(part)
 	}
 	return true
 }

@@ -291,11 +291,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		authFailures.Inc()
 		s.authFailRL.record(remoteAddr(r))
 		slog.Warn("AUTH_FAILURE", "reason", errMsg, "remote_addr", remoteAddr(r), "host", req.Hostname, "user", req.Username)
-		if errMsg == "user not authorized on this host" {
-			apiError(w, http.StatusForbidden, errMsg)
-		} else {
-			apiError(w, http.StatusUnauthorized, "unauthorized")
-		}
+		apiError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -592,7 +588,7 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 // changes between creation and poll. Empty optional fields are omitted for
 // backward compatibility.
 func (s *Server) computeStatusHMAC(challengeID, username, status, rotateBefore, revokeTokensBefore string) string {
-	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
+	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "approval_status"))
 	fmt.Fprintf(mac, "%d:%s%d:%s%d:%s", len(challengeID), challengeID, len(status), status, len(username), username)
 	// Include rotate_breakglass_before in the HMAC so a MITM cannot inject
 	// a rotation signal without invalidating the token.
@@ -616,7 +612,7 @@ func (s *Server) computeOneTapToken(challengeID, username, hostname string, expi
 		return ""
 	}
 	expires := strconv.FormatInt(expiresAt.Unix(), 10)
-	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
+	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "onetap"))
 	mac.Write([]byte("onetap:" + challengeID + ":" + username + ":" + expires + ":" + hostname))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	return challengeID + "." + expires + "." + sig
@@ -780,26 +776,14 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		// Replay protection: reject tokens that have already been redeemed.
 		// Key on hostname+timestamp; each unique (hostname, timestamp) pair can
 		// only be accepted once within the 5-minute validity window.
-		// Lazily prune entries older than 10 minutes (2× the window).
+		// The challenge store persists used tokens across restarts to prevent replay
+		// during the validity window even after a server restart.
 		tokenKey := req.Hostname + ":" + tsHeader
-		s.usedEscrowTokensMu.Lock()
-		if len(s.usedEscrowTokens) >= maxUsedEscrowTokens {
-			s.usedEscrowTokensMu.Unlock()
+		if s.store.UsedEscrowTokenCount() >= maxUsedEscrowTokens {
 			apiError(w, http.StatusTooManyRequests, "escrow rate limit exceeded")
 			return
 		}
-		_, seen := s.usedEscrowTokens[tokenKey]
-		if !seen {
-			s.usedEscrowTokens[tokenKey] = time.Now()
-			cutoff := time.Now().Add(-10 * time.Minute)
-			for k, t := range s.usedEscrowTokens {
-				if t.Before(cutoff) {
-					delete(s.usedEscrowTokens, k)
-				}
-			}
-		}
-		s.usedEscrowTokensMu.Unlock()
-		if seen {
+		if s.store.CheckAndRecordEscrowToken(tokenKey) {
 			slog.Warn("REPLAY escrow token already used", "host", req.Hostname, "remote_addr", remoteAddr(r))
 			apiError(w, http.StatusGone, "escrow token already used")
 			return

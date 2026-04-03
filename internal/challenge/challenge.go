@@ -209,6 +209,9 @@ type ChallengeStore struct {
 
 	revokedAdminSessionsMu   sync.Mutex
 	revokedAdminSessionsStore map[string]int64 // username -> Unix revocation timestamp
+
+	usedEscrowTokens   map[string]time.Time // escrow token key -> first-seen time (replay prevention)
+	usedEscrowTokensMu sync.Mutex
 }
 
 // persistedState is the JSON-serializable snapshot of grace sessions, revocation timestamps,
@@ -231,6 +234,9 @@ type persistedState struct {
 	// RevokedAdminSessions holds the most recent admin-role revocation time per username.
 	// Stored as Unix timestamps (int64) so the JSON remains compact.
 	RevokedAdminSessions   map[string]int64             `json:"revokedAdminSessions,omitempty"`
+	// UsedEscrowTokens holds HMAC escrow tokens that have already been redeemed,
+	// keyed by "hostname:timestamp". Stored as Unix timestamps (int64) so the JSON remains compact.
+	UsedEscrowTokens       map[string]int64             `json:"used_escrow_tokens,omitempty"`
 	// OneTapUsed is intentionally ephemeral: it is in-memory only and is reset on restart.
 	// Challenges do not survive restarts, so persisting consumed nonces would only accumulate
 	// orphaned entries with no corresponding challenge to protect.
@@ -252,6 +258,7 @@ func NewChallengeStore(ttl, gracePeriod time.Duration, persistPath string) *Chal
 		escrowedCiphertexts: make(map[string]string),
 		oneTapUsed:         make(map[string]bool),
 		lastOIDCAuth:       make(map[string]time.Time),
+		usedEscrowTokens:   make(map[string]time.Time),
 		ttl:                ttl,
 		gracePeriod:        gracePeriod,
 		persistPath:        persistPath,
@@ -1239,6 +1246,36 @@ func (s *ChallengeStore) PersistRevokedAdminSession(username string, at time.Tim
 	s.dirty.Store(true)
 }
 
+// CheckAndRecordEscrowToken checks whether tokenKey has already been redeemed
+// and records it if not. Returns true if the token was already seen (replay detected).
+// tokenKey is "hostname:timestamp_unix". Automatically prunes entries older than 10 minutes.
+func (s *ChallengeStore) CheckAndRecordEscrowToken(tokenKey string) (alreadySeen bool) {
+	s.usedEscrowTokensMu.Lock()
+	defer s.usedEscrowTokensMu.Unlock()
+	_, seen := s.usedEscrowTokens[tokenKey]
+	if seen {
+		return true
+	}
+	s.usedEscrowTokens[tokenKey] = time.Now()
+	// Lazy prune: remove entries older than the escrow token validity window.
+	cutoff := time.Now().Add(-10 * time.Minute)
+	for k, t := range s.usedEscrowTokens {
+		if t.Before(cutoff) {
+			delete(s.usedEscrowTokens, k)
+		}
+	}
+	s.dirty.Store(true)
+	return false
+}
+
+// UsedEscrowTokenCount returns the current count of tracked escrow tokens.
+// Used for rate limiting.
+func (s *ChallengeStore) UsedEscrowTokenCount() int {
+	s.usedEscrowTokensMu.Lock()
+	defer s.usedEscrowTokensMu.Unlock()
+	return len(s.usedEscrowTokens)
+}
+
 // LoadRevokedNonces returns the persisted revoked nonces as a map[nonce]time.Time.
 // Returns an empty map when no nonces are persisted or persistence is disabled.
 func (s *ChallengeStore) LoadRevokedNonces() map[string]time.Time {
@@ -1610,6 +1647,23 @@ func (s *ChallengeStore) loadState() {
 		}
 	}
 
+	// Load persisted escrow replay tokens (prune those older than 10 minutes on load).
+	const escrowTokenTTL = 10 * time.Minute
+	escrowTokenCutoff := now.Add(-escrowTokenTTL)
+	if len(state.UsedEscrowTokens) > 0 {
+		s.usedEscrowTokensMu.Lock()
+		for k, ts := range state.UsedEscrowTokens {
+			t := time.Unix(ts, 0)
+			if t.After(escrowTokenCutoff) { // only restore non-expired entries
+				s.usedEscrowTokens[k] = t
+			}
+			if len(s.usedEscrowTokens) >= maxStateMapEntries {
+				break
+			}
+		}
+		s.usedEscrowTokensMu.Unlock()
+	}
+
 	slog.Info("loaded session state", "grace_sessions", len(s.lastApproval), "revocations", len(s.revokeTokensBefore), "escrowed_hosts", len(s.escrowedHosts), "path", s.persistPath)
 	graceSessions.Set(float64(len(s.lastApproval)))
 }
@@ -1687,6 +1741,21 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 		}
 	}
 	s.revokedAdminSessionsMu.Unlock()
+	// Snapshot usedEscrowTokens for persistence.
+	s.usedEscrowTokensMu.Lock()
+	if len(s.usedEscrowTokens) > 0 {
+		usedEscrowCopy := make(map[string]int64, len(s.usedEscrowTokens))
+		escrowCutoff := time.Now().Add(-10 * time.Minute)
+		for k, t := range s.usedEscrowTokens {
+			if !t.Before(escrowCutoff) { // only persist non-expired entries
+				usedEscrowCopy[k] = t.Unix()
+			}
+		}
+		if len(usedEscrowCopy) > 0 {
+			state.UsedEscrowTokens = usedEscrowCopy
+		}
+	}
+	s.usedEscrowTokensMu.Unlock()
 	// oneTapUsed is not persisted: challenges are in-memory only and
 	// do not survive restarts, so persisting these IDs would accumulate orphans.
 	d, err := json.Marshal(state)
@@ -1790,6 +1859,10 @@ func (s *ChallengeStore) appendToArchive(archivePath string, entries []archivedU
 
 	if _, err := f.Write(buf.Bytes()); err != nil {
 		slog.Warn("challenge: failed to write archive entries", "path", archivePath, "err", err)
+		return false
+	}
+	if err := f.Sync(); err != nil {
+		slog.Warn("challenge: failed to sync archive file", "path", archivePath, "err", err)
 		return false
 	}
 	return true

@@ -31,7 +31,7 @@ func newTestServer(sharedSecret string) *Server {
 func makeCookie(secret, username, role string, ts int64) string {
 	tsStr := fmt.Sprintf("%d", ts)
 	nonce := "abcdef1234567890abcdef1234567890" // fixed 32-char hex nonce for tests
-	mac := hmac.New(sha256.New, []byte(secret))
+	mac := hmac.New(sha256.New, deriveKey(secret, "session"))
 	mac.Write([]byte("session:" + username + ":" + role + ":" + tsStr + ":" + nonce))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	return username + ":" + role + ":" + tsStr + ":" + nonce + ":" + sig

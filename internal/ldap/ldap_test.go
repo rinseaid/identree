@@ -413,9 +413,77 @@ func TestLdapSubstringMatch(t *testing.T) {
 		{"alice", "a*z", false},           // both anchor — no match
 	}
 	for _, tc := range tests {
-		if got := ldapSubstringMatch(tc.value, tc.pattern); got != tc.want {
-			t.Errorf("ldapSubstringMatch(%q, %q) = %v, want %v", tc.value, tc.pattern, got, tc.want)
+		if got := ldapSubstringMatchRaw(tc.value, tc.pattern); got != tc.want {
+			t.Errorf("ldapSubstringMatchRaw(%q, %q) = %v, want %v", tc.value, tc.pattern, got, tc.want)
 		}
+	}
+}
+
+// ── RFC 4515 escape sequences ─────────────────────────────────────────────────
+
+func TestRFC4515FilterValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		filter string
+		attrs  map[string][]string
+		want   bool
+	}{
+		{
+			name:   "escaped asterisk is equality not wildcard",
+			filter: "(uid=alice\\2a)",
+			attrs:  map[string][]string{"uid": {"alice*"}},
+			want:   true, // \2a unescapes to literal *, equality match succeeds
+		},
+		{
+			name:   "escaped asterisk does not match as wildcard",
+			filter: "(uid=alice\\2a)",
+			attrs:  map[string][]string{"uid": {"alicebob"}},
+			want:   false, // literal 'alice*' != 'alicebob'
+		},
+		{
+			name:   "unescaped asterisk is wildcard",
+			filter: "(uid=alice*)",
+			attrs:  map[string][]string{"uid": {"alicebob"}},
+			want:   true, // alice* wildcard matches alicebob
+		},
+		{
+			name:   "escaped paren in value",
+			filter: "(cn=test\\28group\\29)",
+			attrs:  map[string][]string{"cn": {"test(group)"}},
+			want:   true, // \28 = (, \29 = )
+		},
+		{
+			name:   "escaped backslash in value",
+			filter: "(cn=path\\5cfile)",
+			attrs:  map[string][]string{"cn": {"path\\file"}},
+			want:   true, // \5c = backslash
+		},
+		{
+			name:   "escaped star in substring pattern",
+			filter: "(uid=al\\2a*)",
+			attrs:  map[string][]string{"uid": {"al*bob"}},
+			want:   true, // initial='al*', matches values starting with literal 'al*'
+		},
+		{
+			name:   "case insensitive equality match",
+			filter: "(uid=Alice)",
+			attrs:  map[string][]string{"uid": {"alice"}},
+			want:   true,
+		},
+		{
+			name:   "null byte escape sequence",
+			filter: "(cn=foo\\00bar)",
+			attrs:  map[string][]string{"cn": {"foo\x00bar"}},
+			want:   true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchesFilter(tc.filter, "", tc.attrs)
+			if got != tc.want {
+				t.Errorf("matchesFilter(%q) = %v, want %v", tc.filter, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -16,6 +17,15 @@ import (
 
 	"github.com/rinseaid/identree/internal/randutil"
 )
+
+// deriveKey creates a purpose-specific HMAC-SHA256 subkey from sharedSecret.
+// Using separate subkeys per purpose prevents an HMAC generated for one context
+// (e.g. session signing) from being valid in another (e.g. CSRF protection).
+func deriveKey(sharedSecret, purpose string) []byte {
+	h := hmac.New(sha256.New, []byte(sharedSecret))
+	h.Write([]byte(purpose))
+	return h.Sum(nil)
+}
 
 // sessionCookieName is the name of the signed session cookie.
 const sessionCookieName = "pam_session"
@@ -34,7 +44,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, username, role string) 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
+	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "session"))
 	mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	value := username + ":" + role + ":" + ts + ":" + nonce + ":" + sig
@@ -93,7 +103,7 @@ func (s *Server) parseSessionCookie(r *http.Request) (data sessionData, valid bo
 	if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > sessionCookieTTL {
 		return sessionData{}, false
 	}
-	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
+	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "session"))
 	mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
@@ -214,7 +224,9 @@ func getAvatar(r *http.Request) string {
 	// by refusing to pass the URL to templates where it becomes an <img src>.
 	if parsed, perr := url.Parse(c.Value); perr == nil {
 		hostname := parsed.Hostname()
-		addrs, lerr := net.LookupHost(hostname)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		addrs, lerr := net.DefaultResolver.LookupHost(ctx, hostname)
 		if lerr != nil {
 			return ""
 		}
@@ -244,7 +256,7 @@ func computeCSRFToken(sharedSecret, username, timestamp string) string {
 	if sharedSecret == "" {
 		return ""
 	}
-	mac := hmac.New(sha256.New, []byte(sharedSecret))
+	mac := hmac.New(sha256.New, deriveKey(sharedSecret, "csrf"))
 	mac.Write([]byte("csrf:" + username + ":" + timestamp))
 	return hex.EncodeToString(mac.Sum(nil))
 }

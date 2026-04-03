@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
@@ -137,11 +139,6 @@ type Server struct {
 	ldapLastErrorAt time.Time
 	ldapLastErrorMu sync.Mutex
 
-	// usedEscrowTokens tracks HMAC escrow tokens that have already been redeemed,
-	// keyed by "hostname:timestamp" to prevent replay within the 5-minute window.
-	usedEscrowTokens   map[string]time.Time
-	usedEscrowTokensMu sync.Mutex
-
 	// revokedNonces tracks nonces of server-side-revoked session cookies.
 	// Entries are keyed by nonce and hold the revocation time; they are pruned
 	// once sessionCookieTTL has elapsed (the cookie would have expired anyway).
@@ -255,7 +252,6 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		callbackRL:    newLoginRateLimiter(),
 		authFailRL:    newAuthFailTracker(),
 		removedUsers:       make(map[string]time.Time),
-		usedEscrowTokens:   make(map[string]time.Time),
 		revokedNonces:      make(map[string]time.Time),
 		prevAdminUsernames: make(map[string]bool),
 		escrowSemaphore: make(chan struct{}, 5),
@@ -328,17 +324,6 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 					return true
 				})
 
-				// Prune usedEscrowTokens entries older than the escrow token TTL (10 minutes).
-				// This mirrors the inline lazy-prune in handleBreakglassEscrow but ensures
-				// entries are cleaned up even when no new tokens arrive.
-				escrowCutoff := time.Now().Add(-10 * time.Minute)
-				s.usedEscrowTokensMu.Lock()
-				for k, t := range s.usedEscrowTokens {
-					if t.Before(escrowCutoff) {
-						delete(s.usedEscrowTokens, k)
-					}
-				}
-				s.usedEscrowTokensMu.Unlock()
 			case <-s.stopCh:
 				return
 			}
@@ -511,9 +496,7 @@ func (s *Server) registerRoutes() {
 
 	// Misc
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	// /metrics is unauthenticated — standard practice for Prometheus scraping.
-	// Restrict at the network/firewall level if exposure is a concern.
-	s.mux.Handle("/metrics", promhttp.Handler())
+	s.mux.HandleFunc("/metrics", s.handleMetrics)
 	s.mux.HandleFunc("/theme", s.handleThemeToggle)
 	s.mux.HandleFunc("/signout", s.handleSignOut)
 	s.mux.HandleFunc("/install.sh", s.handleInstallScript)
@@ -552,6 +535,28 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/", s.handleDashboard)
 }
 
+// handleMetrics serves Prometheus metrics, optionally protected by a bearer token.
+// When MetricsToken is empty, metrics are served unauthenticated (compatible with
+// Prometheus scrapers that don't support authentication).
+// When MetricsToken is set, the request must include "Authorization: Bearer <token>"
+// or "?token=<token>" query parameter.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.MetricsToken != "" {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if token == "" {
+			token = r.URL.Query().Get("token")
+		}
+		// Hash both values before comparison to avoid timing leaks.
+		tokenHash := sha256.Sum256([]byte(token))
+		expectedHash := sha256.Sum256([]byte(s.cfg.MetricsToken))
+		if subtle.ConstantTimeCompare(tokenHash[:], expectedHash[:]) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+	promhttp.Handler().ServeHTTP(w, r)
+}
+
 // isBridgeMode returns true when running without a PocketID API key.
 func (s *Server) isBridgeMode() bool {
 	return s.cfg.APIKey == ""
@@ -572,9 +577,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// Redirect HTTP→HTTPS when the server is behind a TLS-terminating proxy
+	// that sets X-Forwarded-Proto: http on plain-HTTP requests.
+	if strings.HasPrefix(s.cfg.ExternalURL, "https://") && r.Header.Get("X-Forwarded-Proto") == "http" {
+		target := "https://" + r.Host + r.URL.RequestURI()
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		return
+	}
+
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
 	w.Header().Set("Cache-Control", "no-store")
 	if s.cfg.ExternalURL != "" && strings.HasPrefix(s.cfg.ExternalURL, "https://") {
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")

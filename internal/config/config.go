@@ -67,7 +67,8 @@ type ServerConfig struct {
 	ListenAddr   string        // default ":8090"
 	ExternalURL  string        // public-facing URL (for OIDC redirects)
 	InstallURL   string        // URL reachable from client hosts (for install script); defaults to ExternalURL
-	SharedSecret string        // secret shared with PAM clients
+	SharedSecret string // secret shared with PAM clients
+	MetricsToken string // bearer token for /metrics endpoint (optional; empty = unauthenticated)
 
 	// ── Session / auth flow ───────────────────────────────────────────────────
 	ChallengeTTL time.Duration // how long a pending challenge lives (default 120s)
@@ -285,6 +286,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ExternalURL:  get("IDENTREE_EXTERNAL_URL"),
 		InstallURL:   get("IDENTREE_INSTALL_URL"),
 		SharedSecret: get("IDENTREE_SHARED_SECRET"),
+		MetricsToken: get("IDENTREE_METRICS_TOKEN"),
 
 		ChallengeTTL: getDuration("IDENTREE_CHALLENGE_TTL", 120*time.Second),
 		GracePeriod:  getDuration("IDENTREE_GRACE_PERIOD", 0),
