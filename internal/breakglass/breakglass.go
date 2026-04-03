@@ -696,13 +696,23 @@ func EscrowPassword(cfg *config.ClientConfig, hostname, password string, quiet b
 	return nil
 }
 
-// computeEscrowToken produces HMAC-SHA256(shared_secret, "escrow:"+hostname+":"+timestamp)
+// computeEscrowToken produces HMAC-SHA256(deriveKey(shared_secret,"escrow"), "escrow:"+hostname+":"+timestamp)
 // as a per-host, time-bound escrow authorization token. Including a timestamp prevents
 // replay attacks — the server validates the token is within ±5 minutes.
+// deriveKey isolates the escrow HMAC key from other token types that share SharedSecret.
 func ComputeEscrowToken(sharedSecret, hostname, timestamp string) string {
-	mac := hmac.New(sha256.New, []byte(sharedSecret))
+	mac := hmac.New(sha256.New, deriveKey(sharedSecret, "escrow"))
 	mac.Write([]byte("escrow:" + hostname + ":" + timestamp))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// deriveKey derives a purpose-scoped subkey from sharedSecret using HMAC-SHA256.
+// This prevents cross-context token reuse: an attacker with one token type
+// cannot trivially forge tokens of another type.
+func deriveKey(sharedSecret, purpose string) []byte {
+	h := hmac.New(sha256.New, []byte(sharedSecret))
+	h.Write([]byte(purpose))
+	return h.Sum(nil)
 }
 
 // breakglassFileMtime returns the modification time of the break-glass file.

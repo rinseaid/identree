@@ -86,6 +86,13 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject approval if the requesting user's account is disabled.
+	if s.isUserDisabled(challenge.Username) {
+		slog.Warn("APPROVAL_REJECTED account disabled", "user", challenge.Username, "host", challenge.Hostname, "remote_addr", remoteAddr(r))
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "account_disabled")
+		return
+	}
+
 	// Approve the challenge
 	if err := s.store.Approve(challengeID, username); err != nil {
 		if errors.Is(err, challpkg.ErrDiskWriteFailed) {
@@ -99,7 +106,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	challengesApproved.Inc()
 	challpkg.ActiveChallenges.Dec()
 	challengeDuration.Observe(time.Since(challenge.CreatedAt).Seconds())
-	slog.Info("BULK_APPROVED", "user", challenge.Username, "host", challenge.Hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
+	slog.Info("BULK_APPROVED", "user", challenge.Username, "approver", username, "host", challenge.Hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
 
 	// Log the action
 	hostname := challenge.Hostname
@@ -180,7 +187,8 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 
 	// Verify HMAC — include challenge username and hostname to bind the token to a
 	// specific user on a specific host, preventing cross-host token replay.
-	mac := hmac.New(sha256.New, []byte(s.cfg.SharedSecret))
+	// Use the same derived key as computeOneTapToken so the contexts match.
+	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "onetap"))
 	mac.Write([]byte("onetap:" + challengeID + ":" + challenge.Username + ":" + expiresStr + ":" + challenge.Hostname))
 	expectedHMAC := hex.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(expectedHMAC), []byte(providedHMAC)) != 1 {
@@ -219,7 +227,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 			Path:     "/",
 			MaxAge:   int(ttl.Seconds()),
 			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
+			SameSite: http.SameSiteStrictMode,
 			Secure:   secure,
 		})
 		loginURL := s.baseURL + "/sessions/login"
@@ -303,6 +311,13 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject approval if the requesting user's account is disabled.
+	if s.isUserDisabled(challenge.Username) {
+		slog.Warn("ONETAP_REJECTED account disabled", "user", challenge.Username, "host", challenge.Hostname, "remote_addr", remoteAddr(r))
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "account_disabled")
+		return
+	}
+
 	// OIDC is fresh — atomically consume the single-use token and approve the challenge
 	// under a single lock to eliminate the TOCTOU window where another goroutine could
 	// approve the same challenge between ConsumeOneTap and Approve.
@@ -320,7 +335,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	challengeDuration.Observe(time.Since(challenge.CreatedAt).Seconds())
 	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, approver, challenge.Reason)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
-	slog.Info("ONETAP_APPROVED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
+	slog.Info("ONETAP_APPROVED", "user", challenge.Username, "approver", approver, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
 
 	// Render a simple success page
 	w.Header().Set("Content-Type", "text/html")

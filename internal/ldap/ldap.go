@@ -136,7 +136,6 @@ func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory, trigger string, exclud
 // Start launches the LDAP listener. It blocks until ctx is cancelled.
 func (s *LDAPServer) Start(ctx context.Context) error {
 	srv, err := gldap.NewServer(
-		gldap.WithDisablePanicRecovery(),
 		gldap.WithReadTimeout(60*time.Second),
 		gldap.WithWriteTimeout(60*time.Second),
 		gldap.WithOnClose(func(connID int) {
@@ -806,7 +805,7 @@ func (s *LDAPServer) searchSudoers(w *gldap.ResponseWriter, req *gldap.Request, 
 		if vals := splitClaim(claims, "sudoRunAsGroup"); len(vals) > 0 {
 			var safe []string
 			for _, v := range vals {
-				if v == "ALL" || validSudoHostOrUser.MatchString(v) {
+				if v == "ALL" || validGroupName.MatchString(v) {
 					safe = append(safe, v)
 				}
 			}
@@ -948,7 +947,7 @@ func (s *LDAPServer) searchSudoersFromStore(w *gldap.ResponseWriter, req *gldap.
 		if rawRG := splitComma(rule.RunAsGroup); len(rawRG) > 0 {
 			var safe []string
 			for _, v := range rawRG {
-				if v == "ALL" || validSudoHostOrUser.MatchString(v) {
+				if v == "ALL" || validGroupName.MatchString(v) {
 					safe = append(safe, v)
 				}
 			}
@@ -1028,8 +1027,8 @@ func splitComma(s string) []string {
 
 // ── Group / user name validation ─────────────────────────────────────────────
 
-// validGroupName matches safe POSIX group names.
-var validGroupName = regexp.MustCompile(`^[a-z_][a-z0-9_.-]*$`)
+// validGroupName matches safe POSIX group names (max 32 chars per POSIX).
+var validGroupName = regexp.MustCompile(`^[a-z_][a-z0-9_.-]{0,31}$`)
 
 // reservedGroupNames are system group names that must not be shadowed by IDP groups.
 var reservedGroupNames = map[string]bool{
@@ -1073,8 +1072,8 @@ func isValidGroupName(name string) bool {
 // validSudoHostOrUser matches safe values for sudoHost, sudoRunAsUser, sudoRunAsGroup.
 var validSudoHostOrUser = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,253}$`)
 
-// validHostname matches safe hostnames for accessHosts.
-var validHostname = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+// validHostname matches safe hostnames for accessHosts (max 255 chars per RFC 1035).
+var validHostname = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,255}$`)
 
 // sudoClaimKeys are the custom claim keys that indicate a group defines sudo permissions.
 var sudoClaimKeys = []string{"sudoCommands", "sudoHosts", "sudoRunAsUser", "sudoRunAsGroup", "sudoOptions"}
@@ -1139,8 +1138,8 @@ func hasSudoClaims(claims map[string]string) bool {
 
 // isNoAuthOption returns true if the option is !authenticate or authenticate.
 func isNoAuthOption(opt string) bool {
-	// Check for control characters before TrimSpace — TrimSpace strips \n and \r.
-	if strings.ContainsAny(opt, "\n\r\x00") {
+	// Check for control characters before TrimSpace — TrimSpace strips \n and \r but not \t.
+	if strings.ContainsAny(opt, "\n\r\t\x00") {
 		return false
 	}
 	normalized := strings.ToLower(strings.TrimSpace(opt))
@@ -1163,7 +1162,7 @@ func normalizeSudoOption(s string) string {
 // isSafeSudoOption returns true if the sudo option is safe to pass through.
 func isSafeSudoOption(opt string) bool {
 	// Check for control characters before any trimming — TrimSpace would hide them.
-	if strings.ContainsAny(opt, "\n\r\x00") {
+	if strings.ContainsAny(opt, "\n\r\t\x00") {
 		return false
 	}
 	lower := strings.ToLower(strings.TrimSpace(opt))
@@ -1187,8 +1186,8 @@ func isSafeSudoOption(opt string) bool {
 
 // validSudoCommand checks that a sudo command value is safe.
 func validSudoCommand(cmd string) bool {
-	// Check for control characters before TrimSpace — TrimSpace strips \n and \r.
-	if strings.ContainsAny(cmd, "\n\r\x00") {
+	// Check for control characters before TrimSpace — TrimSpace strips \n and \r but not \t.
+	if strings.ContainsAny(cmd, "\n\r\t\x00") {
 		return false
 	}
 	cmd = strings.TrimSpace(cmd)

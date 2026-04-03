@@ -198,7 +198,7 @@ func (s *Server) getAndClearFlash(w http.ResponseWriter, r *http.Request) string
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 	}
 	if strings.HasPrefix(s.cfg.ExternalURL, "https://") {
 		c.Secure = true

@@ -562,6 +562,27 @@ func (s *Server) isBridgeMode() bool {
 	return s.cfg.APIKey == ""
 }
 
+// isUserDisabled returns true if the named user is marked disabled in the
+// PocketID directory cache. Returns false in bridge mode (no remote directory),
+// and false on cache errors (fail open to avoid blocking approvals on transient
+// PocketID outages).
+func (s *Server) isUserDisabled(username string) bool {
+	if s.isBridgeMode() {
+		return false
+	}
+	users, err := s.pocketIDClient.CachedAdminUsers()
+	if err != nil {
+		slog.Warn("isUserDisabled: failed to fetch user cache, failing open", "err", err)
+		return false
+	}
+	for i := range users {
+		if users[i].Username == username {
+			return users[i].Disabled
+		}
+	}
+	return false
+}
+
 // Stop cleanly shuts down background resources.
 func (s *Server) Stop() {
 	close(s.stopCh)
@@ -580,7 +601,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Redirect HTTP→HTTPS when the server is behind a TLS-terminating proxy
 	// that sets X-Forwarded-Proto: http on plain-HTTP requests.
 	if strings.HasPrefix(s.cfg.ExternalURL, "https://") && r.Header.Get("X-Forwarded-Proto") == "http" {
-		target := "https://" + r.Host + r.URL.RequestURI()
+		// Use the configured external host, not r.Host, to prevent host header injection.
+		externalHost := strings.TrimPrefix(strings.TrimPrefix(s.cfg.ExternalURL, "https://"), "http://")
+		if idx := strings.IndexByte(externalHost, '/'); idx != -1 {
+			externalHost = externalHost[:idx]
+		}
+		target := "https://" + externalHost + r.URL.RequestURI()
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 		return
 	}
@@ -650,6 +676,7 @@ func (s *Server) handlePocketIDWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	sig := r.Header.Get("X-Webhook-Signature")
 	if !verifyWebhookSignature(r, s.cfg.WebhookSecret, sig) {
+		slog.Warn("AUTH_FAILURE webhook signature mismatch", "remote_addr", remoteAddr(r))
 		http.Error(w, "invalid signature", http.StatusForbidden)
 		return
 	}

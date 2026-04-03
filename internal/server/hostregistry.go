@@ -248,6 +248,7 @@ func (r *HostRegistry) RotateSecret(hostname string) (string, error) {
 	}
 	host.Secret = secret
 	r.saveLocked()
+	slog.Info("HOST_SECRET_ROTATED", "host", hostname)
 	return secret, nil
 }
 

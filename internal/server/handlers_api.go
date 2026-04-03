@@ -761,7 +761,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		tsDiff := time.Since(time.Unix(tsUnix, 0))
-		if tsDiff > 5*time.Minute || tsDiff < -5*time.Minute {
+		if tsDiff > time.Minute || tsDiff < -time.Minute {
 			slog.Warn("AUTH_FAILURE escrow timestamp out of window", "host", req.Hostname, "remote_addr", remoteAddr(r), "diff", tsDiff)
 			apiError(w, http.StatusForbidden, "escrow timestamp out of window")
 			return
