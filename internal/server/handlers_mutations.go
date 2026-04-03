@@ -143,7 +143,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.cfg.SharedSecret == "" {
+	if s.hmacBase() == "" {
 		revokeErrorPage(w, r, http.StatusForbidden, "invalid_request", "invalid_csrf")
 		return
 	}
@@ -188,7 +188,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	// Verify HMAC — include challenge username and hostname to bind the token to a
 	// specific user on a specific host, preventing cross-host token replay.
 	// Use the same derived key as computeOneTapToken so the contexts match.
-	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "onetap"))
+	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "onetap"))
 	mac.Write([]byte("onetap:" + challengeID + ":" + challenge.Username + ":" + expiresStr + ":" + challenge.Hostname))
 	expectedHMAC := hex.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(expectedHMAC), []byte(providedHMAC)) != 1 {
@@ -245,7 +245,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		// This prevents link previewers from auto-approving the challenge.
 		username := s.getSessionUser(r)
 		csrfTs := strconv.FormatInt(time.Now().Unix(), 10)
-		csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+		csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
 		w.Header().Set("Content-Type", "text/html")
 		lang := detectLanguage(r)
@@ -453,13 +453,15 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 	// Approve all pending challenges for this user
 	pending := s.store.PendingChallenges(username)
 	isAdmin := s.getSessionRole(r) == "admin"
+	// Build the disabled-user set once per request (O(1) per challenge instead of O(n)).
+	disabledMap := s.buildDisabledMap()
 	count := 0
 	for _, c := range pending {
 		// Skip admin-approval-required challenges if the approver is not an admin.
 		if s.requiresAdminApproval(c.Hostname) && !isAdmin {
 			continue
 		}
-		if s.isUserDisabled(c.Username) {
+		if disabledMap[c.Username] {
 			slog.Warn("APPROVAL_REJECTED account disabled", "user", c.Username, "host", c.Hostname, "remote_addr", remoteAddr(r))
 			continue
 		}

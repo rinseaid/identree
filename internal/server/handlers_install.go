@@ -135,6 +135,21 @@ else
     echo "Downloading identree $VERSION ($SUFFIX)..."
     _dl "$BIN_URL" "$TMP_BIN"
 
+    # Verify SHA-256 checksum before installing.
+    SUM_URL="$SERVER_URL/download/identree-$SUFFIX.sha256"
+    TMP_SUM=$(mktemp /tmp/identree-sum-XXXXXX)
+    trap 'rm -f "$TMP_BIN" "$TMP_SUM"' EXIT
+    _dl "$SUM_URL" "$TMP_SUM"
+    EXPECTED_HASH=$(awk '{print $1}' "$TMP_SUM")
+    ACTUAL_HASH=$(sha256sum "$TMP_BIN" 2>/dev/null | awk '{print $1}' \
+        || shasum -a 256 "$TMP_BIN" 2>/dev/null | awk '{print $1}')
+    if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+        echo "ERROR: SHA-256 checksum mismatch — aborting installation." >&2
+        echo "  expected: $EXPECTED_HASH" >&2
+        echo "  got:      $ACTUAL_HASH" >&2
+        exit 1
+    fi
+
     install -m 755 "$TMP_BIN" "$INSTALL_DIR/identree"
     echo "Installed identree $VERSION"
 fi

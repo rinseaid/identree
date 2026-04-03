@@ -1,11 +1,18 @@
 package server
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // systemd unit file contents — served at /download/systemd/<unit>.
@@ -111,6 +118,142 @@ func (s *Server) handleDownloadSystemd(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	fmt.Fprint(w, content)
+}
+
+// handleDownloadBinaryChecksum serves the SHA-256 hex digest of the named binary.
+// GET /download/identree-linux-amd64.sha256
+// GET /download/identree-linux-arm64.sha256
+func (s *Server) handleDownloadBinaryChecksum(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Strip ".sha256" suffix to get the binary name.
+	name := strings.TrimPrefix(r.URL.Path, "/download/")
+	name = strings.TrimSuffix(name, ".sha256")
+	if name != "identree-linux-amd64" && name != "identree-linux-arm64" {
+		http.NotFound(w, r)
+		return
+	}
+
+	binPath, err := binaryPath(name)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	f, err := os.Open(binPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, fmt.Sprintf("%s is not available on this server", name), http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(h.Sum(nil)), name)
+}
+
+// handleAvatarProxy fetches a user avatar image server-side and streams it to
+// the browser. Routing through the proxy eliminates the DNS-rebinding TOCTOU
+// that exists when the browser fetches the avatar URL independently after we
+// validate the hostname in the server.
+// GET /api/avatar?url=<encoded-avatar-url>
+func (s *Server) handleAvatarProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	rawURL := r.URL.Query().Get("url")
+	if rawURL == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	if !strings.HasPrefix(rawURL, "https://") && !strings.HasPrefix(rawURL, "http://") {
+		http.Error(w, "invalid url", http.StatusBadRequest)
+		return
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Hostname() == "" {
+		http.Error(w, "invalid url", http.StatusBadRequest)
+		return
+	}
+
+	// Use a custom dialer that blocks private/loopback addresses to prevent SSRF.
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			// Resolve the hostname and check all returned addresses.
+			ips, err := net.DefaultResolver.LookupHost(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			for _, ipStr := range ips {
+				ip := net.ParseIP(ipStr)
+				if ip != nil && isPrivateIP(ip) {
+					return nil, fmt.Errorf("avatar proxy: host %q resolves to private address %s", host, ipStr)
+				}
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(ips[0], port))
+		},
+	}
+
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("User-Agent", "identree-avatar-proxy/1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		http.NotFound(w, r)
+		return
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "image/") {
+		http.Error(w, "not an image", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	io.Copy(w, io.LimitReader(resp.Body, 1<<20)) //nolint:errcheck // best-effort stream
 }
 
 // binaryPath resolves the path to a named binary (e.g. "identree-linux-amd64")

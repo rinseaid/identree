@@ -198,10 +198,16 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Soft-check state binding: warn if the callback IP differs from login IP.
-	// This can legitimately differ for users behind load balancers or mobile NAT,
-	// so we warn rather than reject.
+	// Check state binding: warn (or reject) if the callback IP differs from login IP.
+	// Rejection can be enabled via IDENTREE_OIDC_ENFORCE_IP_BINDING for environments
+	// where clients have stable IPs. Left warn-only by default because NAT/load
+	// balancers legitimately change client IPs mid-flow.
 	if nonceData.clientIP != "" && nonceData.clientIP != remoteAddr(r) {
+		if s.cfg.EnforceOIDCIPBinding {
+			slog.Warn("SECURITY sessions callback IP mismatch — rejecting (EnforceOIDCIPBinding=true)", "login_ip", nonceData.clientIP, "callback_ip", remoteAddr(r))
+			revokeErrorPage(w, r, http.StatusForbidden, "auth_failed", "ip_binding_mismatch")
+			return
+		}
 		slog.Warn("SECURITY sessions callback IP mismatch (possible CSRF)", "login_ip", nonceData.clientIP, "callback_ip", remoteAddr(r))
 	}
 

@@ -68,6 +68,7 @@ type ServerConfig struct {
 	ExternalURL  string        // public-facing URL (for OIDC redirects)
 	InstallURL   string        // URL reachable from client hosts (for install script); defaults to ExternalURL
 	SharedSecret string // secret shared with PAM clients
+	HMACSecret   string // optional separate secret for HMAC signing (session, CSRF, onetap, approval_status); defaults to SharedSecret when empty
 	MetricsToken string // bearer token for /metrics endpoint (optional; empty = unauthenticated)
 
 	// ── Session / auth flow ───────────────────────────────────────────────────
@@ -164,6 +165,12 @@ type ServerConfig struct {
 
 	// ── Webhook receiver (PocketID → identree) ────────────────────────────────
 	WebhookSecret string // validates incoming PocketID webhook signatures
+
+	// ── Security options ──────────────────────────────────────────────────────
+	// EnforceOIDCIPBinding makes the OIDC callback reject (not just warn) when
+	// the callback IP differs from the login initiation IP. Disabled by default
+	// because legitimate users behind NAT/load balancers can have different IPs.
+	EnforceOIDCIPBinding bool
 
 	// ── Development / testing ─────────────────────────────────────────────────
 	// DevLoginEnabled enables /dev/login?user=X&role=Y for bypassing OIDC in
@@ -286,6 +293,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ExternalURL:  get("IDENTREE_EXTERNAL_URL"),
 		InstallURL:   get("IDENTREE_INSTALL_URL"),
 		SharedSecret: get("IDENTREE_SHARED_SECRET"),
+		HMACSecret:   get("IDENTREE_HMAC_SECRET"),
 		MetricsToken: get("IDENTREE_METRICS_TOKEN"),
 
 		ChallengeTTL: getDuration("IDENTREE_CHALLENGE_TTL", 120*time.Second),
@@ -338,8 +346,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ClientBreakglassPasswordType: get("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"),
 		ClientBreakglassRotationDays: getInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", 0),
 
-		WebhookSecret:   get("IDENTREE_WEBHOOK_SECRET"),
-		DevLoginEnabled: getBool("IDENTREE_DEV_LOGIN", false),
+		WebhookSecret:        get("IDENTREE_WEBHOOK_SECRET"),
+		EnforceOIDCIPBinding: getBool("IDENTREE_OIDC_ENFORCE_IP_BINDING", false),
+		DevLoginEnabled:      getBool("IDENTREE_DEV_LOGIN", false),
 	}
 
 	// Backward compatibility: accept old env var names with deprecation warnings.

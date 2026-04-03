@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,7 +12,7 @@ import (
 
 // newAuthTestServer builds a Server with the given shared secret and API keys.
 func newAuthTestServer(secret string, apiKeys []string, adminApprovalHosts []string) *Server {
-	return &Server{
+	s := &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret:       secret,
 			APIKeys:            apiKeys,
@@ -18,6 +20,12 @@ func newAuthTestServer(secret string, apiKeys []string, adminApprovalHosts []str
 		},
 		hostRegistry: NewHostRegistry(""),
 	}
+	for _, key := range apiKeys {
+		h := hmac.New(sha256.New, []byte("api-key-verification"))
+		h.Write([]byte(key))
+		s.hashedAPIKeys = append(s.hashedAPIKeys, h.Sum(nil))
+	}
+	return s
 }
 
 func TestVerifySharedSecret(t *testing.T) {

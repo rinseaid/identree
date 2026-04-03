@@ -55,7 +55,7 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 	// Verify CSRF token when a valid session exists.
 	// Uses the session cookie's username to validate the HMAC, so no username
 	// field is needed in the form itself.
-	if s.cfg.SharedSecret != "" {
+	if s.hmacBase() != "" {
 		if username := s.getSessionUser(r); username != "" {
 			r.Body = http.MaxBytesReader(w, r.Body, 1024)
 			_ = r.ParseForm()
@@ -65,7 +65,7 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 			if csrfToken != "" && csrfTs != "" {
 				if tsInt, err := strconv.ParseInt(csrfTs, 10, 64); err == nil {
 					if age := time.Since(time.Unix(tsInt, 0)); age >= 0 && age <= 5*time.Minute {
-						expected := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+						expected := computeCSRFToken(s.hmacBase(), username, csrfTs)
 						valid = subtle.ConstantTimeCompare([]byte(expected), []byte(csrfToken)) == 1
 					}
 				}
@@ -398,7 +398,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
-	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
 	pendingViews := s.buildPendingViews(username, lang)
 
@@ -936,7 +936,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	csrfTs := strconv.FormatInt(time.Now().Unix(), 10)
-	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
 	// Elevate duration options clamped to GracePeriod.
 	var elevateDurations []durationOption
@@ -1533,7 +1533,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	perPageOptions := []int{15, 30, 50, 100}
 
 	historyCSRFTs := strconv.FormatInt(time.Now().Unix(), 10)
-	historyCSRFToken := computeCSRFToken(s.cfg.SharedSecret, username, historyCSRFTs)
+	historyCSRFToken := computeCSRFToken(s.hmacBase(), username, historyCSRFTs)
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := historyTmpl.Execute(w, map[string]interface{}{

@@ -90,7 +90,7 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
-	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
 	adminTZ := "UTC"
 	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {

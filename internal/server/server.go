@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -30,6 +31,27 @@ import (
 )
 
 var serverStartTime = time.Now()
+
+// serverHealthzState holds the cached health-check results for the filesystem
+// and external connectivity probes. Embedding in Server promotes all fields.
+type serverHealthzState struct {
+	healthzMu      sync.Mutex
+	healthzLast    time.Time
+	healthzStateOK bool
+
+	healthzConnMu     sync.Mutex
+	healthzConnLast   time.Time
+	healthzPocketIDOK bool
+	healthzOIDCOK     bool
+}
+
+// serverLDAPErrorState holds the most recent LDAP refresh failure.
+// Embedding in Server promotes all fields.
+type serverLDAPErrorState struct {
+	ldapLastError   error
+	ldapLastErrorAt time.Time
+	ldapLastErrorMu sync.Mutex
+}
 
 // sessionNonceData holds state for an in-flight OIDC login.
 type sessionNonceData struct {
@@ -98,17 +120,9 @@ type Server struct {
 	callbackRL *loginRateLimiter  // per-IP limit on /callback (OIDC callback)
 	authFailRL *authFailTracker   // per-IP auth-failure backoff on /api/challenge
 
-	// healthz filesystem check cache: avoids disk I/O on every probe.
-	healthzMu      sync.Mutex
-	healthzLast    time.Time
-	healthzStateOK bool
-
-	// healthzConn caches the external connectivity probe results (PocketID + OIDC)
-	// for 30 seconds to avoid hammering external services on every probe.
-	healthzConnMu     sync.Mutex
-	healthzConnLast   time.Time
-	healthzPocketIDOK bool
-	healthzOIDCOK     bool
+	// healthz and ldap error state are in embedded structs for field-count reduction.
+	serverHealthzState
+	serverLDAPErrorState
 
 	// ldapBound is set to true once the LDAP listener goroutine has started.
 	// It is never reset to false (a stopped listener causes the process to exit).
@@ -135,10 +149,10 @@ type Server struct {
 	// Initialised in NewServer with the configured NotifyTimeout.
 	webhookClient *http.Client
 
-	// ldapLastError records the most recent LDAP refresh failure for /admin/info.
-	ldapLastError   error
-	ldapLastErrorAt time.Time
-	ldapLastErrorMu sync.Mutex
+	// hashedAPIKeys and hashedMetricsToken are pre-computed at startup to avoid
+	// re-hashing on every request in verifyAPIKey / handleMetrics.
+	hashedAPIKeys      [][]byte
+	hashedMetricsToken [sha256.Size]byte
 
 	// revokedNonces tracks nonces of server-side-revoked session cookies.
 	// Entries are keyed by nonce and hold the revocation time; they are pruned
@@ -270,6 +284,16 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		},
 	}
 
+	// Pre-hash API keys and the metrics token at startup.
+	for _, key := range cfg.APIKeys {
+		h := hmac.New(sha256.New, []byte("api-key-verification"))
+		h.Write([]byte(key))
+		s.hashedAPIKeys = append(s.hashedAPIKeys, h.Sum(nil))
+	}
+	if cfg.MetricsToken != "" {
+		s.hashedMetricsToken = sha256.Sum256([]byte(cfg.MetricsToken))
+	}
+
 	if cfg.EscrowBackend == config.EscrowBackendLocal {
 		if cfg.EscrowEncryptionKey == "" {
 			return nil, fmt.Errorf("IDENTREE_ESCROW_ENCRYPTION_KEY must be set when using the local escrow backend")
@@ -354,6 +378,22 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 
 	s.registerRoutes()
 	return s, nil
+}
+
+// pocketIDSyncAge returns a human-readable string describing how long ago the
+// PocketID user cache was last successfully refreshed, or "" in bridge mode.
+func (s *Server) pocketIDSyncAge() string {
+	if s.isBridgeMode() {
+		return ""
+	}
+	exp := s.pocketIDClient.AdminUsersCacheExpiry()
+	if exp.IsZero() {
+		return "never"
+	}
+	// cacheTTL is 5 minutes; subtract it from expiry to get the last-refresh time.
+	const pocketIDCacheTTL = 5 * time.Minute
+	lastRefresh := exp.Add(-pocketIDCacheTTL)
+	return formatDuration(nil, time.Since(lastRefresh)) + " ago"
 }
 
 // ldapSyncError returns a non-empty error string if the last LDAP refresh
@@ -455,6 +495,9 @@ func (s *Server) registerRoutes() {
 	// SSE
 	s.mux.HandleFunc("/api/events", s.handleSSEEvents)
 
+	// Avatar proxy — fetches avatar images server-side to eliminate DNS-rebinding TOCTOU
+	s.mux.HandleFunc("/api/avatar", s.handleAvatarProxy)
+
 	// Access page
 	s.mux.HandleFunc("/access", s.handleAccess)
 
@@ -506,6 +549,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/download/version", s.handleDownloadVersion)
 	s.mux.HandleFunc("/download/identree-linux-amd64", s.handleDownloadBinary)
 	s.mux.HandleFunc("/download/identree-linux-arm64", s.handleDownloadBinary)
+	s.mux.HandleFunc("/download/identree-linux-amd64.sha256", s.handleDownloadBinaryChecksum)
+	s.mux.HandleFunc("/download/identree-linux-arm64.sha256", s.handleDownloadBinaryChecksum)
 	s.mux.HandleFunc("/download/systemd/", s.handleDownloadSystemd)
 
 	// Deploy
@@ -547,10 +592,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
 			token = r.URL.Query().Get("token")
 		}
-		// Hash both values before comparison to avoid timing leaks.
 		tokenHash := sha256.Sum256([]byte(token))
-		expectedHash := sha256.Sum256([]byte(s.cfg.MetricsToken))
-		if subtle.ConstantTimeCompare(tokenHash[:], expectedHash[:]) != 1 {
+		if subtle.ConstantTimeCompare(tokenHash[:], s.hashedMetricsToken[:]) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -582,6 +625,36 @@ func (s *Server) isUserDisabled(username string) bool {
 		}
 	}
 	return false
+}
+
+// hmacBase returns HMACSecret when set, falling back to SharedSecret.
+// All HMAC signing (session, CSRF, onetap, approval_status) must use this so
+// that operators can rotate HMAC keys independently from the PAM shared secret.
+func (s *Server) hmacBase() string {
+	if s.cfg.HMACSecret != "" {
+		return s.cfg.HMACSecret
+	}
+	return s.cfg.SharedSecret
+}
+
+// buildDisabledMap returns a set of disabled usernames for O(1) batch lookup.
+// Returns nil in bridge mode or on cache errors (fail open).
+func (s *Server) buildDisabledMap() map[string]bool {
+	if s.isBridgeMode() {
+		return nil
+	}
+	users, err := s.pocketIDClient.CachedAdminUsers()
+	if err != nil {
+		slog.Warn("buildDisabledMap: failed to fetch user cache, failing open", "err", err)
+		return nil
+	}
+	m := make(map[string]bool, len(users))
+	for i := range users {
+		if users[i].Disabled {
+			m[users[i].Username] = true
+		}
+	}
+	return m
 }
 
 // Stop cleanly shuts down background resources.

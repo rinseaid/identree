@@ -252,7 +252,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		s.ldapLastSyncMu.RLock()
 		last := s.ldapLastSync
 		s.ldapLastSyncMu.RUnlock()
-		if !last.IsZero() && time.Since(last) > 2*interval {
+		if !last.IsZero() && time.Since(last) > interval+interval/2 {
 			res.ldapSync = "stale"
 		}
 	}
@@ -429,7 +429,7 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	infoCSRFTs := strconv.FormatInt(time.Now().Unix(), 10)
-	infoCSRFToken := computeCSRFToken(s.cfg.SharedSecret, username, infoCSRFTs)
+	infoCSRFToken := computeCSRFToken(s.hmacBase(), username, infoCSRFTs)
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := adminTmpl.Execute(w, map[string]interface{}{
@@ -461,8 +461,10 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"OSArch":              runtime.GOOS + "/" + runtime.GOARCH,
 		"Goroutines":          runtime.NumGoroutine(),
 		"MemUsage":            fmt.Sprintf("%.1f MB alloc / %.1f MB sys", float64(memStats.Alloc)/1024/1024, float64(memStats.Sys)/1024/1024),
-		"ActiveSessionsCount": len(s.store.AllActiveSessions()),
-		"LDAPSyncError":       s.ldapSyncError(),
+		"ActiveSessionsCount":  len(s.store.AllActiveSessions()),
+		"ActiveChallengeCount": len(s.store.AllPendingChallenges()),
+		"LDAPSyncError":        s.ldapSyncError(),
+		"PocketIDSyncAge":      s.pocketIDSyncAge(),
 	}); err != nil {
 		slog.Error("template execution", "err", err)
 	}
@@ -526,7 +528,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 			revokeErrorPage(w, r, http.StatusForbidden, "form_expired", "form_expired_message")
 			return
 		}
-		expected := computeCSRFToken(s.cfg.SharedSecret, formUser, csrfTs)
+		expected := computeCSRFToken(s.hmacBase(), formUser, csrfTs)
 		if subtle.ConstantTimeCompare([]byte(expected), []byte(csrfToken)) != 1 {
 			revokeErrorPage(w, r, http.StatusForbidden, "invalid_request", "invalid_csrf")
 			return
@@ -614,7 +616,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
-	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
 	adminTZ := "UTC"
 	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
@@ -1328,7 +1330,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
-	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
 	// Bulk-fetch all active sessions and action history to avoid N+1 store queries.
 	allSessionsByUser := make(map[string][]challpkg.GraceSession)
@@ -1604,7 +1606,7 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
-	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
 	adminTZ := "UTC"
 	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
@@ -1945,7 +1947,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
-	csrfToken := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
 	// Build duration options, filtering to those <= GracePeriod
 	type durationOption struct {
@@ -2066,6 +2068,13 @@ func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 	s.removedUsers[targetUser] = time.Now()
 	s.removedUsersMu.Unlock()
 	slog.Info("USER_REMOVED", "admin", adminUser, "user", targetUser, "remote_addr", remoteAddr(r))
+
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "user_removed",
+		Username:  targetUser,
+		Actor:     adminUser,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 
 	s.setFlashCookie(w, "removed_user:"+targetUser)
 	http.Redirect(w, r, s.baseURL+"/admin/users", http.StatusSeeOther)

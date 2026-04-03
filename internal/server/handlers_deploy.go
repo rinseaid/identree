@@ -15,6 +15,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	challpkg "github.com/rinseaid/identree/internal/challenge"
+	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/randutil"
 )
 
@@ -469,6 +470,13 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 	_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
 	s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
 	slog.Info("HOST_REMOVED", "admin", adminUser, "host", req.Hostname, "client_ip", clientIP(r))
+
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "host_removed",
+		Hostname:  req.Hostname,
+		Actor:     adminUser,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

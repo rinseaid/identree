@@ -704,6 +704,17 @@ func (c *PocketIDClient) PutGroupClaims(groupID string, claims []Claim) error {
 	return c.apiPut(url, claims)
 }
 
+// AdminUsersCacheExpiry returns the expiry time of the admin users cache.
+// Returns zero time if the cache has never been populated.
+func (c *PocketIDClient) AdminUsersCacheExpiry() time.Time {
+	if c == nil {
+		return time.Time{}
+	}
+	c.adminUsersMu.Lock()
+	defer c.adminUsersMu.Unlock()
+	return c.cachedAdminUsersExp
+}
+
 // InvalidateCache clears all cached data so the next request fetches fresh data.
 func (c *PocketIDClient) InvalidateCache() {
 	if c == nil {

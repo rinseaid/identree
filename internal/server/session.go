@@ -1,13 +1,11 @@
 package server
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -44,7 +42,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, username, role string) 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "session"))
+	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "session"))
 	mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	value := username + ":" + role + ":" + ts + ":" + nonce + ":" + sig
@@ -74,7 +72,7 @@ type sessionData struct {
 // malformed, expired, or has a bad HMAC/revoked nonce.
 // Callers must check valid == false before using the returned data.
 func (s *Server) parseSessionCookie(r *http.Request) (data sessionData, valid bool) {
-	if s.cfg.SharedSecret == "" {
+	if s.hmacBase() == "" {
 		return sessionData{}, false
 	}
 	cookie, err := r.Cookie(sessionCookieName)
@@ -103,7 +101,7 @@ func (s *Server) parseSessionCookie(r *http.Request) (data sessionData, valid bo
 	if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > sessionCookieTTL {
 		return sessionData{}, false
 	}
-	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "session"))
+	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "session"))
 	mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
@@ -207,7 +205,11 @@ func (s *Server) getAndClearFlash(w http.ResponseWriter, r *http.Request) string
 	return cookie.Value
 }
 
-// getAvatar reads the identree_avatar cookie and returns the URL, or "" if invalid.
+// getAvatar reads the identree_avatar cookie and returns an /api/avatar proxy
+// URL, or "" if the cookie is absent or has an invalid scheme.
+// Routing the URL through the proxy eliminates the DNS-rebinding TOCTOU present
+// when we validate the hostname at cookie-read time but the browser fetches the
+// URL independently later.
 func getAvatar(r *http.Request) string {
 	c, err := r.Cookie("identree_avatar")
 	if err != nil || c.Value == "" {
@@ -218,25 +220,7 @@ func getAvatar(r *http.Request) string {
 	if !strings.HasPrefix(c.Value, "https://") && !strings.HasPrefix(c.Value, "http://") {
 		return ""
 	}
-	// Reject avatar URLs whose hostname resolves to a private or loopback
-	// address. The cookie is readable by JS (HttpOnly=false), so a stored XSS
-	// could craft a cookie pointing at an internal service; we block that here
-	// by refusing to pass the URL to templates where it becomes an <img src>.
-	if parsed, perr := url.Parse(c.Value); perr == nil {
-		hostname := parsed.Hostname()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		addrs, lerr := net.DefaultResolver.LookupHost(ctx, hostname)
-		if lerr != nil {
-			return ""
-		}
-		for _, addr := range addrs {
-			if ip := net.ParseIP(addr); ip != nil && isPrivateIP(ip) {
-				return ""
-			}
-		}
-	}
-	return c.Value
+	return "/api/avatar?url=" + url.QueryEscape(c.Value)
 }
 
 func getTheme(r *http.Request) string {
@@ -302,13 +286,13 @@ func (s *Server) verifyFormAuth(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 
-	// Verify CSRF token. When SharedSecret is empty computeCSRFToken returns "".
+	// Verify CSRF token. When hmacBase() is empty computeCSRFToken returns "".
 	// ConstantTimeCompare([]byte{},[]byte{}) == 1, so we must guard explicitly.
-	if s.cfg.SharedSecret == "" {
+	if s.hmacBase() == "" {
 		revokeErrorPage(w, r, http.StatusForbidden, "invalid_request", "invalid_csrf")
 		return ""
 	}
-	expected := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	expected := computeCSRFToken(s.hmacBase(), username, csrfTs)
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(csrfToken)) != 1 {
 		revokeErrorPage(w, r, http.StatusForbidden, "invalid_request", "invalid_csrf")
 		return ""
@@ -345,7 +329,7 @@ func (s *Server) verifyJSONAdminAuth(w http.ResponseWriter, r *http.Request) str
 		return ""
 	}
 
-	if s.cfg.SharedSecret == "" {
+	if s.hmacBase() == "" {
 		http.Error(w, "server misconfiguration", http.StatusInternalServerError)
 		return ""
 	}
@@ -367,7 +351,7 @@ func (s *Server) verifyJSONAdminAuth(w http.ResponseWriter, r *http.Request) str
 		return ""
 	}
 
-	expected := computeCSRFToken(s.cfg.SharedSecret, username, csrfTs)
+	expected := computeCSRFToken(s.hmacBase(), username, csrfTs)
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(csrfToken)) != 1 {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return ""

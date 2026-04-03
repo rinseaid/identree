@@ -140,21 +140,19 @@ func (s *Server) verifyAPISecret(r *http.Request) bool {
 // subtle.ConstantTimeCompare always operates on equal-length inputs, preventing
 // the length-mismatch early-exit timing leak present in a bare byte comparison.
 func (s *Server) verifyAPIKey(r *http.Request) bool {
-	if len(s.cfg.APIKeys) == 0 {
+	if len(s.hashedAPIKeys) == 0 {
 		return false
 	}
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if token == "" {
 		return false
 	}
-	tokenHash := hmac.New(sha256.New, []byte("api-key-verification"))
-	tokenHash.Write([]byte(token))
-	hashedToken := tokenHash.Sum(nil)
+	h := hmac.New(sha256.New, []byte("api-key-verification"))
+	h.Write([]byte(token))
+	hashedToken := h.Sum(nil)
 
-	for _, key := range s.cfg.APIKeys {
-		h := hmac.New(sha256.New, []byte("api-key-verification"))
-		h.Write([]byte(key))
-		if subtle.ConstantTimeCompare(hashedToken, h.Sum(nil)) == 1 {
+	for _, preHashed := range s.hashedAPIKeys {
+		if subtle.ConstantTimeCompare(hashedToken, preHashed) == 1 {
 			return true
 		}
 	}
@@ -588,7 +586,7 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 // changes between creation and poll. Empty optional fields are omitted for
 // backward compatibility.
 func (s *Server) computeStatusHMAC(challengeID, username, status, rotateBefore, revokeTokensBefore string) string {
-	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "approval_status"))
+	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "approval_status"))
 	fmt.Fprintf(mac, "%d:%s%d:%s%d:%s", len(challengeID), challengeID, len(status), status, len(username), username)
 	// Include rotate_breakglass_before in the HMAC so a MITM cannot inject
 	// a rotation signal without invalidating the token.
@@ -608,11 +606,11 @@ func (s *Server) computeStatusHMAC(challengeID, username, status, rotateBefore, 
 // The token is bound to the challenge's hostname to prevent a token issued for a
 // challenge on host-a from being used to approve a challenge on host-b.
 func (s *Server) computeOneTapToken(challengeID, username, hostname string, expiresAt time.Time) string {
-	if s.cfg.SharedSecret == "" {
+	if s.hmacBase() == "" {
 		return ""
 	}
 	expires := strconv.FormatInt(expiresAt.Unix(), 10)
-	mac := hmac.New(sha256.New, deriveKey(s.cfg.SharedSecret, "onetap"))
+	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "onetap"))
 	mac.Write([]byte("onetap:" + challengeID + ":" + username + ":" + expires + ":" + hostname))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	return challengeID + "." + expires + "." + sig
