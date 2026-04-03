@@ -314,7 +314,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 			apiError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
-		slog.Error("creating challenge", "err", err)
+		slog.Error("creating challenge", "err", err, "user", req.Username, "host", req.Hostname, "remote_addr", remoteAddr(r))
 		apiError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -598,7 +598,7 @@ func (s *Server) computeStatusHMAC(challengeID, username, status, rotateBefore, 
 	// Include revoke_tokens_before in the HMAC so a MITM cannot inject
 	// a revocation signal without invalidating the token.
 	if revokeTokensBefore != "" {
-		fmt.Fprintf(mac, "r%d:%s", len(revokeTokensBefore), revokeTokensBefore)
+		fmt.Fprintf(mac, "%d:%s", len(revokeTokensBefore), revokeTokensBefore)
 	}
 	return hex.EncodeToString(mac.Sum(nil))
 }

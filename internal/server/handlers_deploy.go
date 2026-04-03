@@ -398,7 +398,7 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 				if i == len(lines)-1 && line == "" {
 					break // trailing newline
 				}
-				fmt.Fprintf(w, "data: %s\n\n", strings.TrimRight(line, "\r"))
+				fmt.Fprintf(w, "data: %s\n\n", strings.ReplaceAll(line, "\r", ""))
 			}
 			sent = len(data)
 			if canFlush {

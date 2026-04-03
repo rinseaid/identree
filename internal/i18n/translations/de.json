@@ -176,6 +176,7 @@
   "onetap_max_age": "Ein-Klick max. Alter",
   "admin_groups": "Admin-Gruppen",
   "admin_approval_required": "Dieser Host erfordert Admin-Genehmigung.",
+  "account_disabled": "Dieses Konto wurde deaktiviert.",
   "admin_approval_hosts": "Hosts mit Admin-Genehmigung",
   "filtered_to_one_hour": "Ereignisse einer einzelnen Stunde werden angezeigt.",
   "clear_time_filter": "Zeitfilter aufheben",

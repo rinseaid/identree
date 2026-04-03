@@ -111,7 +111,7 @@ func (s *LDAPServer) Refresh(dir *pocketid.UserDirectory, trigger string, exclud
 		s.uidmap.GID(g.ID)
 	}
 	if err := s.uidmap.Flush(); err != nil {
-		slog.Warn("ldap: uid map flush failed", "err", err)
+		slog.Error("ldap: uid map flush failed — UIDs may be reassigned on restart", "err", err)
 	}
 
 	// Precompute the user→host map once per refresh so that every search
@@ -183,16 +183,19 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 		// from accidentally treating a failed password as a successful
 		// anonymous bind.
 		if msg.Password != "" {
+			slog.Warn("LDAP_BIND_REJECTED unauthenticated bind attempt (empty DN with password)", "conn", req.ConnectionID())
 			resp.SetResultCode(gldap.ResultUnwillingToPerform)
 			return
 		}
 		if !s.cfg.LDAPAllowAnonymous {
+			slog.Warn("LDAP_BIND_REJECTED anonymous bind not allowed", "conn", req.ConnectionID())
 			resp.SetResultCode(gldap.ResultInsufficientAccessRights)
 			return
 		}
 		// Anonymous bind succeeds but is intentionally NOT registered in
 		// authedConns — anonymous sessions must not pass the authenticated
 		// connection check in the search handler.
+		slog.Info("LDAP_BIND_OK anonymous", "conn", req.ConnectionID())
 		resp.SetResultCode(gldap.ResultSuccess)
 		return
 	}
@@ -202,13 +205,19 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 	if s.cfg.LDAPBindDN != "" && strings.EqualFold(msg.UserName, s.cfg.LDAPBindDN) {
 		if s.cfg.LDAPBindPassword != "" && subtle.ConstantTimeCompare([]byte(msg.Password), []byte(s.cfg.LDAPBindPassword)) == 1 {
 			s.authedConns.Store(req.ConnectionID(), struct{}{})
+			slog.Info("LDAP_BIND_OK service account", "dn", msg.UserName, "conn", req.ConnectionID())
 			resp.SetResultCode(gldap.ResultSuccess)
+		} else {
+			slog.Warn("LDAP_BIND_REJECTED bad password for service account", "dn", msg.UserName, "conn", req.ConnectionID())
+			ldapBindFailures.Inc()
 		}
 		// Otherwise stays InvalidCredentials
 		return
 	}
 
 	// All other binds rejected — identree is a read-only directory
+	slog.Warn("LDAP_BIND_REJECTED unknown DN", "dn", msg.UserName, "conn", req.ConnectionID())
+	ldapBindFailures.Inc()
 }
 
 // ── Search handler ────────────────────────────────────────────────────────────
@@ -237,10 +246,10 @@ func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {
 		if ctrl.GetControlType() == gldap.ControlTypePaging {
 			hasPagingControl = true
 			if pc, ok := ctrl.(*gldap.ControlPaging); ok {
-				slog.Debug("ldap: SimplePagedResults control received — returning all results in one page",
+				slog.Info("ldap: SimplePagedResults control received — returning all results in one page",
 					"requested_page_size", pc.PagingSize)
 			} else {
-				slog.Debug("ldap: SimplePagedResults control received")
+				slog.Info("ldap: SimplePagedResults control received")
 			}
 			// No break — log all controls for observability.
 		} else {

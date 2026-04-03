@@ -17,6 +17,12 @@ var (
 		Name:      "ldap_queries_total",
 		Help:      "Total LDAP search queries served.",
 	}, []string{"base"}) // people, groups, sudoers, root
+
+	ldapBindFailures = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "identree",
+		Name:      "ldap_bind_failures_total",
+		Help:      "Total failed LDAP bind attempts (bad password or unknown DN).",
+	})
 )
 
 func init() {

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -593,7 +594,9 @@ func (s *Server) Stop() {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if rv := recover(); rv != nil {
-			slog.Error("panic in handler", "remote", remoteAddr(r), "value", rv)
+			buf := make([]byte, 64<<10)
+			n := runtime.Stack(buf, false)
+			slog.Error("panic in handler", "remote", remoteAddr(r), "method", r.Method, "path", r.URL.Path, "value", rv, "stack", string(buf[:n]))
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 	}()

@@ -68,6 +68,11 @@ var (
 		Help:      "Number of hosts registered in the host registry.",
 	})
 
+	ldapSyncFailures = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "identree",
+		Name:      "ldap_sync_failures_total",
+		Help:      "Total failed LDAP directory sync operations (PocketID fetch errors).",
+	})
 )
 
 func init() {

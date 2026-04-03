@@ -459,6 +459,10 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 		if s.requiresAdminApproval(c.Hostname) && !isAdmin {
 			continue
 		}
+		if s.isUserDisabled(c.Username) {
+			slog.Warn("APPROVAL_REJECTED account disabled", "user", c.Username, "host", c.Hostname, "remote_addr", remoteAddr(r))
+			continue
+		}
 		if err := s.store.Approve(c.ID, username); err == nil {
 			challengesApproved.Inc()
 			challpkg.ActiveChallenges.Dec()
@@ -581,6 +585,11 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if !validHostname.MatchString(hostname) {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
+		return
+	}
+
+	if s.isUserDisabled(username) {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "account_disabled")
 		return
 	}
 
@@ -839,6 +848,11 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 	}
 	if duration > 24*time.Hour {
 		duration = 24 * time.Hour
+	}
+
+	if s.isUserDisabled(targetUser) {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "account_disabled")
+		return
 	}
 
 	s.store.CreateGraceSession(targetUser, hostname, duration)

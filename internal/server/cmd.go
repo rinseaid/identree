@@ -346,6 +346,7 @@ func runServer() {
 							if backoff > 5*time.Minute {
 								backoff = 5 * time.Minute
 							}
+							ldapSyncFailures.Inc()
 							slog.Warn("ldap: refresh failed, will retry with backoff", "err", ferr, "backoff", backoff, "consecutive_failures", ldapConsecutiveFailures)
 							srv.ldapLastErrorMu.Lock()
 							srv.ldapLastError = ferr
@@ -379,6 +380,7 @@ func runServer() {
 							if backoff > 5*time.Minute {
 								backoff = 5 * time.Minute
 							}
+							ldapSyncFailures.Inc()
 							slog.Warn("ldap: refresh failed, will retry with backoff", "err", ferr, "backoff", backoff, "consecutive_failures", ldapConsecutiveFailures)
 							srv.ldapLastErrorMu.Lock()
 							srv.ldapLastError = ferr
@@ -404,7 +406,11 @@ func runServer() {
 						if ferr != nil {
 							// Partial or failed fetch: keep stale directory in use rather
 							// than refreshing with incomplete data. Retry on next trigger.
-							slog.Warn("ldap: webhook-triggered refresh failed, retaining previous directory", "err", ferr)
+							ldapSyncFailures.Inc()
+							srv.ldapLastSyncMu.RLock()
+							staleFor := time.Since(srv.ldapLastSync).Round(time.Second)
+							srv.ldapLastSyncMu.RUnlock()
+							slog.Warn("ldap: webhook-triggered refresh failed, retaining previous directory", "err", ferr, "stale_for", staleFor)
 							srv.ldapLastErrorMu.Lock()
 							srv.ldapLastError = ferr
 							srv.ldapLastErrorAt = time.Now()
