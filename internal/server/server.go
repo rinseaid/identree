@@ -189,6 +189,23 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test environments with self-signed certs only
 		}
 	}
+	// When IssuerPublicURL is set, the OIDC discovery document advertises all
+	// endpoints (token, JWKS, etc.) using the public hostname. Server-side calls
+	// (token exchange, JWKS key fetches) must use the internal hostname instead.
+	// Wrap the transport to transparently rewrite public→internal on outgoing requests.
+	if cfg.IssuerPublicURL != "" && cfg.IssuerURL != "" {
+		pub, perr := url.Parse(cfg.IssuerPublicURL)
+		internal, ierr := url.Parse(cfg.IssuerURL)
+		if perr == nil && ierr == nil && pub.Host != internal.Host {
+			oidcTransport = &rewriteHostTransport{
+				wrapped:      oidcTransport,
+				fromHost:     pub.Host,
+				fromScheme:   pub.Scheme,
+				toHost:       internal.Host,
+				toScheme:     internal.Scheme,
+			}
+		}
+	}
 	oidcHTTPClient := &http.Client{
 		Timeout:   oidcExchangeTimeout,
 		Transport: oidcTransport,
@@ -814,4 +831,26 @@ func isHex(s string) bool {
 		}
 	}
 	return true
+}
+
+// rewriteHostTransport rewrites outgoing requests whose host matches fromHost
+// to use toHost instead. Used to redirect OIDC server-side calls (token exchange,
+// JWKS fetches) from the public hostname back to the internal Docker hostname.
+type rewriteHostTransport struct {
+	wrapped    http.RoundTripper
+	fromScheme string
+	fromHost   string
+	toScheme   string
+	toHost     string
+}
+
+func (t *rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Host == t.fromHost && req.URL.Scheme == t.fromScheme {
+		// Clone the request before mutating the URL.
+		r2 := req.Clone(req.Context())
+		r2.URL.Host = t.toHost
+		r2.URL.Scheme = t.toScheme
+		return t.wrapped.RoundTrip(r2)
+	}
+	return t.wrapped.RoundTrip(req)
 }
