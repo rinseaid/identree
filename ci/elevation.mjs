@@ -42,10 +42,13 @@ function esc(s) {
 }
 
 function renderTermHTML(lines) {
+  // Render as inline spans joined by <br> inside a <pre>. Block-level divs
+  // inside a white-space:pre container cause Chromium to add extra inter-line
+  // space; inline content + <br> produces exact 1× line-height spacing.
   const rows = lines.map(spans => {
     if (!Array.isArray(spans)) spans = [{ c: "dim", t: String(spans) }];
-    return `<div class="line">${spans.map(p => `<span class="${p.c}">${esc(p.t)}</span>`).join("")}</div>`;
-  }).join("");
+    return spans.map(p => `<span class="${p.c}">${esc(p.t)}</span>`).join("");
+  }).join("<br>");
 
   return `<!DOCTYPE html>
 <html>
@@ -55,14 +58,13 @@ function renderTermHTML(lines) {
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { background: #0d1117; }
   body { padding: 28px 36px 36px; display: inline-block; min-width: 820px; }
-  .term {
+  pre.term {
     font-family: 'SF Mono', 'Cascadia Code', 'Consolas', 'Monaco', 'Menlo', monospace;
     font-size: 14.5px;
     line-height: 1.65;
     color: #e6edf3;
-    white-space: pre;
+    white-space: pre-wrap;
   }
-  .line  { min-height: 1.65em; }
   .ps1   { color: #3fb950; }
   .host  { color: #58a6ff; }
   .cmd   { color: #e6edf3; }
@@ -77,7 +79,7 @@ function renderTermHTML(lines) {
 </style>
 </head>
 <body>
-<div class="term">${rows}</div>
+<pre class="term">${rows}</pre>
 </body>
 </html>`;
 }
