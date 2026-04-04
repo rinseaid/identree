@@ -6,6 +6,7 @@ on:
     paths:
       - "test/providers/**"
       - "test/testclient/**"
+      - "test/integration/**"
       - "Dockerfile"
       - "cmd/**"
       - "internal/**"
@@ -17,6 +18,7 @@ on:
     paths:
       - "test/providers/**"
       - "test/testclient/**"
+      - "test/integration/**"
       - "Dockerfile"
       - "cmd/**"
       - "internal/**"

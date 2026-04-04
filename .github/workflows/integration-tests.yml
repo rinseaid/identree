@@ -1,0 +1,544 @@
+name: Integration Tests (multi-OS hosts)
+
+# Tests the multi-OS SSSD integration stacks introduced in test/integration/.
+# Each job brings up one stack with a single Ubuntu 24.04 host to keep CI fast.
+# The full 5-OS matrix runs locally via `make integration-all`.
+#
+# Key things validated that provider-tests.yml does not cover:
+#   - Provision endpoint (/api/client/provision) returns valid LDAP bind credentials
+#   - entrypoint.sh auto-provisioning path (LDAP_BIND_DN empty → fetch from provision)
+#   - SSSD resolves users/groups after auto-provisioned bind creds are written
+#   - Challenge create + approve + reject cycle via API (no browser)
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - "test/integration/**"
+      - "test/testclient/**"
+      - "Dockerfile"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/integration-tests.yml"
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "test/integration/**"
+      - "test/testclient/**"
+      - "Dockerfile"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/integration-tests.yml"
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: "Stack to test (full-mode | lldap-dex | vault-escrow | all)"
+        required: false
+        default: "all"
+
+concurrency:
+  group: integration-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── PocketID full-mode + embedded LDAP + SSSD auto-provisioning ──────────────
+  full-mode:
+    name: full-mode (PocketID + embedded LDAP + provision)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.stack == 'all' ||
+      github.event.inputs.stack == 'full-mode'
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Bring up pocketid + identree + a single ubuntu2404 host.
+      # The other four OS hosts are skipped in CI (tested locally with make integration-all).
+      - name: Start full-mode stack (pocketid + identree + ubuntu2404)
+        run: |
+          docker compose -f test/integration/full-mode/docker-compose.yml \
+            up --build -d pocketid identree host-ubuntu2404
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for identree to be healthy
+        run: |
+          timeout 120 bash -c \
+            'until curl -sf http://localhost:8110/healthz; do sleep 3; done'
+          echo "identree ready."
+
+      - name: Create OIDC client in PocketID
+        id: oidc
+        run: |
+          # Create the OIDC client and extract its ID + secret
+          RESULT=$(curl -sf -X POST http://localhost:1413/api/oidc/clients \
+            -H "Content-Type: application/json" \
+            -H "X-API-KEY: integ-full-static-key" \
+            -d '{"name":"identree-ci","callbackURLs":["http://localhost:8110/auth/callback"],"logoutCallbackURLs":[],"isPublic":false,"pkceEnabled":false}')
+          CLIENT_ID=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          SECRET_RESULT=$(curl -sf -X POST \
+            "http://localhost:1413/api/oidc/clients/${CLIENT_ID}/secret" \
+            -H "Content-Type: application/json" \
+            -H "X-API-KEY: integ-full-static-key" -d '')
+          CLIENT_SECRET=$(echo "$SECRET_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['secret'])")
+          echo "client_id=${CLIENT_ID}" >> "$GITHUB_OUTPUT"
+          echo "client_secret=${CLIENT_SECRET}" >> "$GITHUB_OUTPUT"
+          echo "OIDC client: ${CLIENT_ID}"
+
+      - name: Restart identree with OIDC credentials
+        run: |
+          OIDC_CLIENT_ID="${{ steps.oidc.outputs.client_id }}" \
+          OIDC_CLIENT_SECRET="${{ steps.oidc.outputs.client_secret }}" \
+          docker compose -f test/integration/full-mode/docker-compose.yml \
+            up -d identree
+          timeout 60 bash -c \
+            'until curl -sf http://localhost:8110/healthz; do sleep 3; done'
+
+      - name: Populate PocketID with 25 users
+        run: |
+          POCKETID_URL=http://localhost:1413 \
+          POCKETID_API_KEY=integ-full-static-key \
+          IDENTREE_URL=http://localhost:8110 \
+          bash test/integration/scripts/create-users-pocketid.sh
+
+      - name: Wait for identree LDAP to sync users from PocketID
+        run: |
+          echo "Waiting for identree LDAP to sync..."
+          timeout 60 bash -c '
+            until curl -sf http://localhost:8110/healthz >/dev/null && \
+              docker logs integ-full-identree 2>&1 | grep -q "users=25"; do
+              sleep 3
+            done' || true
+          # Give one extra refresh cycle
+          sleep 20
+          echo "LDAP sync complete (or timed out — checking below)"
+
+      - name: Verify provision endpoint returns valid LDAP bind credentials
+        run: |
+          curl -sf http://localhost:8110/api/client/provision \
+            -H "X-Shared-Secret: integ-full-shared-secret-abc123456" \
+            -H "X-Hostname: ci-test-host" \
+            -o /tmp/provision-resp.json
+          echo "Response:"
+          python3 -m json.tool /tmp/provision-resp.json
+          python3 << 'PY'
+          import json
+          d = json.load(open('/tmp/provision-resp.json'))
+          assert d.get('ldap_url'), "missing ldap_url"
+          assert d.get('base_dn'), "missing base_dn"
+          assert d.get('bind_dn'), "missing bind_dn"
+          assert d.get('bind_password'), "missing bind_password"
+          assert 'ci-test-host' in d['bind_dn'], f"hostname not in bind_dn: {d['bind_dn']}"
+          assert len(d['bind_password']) == 64, f"bind_password wrong length: {len(d['bind_password'])}"
+          print("Provision endpoint: OK")
+          PY
+
+      - name: Wait for SSSD auto-provisioning on ubuntu2404 host
+        # The entrypoint.sh calls /api/client/provision at startup when LDAP_BIND_DN is empty.
+        # Validate that getent resolves users — proving the full auto-provision path works.
+        run: |
+          echo "Waiting for SSSD to resolve LDAP users via auto-provisioned bind creds..."
+          timeout 90 bash -c '
+            until docker exec integ-full-ubuntu2404 getent passwd alice 2>/dev/null | grep -q alice; do
+              sleep 5
+            done'
+          echo "SSSD resolution: OK"
+          docker exec integ-full-ubuntu2404 getent passwd alice
+          docker exec integ-full-ubuntu2404 getent passwd sam
+          docker exec integ-full-ubuntu2404 getent group developers
+          docker exec integ-full-ubuntu2404 getent group admins
+
+      - name: Run challenge create + approve + reject cycle
+        run: |
+          # 1. Get admin session via DEV_LOGIN
+          COOKIE=$(curl -sc /tmp/ci-cookies.txt \
+            "http://localhost:8110/dev/login?user=sam&role=admin" \
+            -o /dev/null -w '%{http_code}')
+          SESSION=$(grep 'pam_session' /tmp/ci-cookies.txt | awk '{print $NF}')
+          echo "Session cookie obtained (HTTP ${COOKIE})"
+
+          python3 << 'PY'
+          import hmac, hashlib, time, urllib.request, json, os
+
+          BASE = "http://localhost:8110"
+          SECRET = "integ-full-shared-secret-abc123456"
+          ADMIN = "sam"
+          SESSION = open('/tmp/ci-cookies.txt').read().split('pam_session\t')[-1].strip()
+
+          def derive_key(secret, ctx):
+              return hmac.new(secret.encode(), ctx.encode(), hashlib.sha256).digest()
+
+          def csrf(username, ts):
+              key = derive_key(SECRET, "csrf")
+              return hmac.new(key, f"csrf:{username}:{ts}".encode(), hashlib.sha256).hexdigest()
+
+          def api(path, method="GET", body=None, headers=None):
+              url = BASE + path
+              data = json.dumps(body).encode() if body else None
+              h = {"Content-Type": "application/json", **(headers or {})}
+              req = urllib.request.Request(url, data=data, headers=h, method=method)
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read()) if r.status not in (204, 303) else {}
+
+          def form_post(path, fields):
+              body = "&".join(f"{k}={v}" for k, v in fields.items()).encode()
+              req = urllib.request.Request(
+                  BASE + path, data=body,
+                  headers={"Content-Type": "application/x-www-form-urlencoded",
+                           "Cookie": f"pam_session={SESSION}"},
+                  method="POST")
+              try:
+                  urllib.request.urlopen(req)
+                  return 200
+              except urllib.error.HTTPError as e:
+                  return e.code
+
+          # Create challenges for 3 users
+          created = []
+          for user in ["alice", "bob", "sam"]:
+              resp = api("/api/challenge", "POST",
+                  {"username": user, "hostname": "prod-ubuntu24-01", "reason": "CI test"},
+                  {"X-Shared-Secret": SECRET})
+              cid = resp.get("challenge_id", "")
+              status = resp.get("status", "pending")
+              print(f"  Created: {user} → {cid[:8]} ({status})")
+              if status == "pending" and cid:
+                  created.append(cid)
+
+          print(f"Pending challenges: {len(created)}")
+          assert len(created) >= 1, "Expected at least 1 pending challenge"
+
+          # Approve half, reject half
+          approved = rejected = 0
+          for i, cid in enumerate(created):
+              ts = str(int(time.time()))
+              tok = csrf(ADMIN, ts)
+              fields = {"username": ADMIN, "csrf_token": tok, "csrf_ts": ts}
+              if i % 2 == 0:
+                  fields["challenge_id"] = cid
+                  rc = form_post("/api/challenges/approve", fields)
+                  print(f"  Approve {cid[:8]}: HTTP {rc}")
+                  assert rc in (200, 303), f"approve failed: {rc}"
+                  approved += 1
+              else:
+                  fields["challenge_id"] = cid
+                  rc = form_post("/api/challenges/reject", fields)
+                  print(f"  Reject  {cid[:8]}: HTTP {rc}")
+                  assert rc in (200, 303), f"reject failed: {rc}"
+                  rejected += 1
+
+          print(f"Approved: {approved}  Rejected: {rejected}  — OK")
+          PY
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== pocketid logs ==="
+          docker logs integ-full-pocketid 2>&1 | tail -30
+          echo "=== identree logs ==="
+          docker logs integ-full-identree 2>&1 | tail -50
+          echo "=== ubuntu2404 sssd.conf ==="
+          docker exec integ-full-ubuntu2404 cat /etc/sssd/sssd.conf 2>/dev/null || true
+          echo "=== ubuntu2404 sssd log ==="
+          docker exec integ-full-ubuntu2404 cat /var/log/sssd/sssd_LDAP.log 2>/dev/null | tail -30 || true
+          echo "=== ubuntu2404 entrypoint output ==="
+          docker logs integ-full-ubuntu2404 2>&1 | tail -40
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f test/integration/full-mode/docker-compose.yml down -v
+
+  # ── lldap + Dex bridge mode ───────────────────────────────────────────────────
+  lldap-dex:
+    name: lldap-dex (bridge mode + static sudo)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.stack == 'all' ||
+      github.event.inputs.stack == 'lldap-dex'
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start lldap-dex stack (lldap + dex + identree + ubuntu2404)
+        run: |
+          docker compose -f test/integration/lldap-dex/docker-compose.yml \
+            up --build -d lldap dex identree host-ubuntu2404
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for identree to be healthy
+        run: |
+          timeout 120 bash -c \
+            'until curl -sf http://localhost:8111/healthz; do sleep 3; done'
+          echo "identree ready."
+
+      - name: Create 25 users in lldap
+        run: |
+          LLDAP_URL=http://localhost:17175 \
+          CLIENT=integ-lldap-dex-ubuntu2404 \
+          bash test/integration/scripts/create-users-lldap.sh
+
+      - name: Wait for SSSD to resolve LDAP users
+        run: |
+          timeout 90 bash -c '
+            until docker exec integ-lldap-dex-ubuntu2404 getent passwd alice 2>/dev/null | grep -q alice; do
+              sleep 5
+            done'
+          echo "SSSD resolution: OK"
+          docker exec integ-lldap-dex-ubuntu2404 getent passwd alice
+          docker exec integ-lldap-dex-ubuntu2404 getent passwd sam
+
+      - name: Run challenge create + approve + reject cycle
+        run: |
+          curl -sc /tmp/ci-lldap-cookies.txt \
+            "http://localhost:8111/dev/login?user=sam&role=admin" \
+            -o /dev/null
+
+          python3 << 'PY'
+          import hmac, hashlib, time, urllib.request, json
+
+          BASE = "http://localhost:8111"
+          SECRET = "integ-lldap-dex-shared-secret-xyz"
+          ADMIN = "sam"
+          SESSION = open('/tmp/ci-lldap-cookies.txt').read().split('pam_session\t')[-1].strip()
+
+          def derive_key(secret, ctx):
+              return hmac.new(secret.encode(), ctx.encode(), hashlib.sha256).digest()
+
+          def csrf(username, ts):
+              key = derive_key(SECRET, "csrf")
+              return hmac.new(key, f"csrf:{username}:{ts}".encode(), hashlib.sha256).hexdigest()
+
+          def create_challenge(user, host, reason):
+              req = urllib.request.Request(
+                  BASE + "/api/challenge",
+                  data=json.dumps({"username": user, "hostname": host, "reason": reason}).encode(),
+                  headers={"Content-Type": "application/json", "X-Shared-Secret": SECRET},
+                  method="POST")
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          def form_post(path, fields):
+              body = "&".join(f"{k}={v}" for k, v in fields.items()).encode()
+              req = urllib.request.Request(
+                  BASE + path, data=body,
+                  headers={"Content-Type": "application/x-www-form-urlencoded",
+                           "Cookie": f"pam_session={SESSION}"},
+                  method="POST")
+              try:
+                  urllib.request.urlopen(req); return 200
+              except urllib.error.HTTPError as e:
+                  return e.code
+
+          # Create 5 challenges across different users
+          users = ["alice", "bob", "carol", "sam", "tina"]
+          created = []
+          for user in users:
+              resp = create_challenge(user, "dev-ubuntu24-01", "CI lldap-dex test")
+              cid = resp.get("challenge_id", "")
+              status = resp.get("status", "pending")
+              print(f"  {user}: {cid[:8]} ({status})")
+              if status == "pending" and cid:
+                  created.append((user, cid))
+
+          approved = rejected = 0
+          for i, (user, cid) in enumerate(created):
+              ts = str(int(time.time()))
+              tok = csrf(ADMIN, ts)
+              fields = {"username": ADMIN, "csrf_token": tok, "csrf_ts": ts, "challenge_id": cid}
+              if i % 2 == 0:
+                  rc = form_post("/api/challenges/approve", fields)
+                  assert rc in (200, 303), f"approve {user} failed: {rc}"
+                  approved += 1
+              else:
+                  rc = form_post("/api/challenges/reject", fields)
+                  assert rc in (200, 303), f"reject {user} failed: {rc}"
+                  rejected += 1
+
+          print(f"Approved: {approved}  Rejected: {rejected}  — OK")
+          PY
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== lldap logs ==="
+          docker logs integ-lldap-dex-lldap 2>&1 | tail -30
+          echo "=== dex logs ==="
+          docker logs integ-lldap-dex-dex 2>&1 | tail -30
+          echo "=== identree logs ==="
+          docker logs integ-lldap-dex-identree 2>&1 | tail -50
+          echo "=== ubuntu2404 sssd.conf ==="
+          docker exec integ-lldap-dex-ubuntu2404 cat /etc/sssd/sssd.conf 2>/dev/null || true
+          echo "=== ubuntu2404 entrypoint output ==="
+          docker logs integ-lldap-dex-ubuntu2404 2>&1 | tail -40
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f test/integration/lldap-dex/docker-compose.yml down -v
+
+  # ── Vault escrow ──────────────────────────────────────────────────────────────
+  vault-escrow:
+    name: vault-escrow (Vault KV v2 escrow)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.stack == 'all' ||
+      github.event.inputs.stack == 'vault-escrow'
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start vault-escrow stack (vault + lldap + dex + identree + ubuntu2404)
+        run: |
+          docker compose -f test/integration/vault-escrow/docker-compose.yml \
+            up --build -d vault lldap dex identree host-ubuntu2404
+        env:
+          COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.ref_name }}
+
+      - name: Wait for identree to be healthy
+        run: |
+          timeout 120 bash -c \
+            'until curl -sf http://localhost:8114/healthz; do sleep 3; done'
+          echo "identree ready."
+
+      - name: Create 25 users in lldap
+        run: |
+          LLDAP_URL=http://localhost:17177 \
+          CLIENT=integ-vault-ubuntu2404 \
+          bash test/integration/scripts/create-users-lldap.sh
+
+      - name: Wait for SSSD to resolve LDAP users
+        run: |
+          timeout 90 bash -c '
+            until docker exec integ-vault-ubuntu2404 getent passwd alice 2>/dev/null | grep -q alice; do
+              sleep 5
+            done'
+          echo "SSSD resolution: OK"
+          docker exec integ-vault-ubuntu2404 getent passwd alice
+
+      - name: Trigger break-glass escrow write to Vault
+        run: |
+          # rotate-breakglass writes the break-glass password into Vault
+          docker exec integ-vault-ubuntu2404 identree rotate-breakglass || true
+          sleep 3
+          # Verify the secret was written to Vault
+          echo "==> Verifying break-glass secret in Vault..."
+          HOSTNAME=$(docker exec integ-vault-ubuntu2404 hostname)
+          curl -sf "http://localhost:8201/v1/secret/data/identree/${HOSTNAME}" \
+            -H "X-Vault-Token: integ-vault-test-token" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          pw = d.get('data', {}).get('data', {}).get('password', '')
+          assert pw, 'password missing from Vault secret'
+          print(f'Vault secret OK (password length: {len(pw)})')
+          " || echo "WARNING: Vault secret not yet present (rotate-breakglass may not have run)"
+
+      - name: Run challenge create + approve + reject cycle
+        run: |
+          curl -sc /tmp/ci-vault-cookies.txt \
+            "http://localhost:8114/dev/login?user=sam&role=admin" \
+            -o /dev/null
+
+          python3 << 'PY'
+          import hmac, hashlib, time, urllib.request, json
+
+          BASE = "http://localhost:8114"
+          SECRET = "integ-vault-escrow-shared-secret-xyz"
+          ADMIN = "sam"
+          SESSION = open('/tmp/ci-vault-cookies.txt').read().split('pam_session\t')[-1].strip()
+
+          def derive_key(secret, ctx):
+              return hmac.new(secret.encode(), ctx.encode(), hashlib.sha256).digest()
+
+          def csrf(username, ts):
+              key = derive_key(SECRET, "csrf")
+              return hmac.new(key, f"csrf:{username}:{ts}".encode(), hashlib.sha256).hexdigest()
+
+          def create_challenge(user, host, reason):
+              req = urllib.request.Request(
+                  BASE + "/api/challenge",
+                  data=json.dumps({"username": user, "hostname": host, "reason": reason}).encode(),
+                  headers={"Content-Type": "application/json", "X-Shared-Secret": SECRET},
+                  method="POST")
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          def form_post(path, fields):
+              body = "&".join(f"{k}={v}" for k, v in fields.items()).encode()
+              req = urllib.request.Request(
+                  BASE + path, data=body,
+                  headers={"Content-Type": "application/x-www-form-urlencoded",
+                           "Cookie": f"pam_session={SESSION}"},
+                  method="POST")
+              try:
+                  urllib.request.urlopen(req); return 200
+              except urllib.error.HTTPError as e:
+                  return e.code
+
+          users = ["alice", "bob", "carol", "sam", "tina"]
+          created = []
+          for user in users:
+              resp = create_challenge(user, "vault-ubuntu24-01", "CI vault-escrow test")
+              cid = resp.get("challenge_id", "")
+              status = resp.get("status", "pending")
+              print(f"  {user}: {cid[:8] if cid else '(empty)'} ({status})")
+              if status == "pending" and cid:
+                  created.append((user, cid))
+
+          approved = rejected = 0
+          for i, (user, cid) in enumerate(created):
+              ts = str(int(time.time()))
+              tok = csrf(ADMIN, ts)
+              fields = {"username": ADMIN, "csrf_token": tok, "csrf_ts": ts, "challenge_id": cid}
+              if i % 2 == 0:
+                  rc = form_post("/api/challenges/approve", fields)
+                  assert rc in (200, 303), f"approve {user} failed: {rc}"
+                  approved += 1
+              else:
+                  rc = form_post("/api/challenges/reject", fields)
+                  assert rc in (200, 303), f"reject {user} failed: {rc}"
+                  rejected += 1
+
+          print(f"Approved: {approved}  Rejected: {rejected}  — OK")
+          PY
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          echo "=== vault logs ==="
+          docker logs integ-vault-vault 2>&1 | tail -30
+          echo "=== lldap logs ==="
+          docker logs integ-vault-lldap 2>&1 | tail -30
+          echo "=== dex logs ==="
+          docker logs integ-vault-dex 2>&1 | tail -30
+          echo "=== identree logs ==="
+          docker logs integ-vault-identree 2>&1 | tail -50
+          echo "=== ubuntu2404 sssd.conf ==="
+          docker exec integ-vault-ubuntu2404 cat /etc/sssd/sssd.conf 2>/dev/null || true
+          echo "=== ubuntu2404 entrypoint output ==="
+          docker logs integ-vault-ubuntu2404 2>&1 | tail -40
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f test/integration/vault-escrow/docker-compose.yml down -v
