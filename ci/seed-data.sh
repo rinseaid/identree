@@ -370,15 +370,20 @@ echo "==> Creating pending challenges..."
 create_challenge() {
     local username="$1"
     local hostname="$2"
+    local reason="${3:-}"
+    local body="{\"username\":\"${username}\",\"hostname\":\"${hostname}\"}"
+    if [ -n "$reason" ]; then
+        body="{\"username\":\"${username}\",\"hostname\":\"${hostname}\",\"reason\":\"${reason}\"}"
+    fi
     curl -sf -X POST "${IDENTREE_URL}/api/challenge" \
         -H "Content-Type: application/json" \
-        -H "X-Shared-Secret: test-shared-secret-123" \
-        -d "{\"username\":\"${username}\",\"hostname\":\"${hostname}\"}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('challenge_id',''))" 2>/dev/null || true
+        -H "X-Shared-Secret: test-shared-secret-1234567890abc" \
+        -d "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('challenge_id',''))" 2>/dev/null || true
 }
 
-PENDING_1=$(create_challenge "kate"   "data-worker-01")
-PENDING_2=$(create_challenge "liam"   "prod-web-01")
-PENDING_3=$(create_challenge "maya"   "staging-01")
+PENDING_1=$(create_challenge "kate"   "data-worker-01" "Routine maintenance")
+PENDING_2=$(create_challenge "liam"   "prod-web-01"    "Incident response")
+PENDING_3=$(create_challenge "maya"   "staging-01"     "Deployment")
 export CI_PENDING_CHALLENGE_1="$PENDING_1"
 
 echo "    Pending challenge IDs: ${PENDING_1} ${PENDING_2} ${PENDING_3}"
