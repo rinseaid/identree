@@ -6,7 +6,8 @@ For each pair of light/dark screenshots in ./screenshots/, produces a diagonal
 split composite saved as ./screenshots/{page}-split.png.
 
 The split runs from top-left to bottom-right (45-degree line).
-Dark occupies the upper-right triangle; light occupies the lower-left.
+Default:  dark lower-left,  light upper-right.
+Inverse:  light lower-left, dark upper-right  (used for *-expanded-* pairs).
 
 Requirements: Pillow (pip install Pillow)
 """
@@ -20,11 +21,12 @@ SCREENSHOTS_DIR = Path("./screenshots")
 SSAA = 4  # supersampling factor for anti-aliased diagonal edge
 
 
-def diagonal_split(light_img: Image.Image, dark_img: Image.Image) -> Image.Image:
+def diagonal_split(light_img: Image.Image, dark_img: Image.Image, inverse: bool = False) -> Image.Image:
     """
     Combine two same-size images along a top-left → bottom-right diagonal.
 
-    Dark occupies the upper-right triangle; light occupies the lower-left.
+    Default (inverse=False): light upper-right, dark lower-left.
+    Inverse (inverse=True):  dark upper-right, light lower-left.
     The mask is rendered at SSAA× resolution and downsampled for a smooth edge.
     """
     if light_img.size != dark_img.size:
@@ -35,16 +37,22 @@ def diagonal_split(light_img: Image.Image, dark_img: Image.Image) -> Image.Image
 
     hi_mask = Image.new("L", (sw, sh), 0)
     draw = ImageDraw.Draw(hi_mask)
-    # Light in upper-right triangle; dark fills the lower-left.
+    # Upper-right triangle = 255 (white).
     draw.polygon([(0, 0), (sw, 0), (sw, sh)], fill=255)
 
     mask = hi_mask.resize((w, h), Image.LANCZOS)
 
-    # Composite: start with dark, paste light over it using the smooth mask.
     light = light_img.convert("RGBA")
     dark = dark_img.convert("RGBA")
-    result = dark.copy()
-    result.paste(light, mask=mask)
+
+    if inverse:
+        # Dark upper-right, light lower-left.
+        result = light.copy()
+        result.paste(dark, mask=mask)
+    else:
+        # Light upper-right, dark lower-left.
+        result = dark.copy()
+        result.paste(light, mask=mask)
 
     return result.convert("RGB")
 
@@ -69,11 +77,12 @@ def main() -> None:
             print(f"  skip  {stem}: no matching dark screenshot", file=sys.stderr)
             continue
 
-        print(f"  split {stem}")
+        inverse = "expanded" in stem
+        print(f"  split {stem}{' (inverse)' if inverse else ''}")
         light_img = Image.open(light_path)
         dark_img = Image.open(dark_path)
 
-        composite = diagonal_split(light_img, dark_img)
+        composite = diagonal_split(light_img, dark_img, inverse=inverse)
 
         out_path = SCREENSHOTS_DIR / f"{stem}-split.png"
         composite.save(out_path, optimize=True)

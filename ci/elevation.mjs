@@ -243,7 +243,7 @@ await saveTermShot("elevation-3", [
 
 console.log("Creating multiple pending challenges for eve...");
 const ch1 = await createApiChallenge(USER, "staging-01",     "Deploy new release");
-const ch2 = await createApiChallenge(USER, "data-worker-01", "Incident response");
+const ch2 = await createApiChallenge(USER, "data-worker-01", null);
 const ch3 = await createApiChallenge(USER, "prod-db-01",     "Routine maintenance");
 console.log(`  challenge IDs: ${ch1} ${ch2} ${ch3}`);
 

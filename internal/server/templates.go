@@ -1490,9 +1490,9 @@ const historyPageHTML = `<!DOCTYPE html>
     .page-size-btn:hover { background: var(--surface-2); }
     .history-gtable { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 4px; }
     {{if .IsAdmin}}
-    .history-gtable-header, .history-gtable-filter, .history-gtable-row { display: grid; grid-template-columns: 200px 1.2fr 1fr 1.3fr 1.1fr; gap: 0; padding-left: 4px; padding-right: 4px; }
+    .history-gtable-header, .history-gtable-filter, .history-gtable-row { display: grid; grid-template-columns: 200px 1.2fr 1fr 1.3fr 1fr 1.5fr; gap: 0; padding-left: 4px; padding-right: 4px; }
     {{else}}
-    .history-gtable-header, .history-gtable-filter, .history-gtable-row { display: grid; grid-template-columns: 200px 1.3fr 1.5fr 1.1fr; gap: 0; padding-left: 4px; padding-right: 4px; }
+    .history-gtable-header, .history-gtable-filter, .history-gtable-row { display: grid; grid-template-columns: 200px 1.3fr 1.5fr 1fr 1.5fr; gap: 0; padding-left: 4px; padding-right: 4px; }
     {{end}}
     .history-gtable-header { padding-top: 8px; padding-bottom: 8px; background: var(--surface-2); border-bottom: 1px solid var(--border); align-items: center; }
     .history-gtable-filter { padding-top: 5px; padding-bottom: 5px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
@@ -1715,6 +1715,7 @@ const historyPageHTML = `<!DOCTYPE html>
         {{if .IsAdmin}}<div class="gtcol gtcol-huser" role="columnheader" style="gap:8px;align-items:center"><a href="/history?sort=user&order={{if eq .Sort "user"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "user"}} active{{end}}">{{call .T "user"}}{{if eq .Sort "user"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a><div class="toggle-wrap" id="history-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>{{end}}
         <div class="gtcol gtcol-hhost" role="columnheader"><a href="/history?sort=hostname&order={{if eq .Sort "hostname"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "hostname"}} active{{end}}">{{call .T "host"}}{{if eq .Sort "hostname"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
         <div class="gtcol gtcol-hcode" role="columnheader"><a href="/history?sort=code&order={{if eq .Sort "code"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "code"}} active{{end}}">{{call .T "code"}}{{if eq .Sort "code"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+        <div class="gtcol gtcol-hreason" role="columnheader"><span class="col-sort-link">{{call .T "reason"}}</span></div>
       </div>
       <div class="history-gtable-filter" id="history-filter-row" style="display:none" data-prefilter-host="{{.HostFilter}}" data-prefilter-user="{{.UserFilter}}" data-prefilter-action="{{.ActionFilter}}">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="htime" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -1722,6 +1723,7 @@ const historyPageHTML = `<!DOCTYPE html>
         {{if .IsAdmin}}<div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="huser" placeholder="{{call .T "search"}}…" autocomplete="off"></div>{{end}}
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="hhost" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
         <div style="display:flex;justify-content:flex-end;align-items:center;padding:0 6px"><button type="button" class="filter-clear-btn" id="history-filter-clear">{{call .T "clear_filter"}}</button></div>
+        <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="hreason" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
       </div>
       {{range .History}}
       <div class="history-gtable-row" role="row">
@@ -1734,6 +1736,7 @@ const historyPageHTML = `<!DOCTYPE html>
         {{if $.IsAdmin}}<div class="gtcol gtcol-huser" role="cell" style="align-items:center">{{if .Username}}<a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a>{{end}}</div>{{end}}
         <div class="gtcol gtcol-hhost" role="cell" style="align-items:center">{{if .Hostname}}<a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}</div>
         <div class="gtcol gtcol-hcode" role="cell" style="font-family:monospace;font-size:0.8125rem;color:var(--text-2);align-items:center">{{if .Code}}{{.Code}}{{end}}</div>
+        <div class="gtcol gtcol-hreason" role="cell" style="font-size:0.8125rem;color:var(--text-2);font-style:italic;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{if .Reason}}"{{.Reason}}"{{end}}</div>
       </div>
       {{end}}
     </div>
