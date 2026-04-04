@@ -200,6 +200,7 @@ type ChallengeStore struct {
 	persistPath        string        // file path for persisted state (empty = no persistence)
 	stopCh             chan struct{} // signals reapLoop to stop
 	stopOnce           sync.Once    // ensures Stop is safe to call concurrently
+	stopWg             sync.WaitGroup // waits for reapLoop goroutine to exit
 
 	// revokedNoncesStore and revokedAdminSessionsStore persist server-side session
 	// revocations across restarts. They are separate from the in-memory maps in
@@ -267,15 +268,22 @@ func NewChallengeStore(ttl, gracePeriod time.Duration, persistPath string) *Chal
 	if persistPath != "" {
 		s.loadState()
 	}
-	go s.reapLoop()
+	s.stopWg.Add(1)
+	go func() {
+		defer s.stopWg.Done()
+		s.reapLoop()
+	}()
 	return s
 }
 
-// Stop cleanly shuts down the reap goroutine. Safe to call concurrently.
+// Stop cleanly shuts down the reap goroutine and waits for it to exit.
+// Safe to call concurrently; blocks until the goroutine has finished its
+// final flush so callers can safely access the persist file afterwards.
 func (s *ChallengeStore) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stopCh)
 	})
+	s.stopWg.Wait()
 }
 
 // graceKey returns the key used for per-host grace period tracking.
