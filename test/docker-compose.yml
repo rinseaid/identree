@@ -58,8 +58,6 @@ services:
       IDENTREE_DEV_LOGIN: "true"
       IDENTREE_CHALLENGE_TTL: "120s"
       IDENTREE_GRACE_PERIOD: "24h"
-      IDENTREE_REQUIRE_JUSTIFICATION: "true"
-      IDENTREE_JUSTIFICATION_CHOICES: "Routine maintenance,Incident response,Deployment"
     volumes:
       - identree-data:/data
     ports:

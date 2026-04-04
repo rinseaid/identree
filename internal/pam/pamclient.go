@@ -211,12 +211,14 @@ func (p *PAMClient) Authenticate(username string) error {
 		// Cache miss, invalid, or revoked — fall through to device flow
 	}
 
-	// 1. Create challenge (initially without a reason; retry if server requires justification)
-	challenge, err := p.createChallenge(username, "")
+	// 1. Create challenge. If SUDO_REASON is set, include it on the first call so
+	// the reason is always recorded even when the server does not require one.
+	presetReason := strings.TrimSpace(os.Getenv("SUDO_REASON"))
+	challenge, err := p.createChallenge(username, presetReason)
 	if err != nil {
 		var justErr *justificationRequiredError
 		if errors.As(err, &justErr) {
-			// Server requires a justification — prompt user interactively.
+			// Server requires a justification and none was pre-set — prompt interactively.
 			reason, promptErr := p.promptJustification(t, justErr.Choices)
 			if promptErr != nil {
 				return fmt.Errorf("justification required — set SUDO_REASON=<reason> before running sudo")
@@ -728,7 +730,7 @@ func (p *PAMClient) promptJustification(t func(string) string, choices []string)
 		fmt.Fprintf(MessageWriter, "    [%d] %s\n", i+1, c)
 	}
 	fmt.Fprintf(MessageWriter, "    [%d] Other (enter custom reason)\n", len(choices)+1)
-	fmt.Fprint(MessageWriter, "  Choice [1]: ")
+	fmt.Fprintf(MessageWriter, "  Choice [%d]: ", len(choices)+1)
 
 	// Try to read from stdin. pam_exec.so inherits the terminal's stdin,
 	// so this works when sudo is run interactively.
@@ -740,11 +742,17 @@ func (p *PAMClient) promptJustification(t func(string) string, choices []string)
 	line = strings.TrimSpace(line)
 
 	if line == "" {
-		// Default to first choice
-		if len(choices) > 0 {
-			return choices[0], nil
+		// Default to custom reason (Other option).
+		fmt.Fprint(MessageWriter, "  Enter reason: ")
+		custom, custErr := reader.ReadString('\n')
+		if custErr != nil {
+			return "", fmt.Errorf("could not read custom reason: %w", custErr)
 		}
-		return "", fmt.Errorf("no selection made")
+		custom = strings.TrimSpace(custom)
+		if custom == "" {
+			return "", fmt.Errorf("empty reason provided")
+		}
+		return custom, nil
 	}
 
 	// Parse as number
