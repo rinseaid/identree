@@ -699,13 +699,18 @@ const sharedCSS = `
     }
     /* Pending approvals modal */
     .pending-modal-box { max-width: 920px; }
-    .pending-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
-    .pending-table-header { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr minmax(160px,1fr) auto; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .pending-table-row { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr minmax(160px,1fr) auto; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .pending-table { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr minmax(160px,1fr) auto; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+    .pending-table--admin { grid-template-columns: 0.7fr 1.2fr 1fr 0.7fr minmax(160px,1fr) auto; }
+    .pending-table-header { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .pending-table-row { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; border-bottom: 1px solid var(--border); align-items: center; }
     .pending-table-footer { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr minmax(160px,1fr) auto; gap: 0; padding: 10px 12px; align-items: center; }
-    .pending-table--admin .pending-table-header,
-    .pending-table--admin .pending-table-row,
-    .pending-table--admin .pending-table-footer { grid-template-columns: 0.7fr 1.2fr 1fr 0.7fr minmax(160px,1fr) auto; }
+    .pending-table-footer.pending-table--admin { grid-template-columns: 0.7fr 1.2fr 1fr 0.7fr minmax(160px,1fr) auto; }
+    .pending-table-header > .gtcol { padding: 8px 6px; }
+    .pending-table-header > .gtcol:first-child { padding-left: 12px; }
+    .pending-table-header > .gtcol:last-child { padding-right: 12px; }
+    .pending-table-row > .gtcol { padding: 10px 6px; }
+    .pending-table-row > .gtcol:first-child { padding-left: 12px; }
+    .pending-table-row > .gtcol:last-child { padding-right: 12px; }
     .row-code { white-space: nowrap; }
     .pending-table-row:last-child { border-bottom: none; }
     .pending-table-row:hover { background: var(--surface-2); }
@@ -779,7 +784,7 @@ const pendingBarHTML = `{{if .Pending}}
       {{range .Pending}}
       <div class="pending-table-row" role="row">
         {{if $.IsAdmin}}<div class="gtcol" role="cell"><span class="pill user">{{.Username}}</span></div>{{end}}
-        <div class="gtcol" role="cell"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}{{if .Reason}}<span class="challenge-reason" style="display:block;font-size:0.75rem;color:var(--text-2);font-style:italic;margin-top:2px">"{{.Reason}}"</span>{{end}}</div>
+        <div class="gtcol" role="cell"><div style="display:flex;flex-direction:column;min-width:0;overflow:hidden;flex:1"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}{{if .Reason}}<span class="challenge-reason" style="font-size:0.75rem;color:var(--text-2);font-style:italic;margin-top:2px">"{{.Reason}}"</span>{{end}}</div></div>
         <div class="gtcol" role="cell"><span class="row-code" style="display:inline">{{.Code}}</span></div>
         <div class="gtcol" role="cell"><span style="font-size:0.8125rem;color:var(--text-2)">{{.ExpiresIn}}</span></div>
         <div class="gtcol" role="cell">
