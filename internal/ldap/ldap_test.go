@@ -672,3 +672,72 @@ func TestNewLDAPServer_BridgeMode(t *testing.T) {
 		t.Error("expected sudoRules to be set in bridge mode")
 	}
 }
+
+// ── parseProvisionBindDN ──────────────────────────────────────────────────────
+
+func TestParseProvisionBindDN(t *testing.T) {
+	baseDN := "dc=example,dc=com"
+	cfg := &config.ServerConfig{
+		LDAPBaseDN:     baseDN,
+		LDAPListenAddr: "127.0.0.1:0",
+	}
+	um, err := uidmap.NewUIDMap(t.TempDir()+"/uidmap.json", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewLDAPServer(cfg, um, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		dn       string
+		wantHost string
+		wantOK   bool
+	}{
+		{
+			name:     "valid DN with correct base_dn",
+			dn:       "uid=web1.example.com,ou=identree-hosts,dc=example,dc=com",
+			wantHost: "web1.example.com",
+			wantOK:   true,
+		},
+		{
+			name:   "missing uid= prefix",
+			dn:     "cn=web1.example.com,ou=identree-hosts,dc=example,dc=com",
+			wantOK: false,
+		},
+		{
+			name:   "empty hostname",
+			dn:     "uid=,ou=identree-hosts,dc=example,dc=com",
+			wantOK: false,
+		},
+		{
+			name:   "wrong ou name",
+			dn:     "uid=web1.example.com,ou=hosts,dc=example,dc=com",
+			wantOK: false,
+		},
+		{
+			name:     "case-insensitive suffix matching",
+			dn:       "uid=web1.example.com,OU=IDENTREE-HOSTS,DC=EXAMPLE,DC=COM",
+			wantHost: "web1.example.com",
+			wantOK:   true,
+		},
+		{
+			name:   "DN shorter than suffix",
+			dn:     "uid=x",
+			wantOK: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotHost, gotOK := srv.parseProvisionBindDN(tc.dn)
+			if gotOK != tc.wantOK {
+				t.Errorf("parseProvisionBindDN(%q) ok = %v, want %v", tc.dn, gotOK, tc.wantOK)
+			}
+			if gotOK && gotHost != tc.wantHost {
+				t.Errorf("parseProvisionBindDN(%q) hostname = %q, want %q", tc.dn, gotHost, tc.wantHost)
+			}
+		})
+	}
+}

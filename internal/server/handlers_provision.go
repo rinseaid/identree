@@ -51,9 +51,10 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "X-Hostname header required", http.StatusBadRequest)
 		return
 	}
-	// Basic sanity check: hostname must not contain characters that would break
-	// LDAP DN construction (commas, equals, NUL, newlines).
-	if strings.ContainsAny(hostname, ",=\x00\n\r") {
+	// Reject characters that are special in LDAP DNs (RFC 4514) or that would
+	// break DN construction: comma, equals, plus (multi-valued RDN), angle
+	// brackets, hash, semicolon, backslash, quote, and control characters.
+	if strings.ContainsAny(hostname, ",=+<>#;\\\"") || strings.ContainsFunc(hostname, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		http.Error(w, "invalid hostname", http.StatusBadRequest)
 		return
 	}

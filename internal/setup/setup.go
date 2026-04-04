@@ -142,12 +142,12 @@ func insertPAMLine(path, line string, dryRun, force bool) (bool, error) {
 	}
 	lines := splitLines(string(data))
 
-	// Already present?
+	// Already present? Idempotent regardless of force: if the line is correct,
+	// there is nothing to do. Proceeding past this check when force=true would
+	// insert a second copy before the first auth/include line.
 	for _, l := range lines {
 		if strings.TrimSpace(l) == strings.TrimSpace(line) {
-			if !force {
-				return false, nil
-			}
+			return false, nil
 		}
 	}
 
@@ -236,6 +236,10 @@ func configureNsswitch(dryRun, force bool, provider string) error {
 const sssdConfigDir = "/etc/sssd"
 const sssdConfigPath = "/etc/sssd/sssd.conf"
 
+// sssdConfigTmpl is the sssd.conf template. Callers substitute:
+// [0] ldap_uri, [1] ldap_search_base, [2] ldap_default_bind_dn,
+// [3] ldap_default_authtok, [4] ldap_tls_reqcert, [5] optional extra
+// lines (e.g. "ldap_tls_cacert = /path\n") appended to the domain section.
 const sssdConfigTmpl = `[sssd]
 services = nss, pam
 config_file_version = 2
@@ -251,7 +255,7 @@ ldap_default_authtok = %s
 ldap_default_authtok_type = password
 ldap_id_use_start_tls = false
 ldap_tls_reqcert = %s
-ldap_schema = rfc2307
+%sldap_schema = rfc2307
 enumerate = true
 cache_credentials = true
 
@@ -260,6 +264,11 @@ homedir_substring = /home
 
 [pam]
 `
+
+// sssdCACertPath is the path where the LDAP TLS CA cert is stored within
+// the SSSD config directory so that SSSD can find it without relying on
+// the system trust store (which requires running update-ca-certificates).
+const sssdCACertPath = "/etc/sssd/identree-ldap-ca.crt"
 
 func writeSSSDConfig(prov *provisionResponse, hostname string, dryRun, force bool) error {
 	if err := os.MkdirAll(sssdConfigDir, 0700); err != nil && !os.IsExist(err) {
@@ -273,8 +282,12 @@ func writeSSSDConfig(prov *provisionResponse, hostname string, dryRun, force boo
 	}
 
 	tlsReqcert := "never"
+	cacertLine := ""
 	if prov.TLSCACert != "" {
 		tlsReqcert = "demand"
+		// Point SSSD explicitly at the cert file so it doesn't depend on the
+		// system trust store or update-ca-certificates having been run.
+		cacertLine = "ldap_tls_cacert = " + sssdCACertPath + "\n"
 	}
 
 	content := fmt.Sprintf(sssdConfigTmpl,
@@ -283,7 +296,19 @@ func writeSSSDConfig(prov *provisionResponse, hostname string, dryRun, force boo
 		prov.BindDN,
 		prov.BindPassword,
 		tlsReqcert,
+		cacertLine,
 	)
+
+	// Write the CA cert into the SSSD config directory alongside sssd.conf so
+	// SSSD can find it without relying on system trust store state.
+	if prov.TLSCACert != "" && !dryRun {
+		if err := atomicWrite(sssdCACertPath, []byte(prov.TLSCACert), 0644); err != nil {
+			return fmt.Errorf("write LDAP CA cert to %s: %w", sssdCACertPath, err)
+		}
+		fmt.Printf("SSSD: wrote LDAP CA cert to %s\n", sssdCACertPath)
+	} else if prov.TLSCACert != "" && dryRun {
+		fmt.Printf("[dry-run] would write LDAP CA cert to %s\n", sssdCACertPath)
+	}
 
 	if dryRun {
 		fmt.Printf("[dry-run] would write %s\n", sssdConfigPath)
