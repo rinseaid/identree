@@ -2213,7 +2213,7 @@ const adminPageHTML = `<!DOCTYPE html>
 
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var installURL={{.InstallURL|printf "%q"}};
+      var installURL="{{.InstallURL}}";
       function updateInstallCmd(){
         var sssd=document.querySelector('input[name="install-mode"][value="sssd"]');
         var base='SHARED_SECRET=YOUR_SHARED_SECRET curl -fsSL '+installURL+'/install.sh | sudo bash';

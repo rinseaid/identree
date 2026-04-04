@@ -43,6 +43,10 @@ type provisionResponse struct {
 
 // Run executes the setup subcommand. It returns an error on failure.
 func Run(cfg Config) error {
+	if os.Getuid() != 0 {
+		return fmt.Errorf("must be run as root")
+	}
+
 	hostname := cfg.Hostname
 	if hostname == "" {
 		var err error
@@ -50,6 +54,10 @@ func Run(cfg Config) error {
 		if err != nil {
 			return fmt.Errorf("hostname: %w", err)
 		}
+	}
+
+	if cfg.SSSD && cfg.ServerURL == "" {
+		return fmt.Errorf("--sssd requires IDENTREE_SERVER_URL in /etc/identree/client.conf")
 	}
 
 	// Configure PAM — always done regardless of --sssd.

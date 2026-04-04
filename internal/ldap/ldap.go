@@ -258,13 +258,6 @@ func (s *LDAPServer) parseProvisionBindDN(dn string) (string, bool) {
 	return hostname, true
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // ── Search handler ────────────────────────────────────────────────────────────
 
 func (s *LDAPServer) handleSearch(w *gldap.ResponseWriter, req *gldap.Request) {

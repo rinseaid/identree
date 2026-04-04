@@ -64,6 +64,9 @@ var liveUpdateKeys = map[string]bool{
 	"IDENTREE_LDAP_DEFAULT_SHELL":              true,
 	"IDENTREE_LDAP_DEFAULT_HOME":               true,
 	"IDENTREE_LDAP_ALLOW_ANONYMOUS":            true,
+	"IDENTREE_LDAP_PROVISION_ENABLED":          true,
+	"IDENTREE_LDAP_EXTERNAL_URL":               true,
+	"IDENTREE_LDAP_TLS_CA_CERT":               true,
 }
 
 var configSectionLabels = map[string]string{
@@ -1200,6 +1203,23 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 				s.cfg.LDAPAllowAnonymous = b
 			}
 		}
+	}
+	if !config.IsEnvSourced("IDENTREE_LDAP_PROVISION_ENABLED") {
+		if v := values["IDENTREE_LDAP_PROVISION_ENABLED"]; v != "" {
+			if b, err := strconv.ParseBool(v); err == nil {
+				if b != s.cfg.LDAPProvisionEnabled {
+					slog.Info("LDAP_PROVISION_ENABLED_CHANGED", "actor", actor,
+						"old", boolToString(s.cfg.LDAPProvisionEnabled), "new", boolToString(b))
+				}
+				s.cfg.LDAPProvisionEnabled = b
+			}
+		}
+	}
+	if !config.IsEnvSourced("IDENTREE_LDAP_EXTERNAL_URL") {
+		s.cfg.LDAPExternalURL = values["IDENTREE_LDAP_EXTERNAL_URL"]
+	}
+	if !config.IsEnvSourced("IDENTREE_LDAP_TLS_CA_CERT") {
+		s.cfg.LDAPTLSCACert = values["IDENTREE_LDAP_TLS_CA_CERT"]
 	}
 }
 
