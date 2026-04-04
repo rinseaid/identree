@@ -316,6 +316,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	s.setSessionCookie(w, username, role)
 	httpsOrigin := strings.HasPrefix(s.cfg.ExternalURL, "https://")
 	// Only store avatar URLs with safe schemes to prevent javascript: XSS.
+	// Always set (or clear) the cookie on login so stale avatars don't persist.
 	if p := claims.Picture; p != "" && (strings.HasPrefix(p, "https://") || strings.HasPrefix(p, "http://")) {
 		http.SetCookie(w, &http.Cookie{
 			Name:  "identree_avatar",
@@ -328,6 +329,17 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 			//   2. SameSite=Strict, so the cookie is never sent on cross-site
 			//      navigations, reducing the SSRF/XSS attack surface.
 			//   3. getAvatar() rejects private/loopback hostnames on every read.
+			HttpOnly: false,
+			SameSite: http.SameSiteStrictMode,
+			Secure:   httpsOrigin,
+		})
+	} else {
+		// No picture from IdP — clear any stale avatar cookie from a previous session.
+		http.SetCookie(w, &http.Cookie{
+			Name:     "identree_avatar",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
 			HttpOnly: false,
 			SameSite: http.SameSiteStrictMode,
 			Secure:   httpsOrigin,

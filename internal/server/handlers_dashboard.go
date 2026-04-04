@@ -259,6 +259,14 @@ func (s *Server) buildAllPendingViews(lang string) []pendingView {
 	return views
 }
 
+// pendingViewsFor returns all pending views for admins, or only the user's own for regular users.
+func (s *Server) pendingViewsFor(username, lang string, isAdmin bool) []pendingView {
+	if isAdmin {
+		return s.buildAllPendingViews(lang)
+	}
+	return s.buildPendingViews(username, lang)
+}
+
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// The "/" pattern is a catch-all in Go's ServeMux. Only handle exact "/" path.
 	if r.URL.Path != "/" {
@@ -386,7 +394,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
-	pendingViews := s.buildPendingViews(username, lang)
+	pendingViews := s.pendingViewsFor(username, lang, isAdmin)
 
 	// Fetch Pocket ID permissions for this user to build host-access view
 	var userPerms map[string][]pocketid.GroupInfo
@@ -966,7 +974,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		"DefaultPageSize": defaultPageSize,
 		"Durations":       elevateDurations,
 		"FilterUser":      accessFilterUser,
-		"Pending":         s.buildPendingViews(username, lang),
+		"Pending":         s.pendingViewsFor(username, lang, isAdmin),
 	}); err != nil {
 		slog.Error("template execution", "err", err)
 	}
@@ -1560,7 +1568,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"DefaultPageSize": defaultPageSize,
 		"CSRFToken":       historyCSRFToken,
 		"CSRFTs":          historyCSRFTs,
-		"Pending":         s.buildPendingViews(username, lang),
+		"Pending":         s.pendingViewsFor(username, lang, isAdmin),
 	}); err != nil {
 		slog.Error("template execution", "err", err)
 	}

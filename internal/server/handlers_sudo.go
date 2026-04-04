@@ -116,6 +116,7 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 		"Languages":  supportedLanguages,
 		"IsAdmin":    true,
 		"SudoRules":  s.sudoRules.Rules(),
+		"Pending":    s.buildAllPendingViews(lang),
 		"CSRFToken":  csrfToken,
 		"CSRFTs":     csrfTs,
 	}); err != nil {

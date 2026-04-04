@@ -70,6 +70,9 @@ var TOMLSections = []TOMLSection{
 		{Key: "gid_base", EnvKey: "IDENTREE_LDAP_GID_BASE"},
 		{Key: "default_shell", EnvKey: "IDENTREE_LDAP_DEFAULT_SHELL"},
 		{Key: "default_home", EnvKey: "IDENTREE_LDAP_DEFAULT_HOME"},
+		{Key: "provision_enabled", EnvKey: "IDENTREE_LDAP_PROVISION_ENABLED", IsBool: true},
+		{Key: "external_url", EnvKey: "IDENTREE_LDAP_EXTERNAL_URL"},
+		{Key: "tls_ca_cert", EnvKey: "IDENTREE_LDAP_TLS_CA_CERT"},
 	}},
 	{Name: "admin", Fields: []TOMLField{
 		{Key: "groups", EnvKey: "IDENTREE_ADMIN_GROUPS", IsList: true},

@@ -93,7 +93,7 @@ const (
 const (
 	// maxChallengesPerUser limits how many pending challenges a single username can have.
 	// Prevents memory exhaustion DoS via unlimited challenge creation.
-	maxChallengesPerUser = 5
+	maxChallengesPerUser = 10
 
 	// maxTotalChallenges is an absolute cap on total challenges in the store.
 	maxTotalChallenges = 10000

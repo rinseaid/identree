@@ -21,6 +21,7 @@ import (
 	"github.com/rinseaid/identree/internal/config"
 	ldapserver "github.com/rinseaid/identree/internal/ldap"
 	"github.com/rinseaid/identree/internal/pam"
+	"github.com/rinseaid/identree/internal/setup"
 	"github.com/rinseaid/identree/internal/sudorules"
 	"github.com/rinseaid/identree/internal/uidmap"
 )
@@ -93,6 +94,9 @@ func Main() {
 		case "rotate-host-secret":
 			runRotateHostSecret()
 			return
+		case "setup":
+			runSetup()
+			return
 		}
 	}
 
@@ -104,6 +108,7 @@ func Main() {
 			"rotate-breakglass": true, "verify-breakglass": true,
 			"add-host": true, "remove-host": true, "list-hosts": true,
 			"rotate-host-secret": true,
+			"setup": true,
 		}
 		if !strings.HasPrefix(os.Args[1], "-") && !known[os.Args[1]] {
 			fmt.Fprintf(os.Stderr, "unknown command: %s\nRun 'identree --help' for usage.\n", os.Args[1])
@@ -130,6 +135,13 @@ Host registry commands (run on the server):
   identree remove-host <hostname>        Unregister a host
   identree list-hosts                    List registered hosts
   identree rotate-host-secret <hostname> Rotate a host's shared secret
+
+Setup commands (run on managed hosts as root):
+  identree setup                         Configure PAM for identree authentication
+            [--sssd]                     Also configure SSSD + nsswitch for LDAP identity
+            [--hostname <name>]          Override hostname (default: os.Hostname)
+            [--force]                    Overwrite existing config files
+            [--dry-run]                  Print changes without applying them
 
 Global flags:
   --version, -v                          Show version
@@ -760,6 +772,49 @@ func runRotateHostSecret() {
 	fmt.Fprintf(os.Stderr, "Update /etc/identree/client.conf on %s:\n", hostname)
 	fmt.Fprintf(os.Stderr, "  IDENTREE_SHARED_SECRET=%s\n\n", secret)
 	fmt.Fprintln(os.Stdout, secret)
+}
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
+
+func runSetup() {
+	cfg := setup.Config{}
+
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--sssd":
+			cfg.SSSD = true
+		case "--force":
+			cfg.Force = true
+		case "--dry-run":
+			cfg.DryRun = true
+		case "--hostname":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "usage: identree setup [--sssd] [--hostname <name>] [--force] [--dry-run]")
+				os.Exit(1)
+			}
+			cfg.Hostname = args[i+1]
+			i++
+		default:
+			fmt.Fprintf(os.Stderr, "unknown flag: %s\nusage: identree setup [--sssd] [--hostname <name>] [--force] [--dry-run]\n", args[i])
+			os.Exit(1)
+		}
+	}
+
+	// Load client config for server URL and shared secret (needed for --sssd).
+	clientCfg, err := config.LoadClientConfig(true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identree: load client config: %v\n", err)
+		os.Exit(1)
+	}
+	cfg.ServerURL = clientCfg.ServerURL
+	cfg.SharedSecret = clientCfg.SharedSecret
+
+	if err := setup.Run(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "identree setup: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("identree setup complete.")
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

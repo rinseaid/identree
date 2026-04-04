@@ -512,6 +512,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/challenges/reject", s.handleRejectChallenge)
 	s.mux.HandleFunc("/api/challenges/reject-all", s.handleRejectAll)
 	s.mux.HandleFunc("/api/grace-status", s.handleGraceStatus)
+	s.mux.HandleFunc("/api/client/provision", s.handleClientProvision)
 
 	// Break-glass escrow
 	s.mux.HandleFunc("/api/breakglass/escrow", s.handleBreakglassEscrow)

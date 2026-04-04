@@ -20,10 +20,12 @@ set -euo pipefail
 # identree installer — pre-configured for {{.ServerURL}}
 # Usage: curl -fsSL {{.ServerURL}}/install.sh | sudo bash
 # Automated: SHARED_SECRET=xxx curl -fsSL {{.ServerURL}}/install.sh | sudo bash
+# With SSSD:  SHARED_SECRET=xxx SETUP_SSSD=1 curl -fsSL {{.ServerURL}}/install.sh | sudo bash
 
 SERVER_URL={{shellQuote .ServerURL}}
 MACHINE_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
 echo "IDENTREE_HOSTNAME=$MACHINE_HOSTNAME"
+SETUP_SSSD="${SETUP_SSSD:-0}"
 INSTALL_DIR="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
 CONFIG_DIR="/etc/identree"
@@ -237,39 +239,15 @@ else
     echo "  sudo /usr/local/bin/identree rotate-breakglass"
 fi
 
-# ── PAM configuration ────────────────────────────────────────────────────────
+# ── Setup (PAM + optional SSSD) ──────────────────────────────────────────────
 
-PAM_LINE='auth    required    pam_exec.so    stdout /usr/local/bin/identree'
-
-for PAM_FILE in /etc/pam.d/sudo /etc/pam.d/sudo-i; do
-    [ -f "$PAM_FILE" ] || continue
-    if grep -q "pam_exec.*identree" "$PAM_FILE" 2>/dev/null; then
-        echo "identree PAM line already present in $PAM_FILE, skipping"
-    else
-        cp "$PAM_FILE" "${PAM_FILE}.bak"
-        # Insert before the first auth or @include line
-        awk -v line="$PAM_LINE" '
-            !done && /^(auth[[:space:]]|@include)/ { print line; done=1 }
-            { print }
-        ' "${PAM_FILE}.bak" > "$PAM_FILE"
-        echo "Updated $PAM_FILE (original saved as ${PAM_FILE}.bak)"
-    fi
-done
-
-# ── nsswitch.conf ─────────────────────────────────────────────────────────────
-
-NSS_FILE="/etc/nsswitch.conf"
-if [ -f "$NSS_FILE" ]; then
-    for NSS_DB in passwd group; do
-        if grep -qE "^${NSS_DB}:.*\bldap\b" "$NSS_FILE" 2>/dev/null; then
-            echo "nsswitch.conf: ldap already present in ${NSS_DB}: line, skipping"
-        else
-            # Append ldap after the existing sources on the matching line
-            sed -i "s/^\(${NSS_DB}:[[:space:]]*.*\)$/\1 ldap/" "$NSS_FILE"
-            echo "nsswitch.conf: added ldap to ${NSS_DB}: line"
-        fi
-    done
+SETUP_FLAGS=""
+if [ "${SETUP_SSSD:-0}" = "1" ]; then
+    SETUP_FLAGS="--sssd"
 fi
+
+echo "Running identree setup..."
+"$INSTALL_DIR/identree" setup $SETUP_FLAGS
 
 # ── Initial break-glass password ─────────────────────────────────────────────
 

@@ -2,6 +2,8 @@ package config
 
 import (
 	"bufio"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -172,10 +174,43 @@ type ServerConfig struct {
 	// because legitimate users behind NAT/load balancers can have different IPs.
 	EnforceOIDCIPBinding bool
 
+	// ── LDAP auto-provisioning ────────────────────────────────────────────────
+	// When LDAPProvisionEnabled is true, GET /api/client/provision returns LDAP
+	// configuration and per-host derived bind credentials so that `identree setup`
+	// can auto-configure SSSD without manual admin intervention.
+	LDAPProvisionEnabled bool
+	// LDAPExternalURL is the LDAP URL returned to clients (e.g. ldap://ldap.example.com:389).
+	// When empty, the server derives a URL from ExternalURL on port 389.
+	LDAPExternalURL string
+	// LDAPTLSCACert is an optional PEM-encoded CA certificate for LDAP TLS.
+	// When set, it is included in the provision response so clients can verify
+	// the LDAP server certificate without installing a system CA.
+	LDAPTLSCACert string
+
 	// ── Development / testing ─────────────────────────────────────────────────
 	// DevLoginEnabled enables /dev/login?user=X&role=Y for bypassing OIDC in
 	// local test environments. NEVER enable in production.
 	DevLoginEnabled bool
+}
+
+// DeriveLDAPBindPassword returns the per-host LDAP bind password for hostname.
+// Derivation: HMAC-SHA256(HMAC-SHA256(sharedSecret, "ldap-bind"), hostname).
+// The outer HMAC over hostname means each host gets a unique credential that
+// rotates automatically when the shared secret rotates — no extra storage needed.
+func DeriveLDAPBindPassword(sharedSecret, hostname string) string {
+	subkey := deriveSubkey(sharedSecret, "ldap-bind")
+	h := hmac.New(sha256.New, subkey)
+	h.Write([]byte(hostname))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// deriveSubkey creates a purpose-specific HMAC-SHA256 subkey.
+// Mirrors server.deriveKey but lives in config so both the server
+// (provision endpoint) and ldap (bind handler) packages can use it.
+func deriveSubkey(sharedSecret, purpose string) []byte {
+	h := hmac.New(sha256.New, []byte(sharedSecret))
+	h.Write([]byte(purpose))
+	return h.Sum(nil)
 }
 
 // ClientConfig holds all configuration for identree in PAM client mode.
@@ -350,6 +385,10 @@ func LoadServerConfig() (*ServerConfig, error) {
 		WebhookSecret:        get("IDENTREE_WEBHOOK_SECRET"),
 		EnforceOIDCIPBinding: getBool("IDENTREE_OIDC_ENFORCE_IP_BINDING", false),
 		DevLoginEnabled:      getBool("IDENTREE_DEV_LOGIN", false),
+
+		LDAPProvisionEnabled: getBool("IDENTREE_LDAP_PROVISION_ENABLED", false),
+		LDAPExternalURL:      get("IDENTREE_LDAP_EXTERNAL_URL"),
+		LDAPTLSCACert:        get("IDENTREE_LDAP_TLS_CA_CERT"),
 	}
 
 	// Backward compatibility: accept old env var names with deprecation warnings.

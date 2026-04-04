@@ -197,7 +197,7 @@ const sharedCSS = `
       display: flex;
       flex-direction: column;
       height: 100vh;
-      overflow-y: auto;
+      overflow: visible;
       position: sticky;
       top: 0;
     }
@@ -230,6 +230,8 @@ const sharedCSS = `
     }
     .sidebar-nav {
       flex: 1;
+      min-height: 0;
+      overflow-y: auto;
       padding: 10px 8px;
       display: flex;
       flex-direction: column;
@@ -260,6 +262,8 @@ const sharedCSS = `
     }
     .nav-item svg { width: 17px; height: 17px; flex-shrink: 0; opacity: 0.7; }
     .nav-item.active svg { opacity: 1; }
+    .nav-badge { margin-left: auto; min-width: 18px; padding: 1px 5px; border-radius: 9px; font-size: 0.7rem; font-weight: 700; background: var(--primary); color: #fff; text-align: center; line-height: 1.5; }
+    .nav-item.active .nav-badge { background: rgba(255,255,255,0.3); }
     .sidebar-sub { display: flex; flex-direction: column; gap: 1px; padding: 2px 0 6px 22px; }
     .sub-item {
       display: flex; align-items: center; gap: 6px;
@@ -294,6 +298,8 @@ const sharedCSS = `
       font-weight: 500; position: relative;
     }
     .user-btn:hover { background: var(--surface-2); }
+    .user-btn-chevron { margin-left: auto; color: var(--text-3); font-size: 0.75rem; line-height: 1; transition: transform 0.15s; flex-shrink: 0; }
+    .user-btn.open .user-btn-chevron { transform: rotate(180deg); }
     .user-avatar {
       width: 26px; height: 26px; border-radius: 50%;
       background: var(--primary); color: var(--primary-fg);
@@ -317,7 +323,6 @@ const sharedCSS = `
     @media (max-width: 768px) {
       .user-dropdown { bottom: auto; top: calc(100% + 4px); left: auto; right: 0; min-width: 220px; }
     }
-    .user-btn:focus-within .user-dropdown,
     .user-btn.open .user-dropdown { display: block; }
     .user-dropdown-label {
       padding: 3px 14px; font-size: 0.6875rem; color: var(--text-3);
@@ -695,12 +700,15 @@ const sharedCSS = `
       body.has-pending { padding-top: 44px; }
     }
     /* Pending approvals modal */
-    .pending-modal-box { max-width: 700px; }
+    .pending-modal-box { max-width: 920px; }
     .pending-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
-    .pending-table-header { display: grid; grid-template-columns: 1.6fr 1fr 0.7fr auto; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .pending-table-row { display: grid; grid-template-columns: 1.6fr 1fr 0.7fr auto; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .pending-table-header { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr auto; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .pending-table-row { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr auto; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .pending-table-footer { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr auto; gap: 0; padding: 10px 12px; align-items: center; }
     .pending-table--admin .pending-table-header,
-    .pending-table--admin .pending-table-row { grid-template-columns: 0.7fr 1.4fr 1fr 0.7fr auto; }
+    .pending-table--admin .pending-table-row,
+    .pending-table--admin .pending-table-footer { grid-template-columns: 0.7fr 1.2fr 1fr 0.7fr auto; }
+    .row-code { white-space: nowrap; }
     .pending-table-row:last-child { border-bottom: none; }
     .pending-table-row:hover { background: var(--surface-2); }
     .pending-table-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
@@ -772,7 +780,7 @@ const pendingBarHTML = `{{if .Pending}}
       </div>
       {{end}}
     </div>
-    <div class="pending-table-row{{if .IsAdmin}} pending-table--admin{{end}}" style="border-top:1px solid var(--border);border-bottom:none;padding-top:12px;margin-top:4px">
+    <div class="pending-table-footer{{if .IsAdmin}} pending-table--admin{{end}}" style="border-top:1px solid var(--border);border-bottom:none;padding-top:12px;margin-top:4px">
       {{if .IsAdmin}}<div></div>{{end}}
       <div></div><div></div><div></div>
       <div class="pending-table-actions">
@@ -910,7 +918,7 @@ const navCSS = ``
 // It uses Go template variables: .ActivePage, .IsAdmin, .AdminTab.
 // The caller must embed this inside <nav class="sidebar"><div class="sidebar-nav">...</div></nav>.
 const sidebarNavHTML = `
-      <a href="/" class="nav-item{{if eq .ActivePage "sessions"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{{call .T "sessions"}}</a>
+      <a href="/" class="nav-item{{if eq .ActivePage "sessions"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{{call .T "sessions"}}{{if .Pending}}<span class="nav-badge">{{len .Pending}}</span>{{end}}</a>
       <a href="/access" class="nav-item{{if eq .ActivePage "access"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>{{call .T "access"}}</a>
       <a href="/history" class="nav-item{{if eq .ActivePage "history"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call .T "history"}}</a>
       {{if .IsAdmin}}<a href="/admin" class="nav-item{{if eq .ActivePage "admin"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>{{call .T "admin"}}</a>
@@ -1047,6 +1055,8 @@ const dashboardHTML = `<!DOCTYPE html>
   }
   var _dashSSECleanup = connectSSE('/api/events', function(e) {
     if (e && e.data && e.data.indexOf('401') !== -1) { window.location.href = '/login'; return; }
+    var pm=document.getElementById('pending-modal');
+    if(pm&&pm.classList.contains('open'))return;
     location.reload();
   }, function(es) {
     // on repeated errors, check if session expired by a quick fetch
@@ -1073,7 +1083,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="sidebar-nav">` + sidebarNavHTML + `
     </div>
     <div class="sidebar-footer">
-      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
+      <div class="user-btn" tabindex="0" role="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
         <div class="user-avatar">{{if .Avatar}}<img src="{{.Avatar}}" alt="">{{else}}{{.Initial}}{{end}}</div>
         <div class="user-name-wrap"><span class="user-display-name">{{.Username}}{{if .IsAdmin}}<span class="user-role-badge">{{call .T "admin"}}</span>{{end}}</span></div>
         <div class="user-dropdown">
@@ -1092,7 +1102,7 @@ const dashboardHTML = `<!DOCTYPE html>
           <div class="user-dropdown-divider"></div>
           <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px">{{call .T "sign_out"}}</button></form>
         </div>
-      </button>
+      </div>
     </div>
   </nav>
   <main class="main" id="main-content">
@@ -1547,7 +1557,7 @@ const historyPageHTML = `<!DOCTYPE html>
     <div class="sidebar-nav">` + sidebarNavHTML + `
     </div>
     <div class="sidebar-footer">
-      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
+      <div class="user-btn" tabindex="0" role="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
         <div class="user-avatar">{{if .Avatar}}<img src="{{.Avatar}}" alt="">{{else}}{{.Initial}}{{end}}</div>
         <div class="user-name-wrap"><span class="user-display-name">{{.Username}}{{if .IsAdmin}}<span class="user-role-badge">{{call .T "admin"}}</span>{{end}}</span></div>
         <div class="user-dropdown">
@@ -1566,7 +1576,7 @@ const historyPageHTML = `<!DOCTYPE html>
           <div class="user-dropdown-divider"></div>
           <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px">{{call .T "sign_out"}}</button></form>
         </div>
-      </button>
+      </div>
     </div>
   </nav>
   <main class="main" id="main-content">
@@ -2046,7 +2056,7 @@ const adminPageHTML = `<!DOCTYPE html>
     <div class="sidebar-nav">` + sidebarNavHTML + `
     </div>
     <div class="sidebar-footer">
-      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
+      <div class="user-btn" tabindex="0" role="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
         <div class="user-avatar">{{if .Avatar}}<img src="{{.Avatar}}" alt="">{{else}}{{.Initial}}{{end}}</div>
         <div class="user-name-wrap"><span class="user-display-name">{{.Username}}<span class="user-role-badge">{{call .T "admin"}}</span></span></div>
         <div class="user-dropdown">
@@ -2065,7 +2075,7 @@ const adminPageHTML = `<!DOCTYPE html>
           <div class="user-dropdown-divider"></div>
           <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px">{{call .T "sign_out"}}</button></form>
         </div>
-      </button>
+      </div>
     </div>
   </nav>
   <main class="main" id="main-content">
@@ -2138,6 +2148,9 @@ const adminPageHTML = `<!DOCTYPE html>
       {{$v:=index .ConfigValues "IDENTREE_LDAP_GID_BASE"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_GID_BASE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_GID_BASE Starting GID for dynamically assigned POSIX group IDs."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_gid_base"}}</div><div class="config-label-env">IDENTREE_LDAP_GID_BASE</div><div class="config-label-desc">Starting GID for dynamically assigned POSIX group IDs.</div></div><div class="config-row-control">{{if $lk}}<input type="number" value="{{$v}}" disabled class="config-input" style="max-width:120px"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{else}}<input type="number" name="IDENTREE_LDAP_GID_BASE" value="{{$v}}" class="config-input" style="max-width:120px" min="0">{{end}}</div></div>
       {{$v:=index .ConfigValues "IDENTREE_LDAP_DEFAULT_SHELL"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_DEFAULT_SHELL"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_DEFAULT_SHELL Login shell assigned when Pocket ID has no shell set for a user."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_default_shell"}}</div><div class="config-label-env">IDENTREE_LDAP_DEFAULT_SHELL</div><div class="config-label-desc">Login shell assigned when Pocket ID has no shell set for a user.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_LDAP_DEFAULT_SHELL" value="{{$v}}" class="config-input" placeholder="/bin/bash">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
       {{$v:=index .ConfigValues "IDENTREE_LDAP_DEFAULT_HOME"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_DEFAULT_HOME"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_DEFAULT_HOME Home directory template. Use %s as a placeholder for the username."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_ldap_default_home"}}</div><div class="config-label-env">IDENTREE_LDAP_DEFAULT_HOME</div><div class="config-label-desc">Home directory template. Use %s as a placeholder for the username.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_LDAP_DEFAULT_HOME" value="{{$v}}" class="config-input" placeholder="/home/%s">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
+      {{$v:=index .ConfigValues "IDENTREE_LDAP_PROVISION_ENABLED"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_PROVISION_ENABLED"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_PROVISION_ENABLED Enable SSSD auto-provisioning via identree setup --sssd."><div class="config-row-label"><div class="config-label-text">SSSD auto-provision</div><div class="config-label-env">IDENTREE_LDAP_PROVISION_ENABLED</div><div class="config-label-desc">Enable /api/client/provision so identree setup --sssd can auto-configure SSSD on managed hosts.</div></div><div class="config-row-control">{{if $lk}}<input type="checkbox" disabled {{if eq $v "true"}}checked{{end}}>{{else}}<input type="checkbox" name="IDENTREE_LDAP_PROVISION_ENABLED" value="true" {{if eq $v "true"}}checked{{end}}>{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
+      {{$v:=index .ConfigValues "IDENTREE_LDAP_EXTERNAL_URL"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_EXTERNAL_URL"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_EXTERNAL_URL LDAP URL returned to SSSD clients during auto-provisioning."><div class="config-row-label"><div class="config-label-text">LDAP external URL</div><div class="config-label-env">IDENTREE_LDAP_EXTERNAL_URL</div><div class="config-label-desc">LDAP URL returned to SSSD clients. Leave blank to auto-derive from IDENTREE_EXTERNAL_URL.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_LDAP_EXTERNAL_URL" value="{{$v}}" class="config-input" placeholder="ldap://identree.example.com:389">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
+      {{$v:=index .ConfigValues "IDENTREE_LDAP_TLS_CA_CERT"}}{{$lk:=index .ConfigLocked "IDENTREE_LDAP_TLS_CA_CERT"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="ldap" data-search="IDENTREE_LDAP_TLS_CA_CERT PEM CA certificate returned to SSSD clients for TLS verification."><div class="config-row-label"><div class="config-label-text">LDAP TLS CA cert</div><div class="config-label-env">IDENTREE_LDAP_TLS_CA_CERT</div><div class="config-label-desc">Optional PEM CA certificate included in provision responses so clients can verify LDAP TLS. Leave blank for plain LDAP.</div></div><div class="config-row-control">{{if $lk}}<textarea disabled class="config-input" rows="3" style="font-family:monospace;font-size:0.75rem">{{$v}}</textarea>{{else}}<textarea name="IDENTREE_LDAP_TLS_CA_CERT" class="config-input" rows="3" style="font-family:monospace;font-size:0.75rem" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----">{{$v}}</textarea>{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
     {{/* Admin Access */}}
       <div class="config-section-row" data-section="admin"><span class="config-section-title">{{call .T "cfg_admin_access"}}</span><button type="submit" class="saction-btn saction-primary config-save-btn">{{call .T "save"}}</button></div>
       {{$v:=index .ConfigValues "IDENTREE_ADMIN_GROUPS"}}{{$lk:=index .ConfigLocked "IDENTREE_ADMIN_GROUPS"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="admin" data-search="IDENTREE_ADMIN_GROUPS Comma-separated Pocket ID group names whose members have admin access to this UI."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_admin_groups"}}</div><div class="config-label-env">IDENTREE_ADMIN_GROUPS</div><div class="config-label-desc">Comma-separated Pocket ID group names whose members have admin access to this UI.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_ADMIN_GROUPS" value="{{$v}}" class="config-input" placeholder="admins, sudo-admins">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
@@ -2177,6 +2190,46 @@ const adminPageHTML = `<!DOCTYPE html>
       {{$sc:=index .ConfigSecrets "IDENTREE_WEBHOOK_SECRET"}}<div class="config-table-row config-locked" data-section="misc" data-search="IDENTREE_WEBHOOK_SECRET HMAC secret for verifying Pocket ID webhook payloads."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_webhook_secret"}}</div><div class="config-label-env">IDENTREE_WEBHOOK_SECRET</div><div class="config-label-desc">HMAC secret for verifying Pocket ID webhook payloads.</div></div><div class="config-row-control"><span class="config-secret-badge{{if $sc}} configured{{end}}">{{if $sc}}{{call .T "configured"}}{{else}}{{call .T "not_configured"}}{{end}}</span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span style="font-size:0.75rem;color:var(--text-3)">env only</span></div></div>
     </div>
     </form>
+
+    {{/* ── Install command card ────────────────────────────────────────── */}}
+    <div class="config-table" style="margin-top:16px">
+      <div class="config-filter-header" style="cursor:default">
+        <span class="config-section-title">Install command</span>
+      </div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+        <p style="margin:0;font-size:0.8125rem;color:var(--text-2)">Run this on a managed host to install identree and configure PAM. Pass <code>SETUP_SSSD=1</code> to also configure SSSD for LDAP identity lookup.</p>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <label style="font-size:0.8125rem;font-weight:500;white-space:nowrap">Mode:</label>
+          <label style="font-size:0.8125rem;display:flex;align-items:center;gap:4px"><input type="radio" name="install-mode" value="pam" checked> PAM only</label>
+          <label style="font-size:0.8125rem;display:flex;align-items:center;gap:4px"><input type="radio" name="install-mode" value="sssd"> PAM + SSSD{{if not .LDAPProvisionEnabled}} <span style="font-size:0.75rem;color:var(--text-3)">(requires IDENTREE_LDAP_PROVISION_ENABLED=true)</span>{{end}}</label>
+        </div>
+        <div style="position:relative">
+          <code id="install-cmd-text" style="display:block;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 40px 10px 10px;font-size:0.8rem;word-break:break-all;color:var(--text)">SHARED_SECRET=<span id="install-secret-placeholder">YOUR_SHARED_SECRET</span> curl -fsSL {{.InstallURL}}/install.sh | sudo bash</code>
+          <button type="button" id="install-cmd-copy" style="position:absolute;top:6px;right:6px;background:none;border:none;cursor:pointer;padding:4px;color:var(--text-2)" title="Copy"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        </div>
+        {{if .SharedSecretConfigured}}<p style="margin:0;font-size:0.75rem;color:var(--text-3)">IDENTREE_SHARED_SECRET is configured. Replace <code>YOUR_SHARED_SECRET</code> with the actual value from your server config.</p>{{else}}<p style="margin:0;font-size:0.75rem;color:var(--danger)">IDENTREE_SHARED_SECRET is not configured — clients cannot authenticate.</p>{{end}}
+      </div>
+    </div>
+
+    <script nonce="{{.CSPNonce}}">
+    (function(){
+      var installURL={{.InstallURL|printf "%q"}};
+      function updateInstallCmd(){
+        var sssd=document.querySelector('input[name="install-mode"][value="sssd"]');
+        var base='SHARED_SECRET=YOUR_SHARED_SECRET curl -fsSL '+installURL+'/install.sh | sudo bash';
+        var cmd=sssd&&sssd.checked?'SHARED_SECRET=YOUR_SHARED_SECRET SETUP_SSSD=1 curl -fsSL '+installURL+'/install.sh | sudo bash':base;
+        var el=document.getElementById('install-cmd-text');
+        if(el)el.textContent=cmd;
+      }
+      document.querySelectorAll('input[name="install-mode"]').forEach(function(r){r.addEventListener('change',updateInstallCmd);});
+      var copyBtn=document.getElementById('install-cmd-copy');
+      if(copyBtn)copyBtn.addEventListener('click',function(){
+        var el=document.getElementById('install-cmd-text');
+        if(el&&navigator.clipboard)navigator.clipboard.writeText(el.textContent);
+      });
+    })();
+    </script>
+
     <script nonce="{{.CSPNonce}}">
     (function(){
       /* ── Filter ─────────────────────────────────────────────────────── */
@@ -3652,7 +3705,7 @@ const accessPageHTML = `<!DOCTYPE html>
     <div class="sidebar-nav">` + sidebarNavHTML + `
     </div>
     <div class="sidebar-footer">
-      <button class="user-btn" type="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
+      <div class="user-btn" tabindex="0" role="button" aria-label="{{call .T "aria_user_menu"}}" aria-haspopup="true" aria-expanded="false">
         <div class="user-avatar">{{if .Avatar}}<img src="{{.Avatar}}" alt="">{{else}}{{.Initial}}{{end}}</div>
         <div class="user-name-wrap"><span class="user-display-name">{{.Username}}{{if .IsAdmin}}<span class="user-role-badge">{{call .T "admin"}}</span>{{end}}</span></div>
         <div class="user-dropdown">
@@ -3668,7 +3721,7 @@ const accessPageHTML = `<!DOCTYPE html>
           <div class="user-dropdown-divider"></div>
           <form method="POST" action="/signout" style="display:inline;margin:0"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--danger);font:inherit;font-size:0.8125rem;font-weight:500;padding:7px 14px">{{call .T "sign_out"}}</button></form>
         </div>
-      </button>
+      </div>
     </div>
   </nav>
   <main class="main" id="main-content">

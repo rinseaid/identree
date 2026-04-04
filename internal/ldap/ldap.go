@@ -215,9 +215,54 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 		return
 	}
 
+	// Per-host provisioned bind — DN format: uid=<hostname>,ou=identree-hosts,<base_dn>
+	// Password is derived as HMAC(deriveSubkey(sharedSecret,"ldap-bind"), hostname).
+	// This allows auto-provisioned SSSD clients to bind without a shared static password.
+	if s.cfg.LDAPProvisionEnabled && s.cfg.SharedSecret != "" && s.cfg.LDAPBaseDN != "" {
+		if hostname, ok := s.parseProvisionBindDN(msg.UserName); ok {
+			expected := config.DeriveLDAPBindPassword(s.cfg.SharedSecret, hostname)
+			if subtle.ConstantTimeCompare([]byte(msg.Password), []byte(expected)) == 1 {
+				s.authedConns.Store(req.ConnectionID(), struct{}{})
+				slog.Info("LDAP_BIND_OK provisioned host", "hostname", hostname, "conn", req.ConnectionID())
+				resp.SetResultCode(gldap.ResultSuccess)
+			} else {
+				slog.Warn("LDAP_BIND_REJECTED bad password for provisioned host", "hostname", hostname, "conn", req.ConnectionID())
+				ldapBindFailures.Inc()
+			}
+			return
+		}
+	}
+
 	// All other binds rejected — identree is a read-only directory
 	slog.Warn("LDAP_BIND_REJECTED unknown DN", "dn", msg.UserName, "conn", req.ConnectionID())
 	ldapBindFailures.Inc()
+}
+
+// parseProvisionBindDN returns the hostname from a DN of the form
+// uid=<hostname>,ou=identree-hosts,<base_dn>. Returns ("", false) if the DN
+// does not match this pattern.
+func (s *LDAPServer) parseProvisionBindDN(dn string) (string, bool) {
+	// Expected: uid=<hostname>,ou=identree-hosts,<base_dn>
+	suffix := ",ou=identree-hosts," + s.cfg.LDAPBaseDN
+	if !strings.EqualFold(dn[max(0, len(dn)-len(suffix)):], suffix) {
+		return "", false
+	}
+	prefix := dn[:len(dn)-len(suffix)]
+	if !strings.HasPrefix(strings.ToLower(prefix), "uid=") {
+		return "", false
+	}
+	hostname := prefix[4:]
+	if hostname == "" {
+		return "", false
+	}
+	return hostname, true
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // ── Search handler ────────────────────────────────────────────────────────────
