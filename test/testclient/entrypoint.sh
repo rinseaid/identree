@@ -156,6 +156,10 @@ fi
 mkdir -p /etc/identree
 printf 'IDENTREE_SERVER_URL=%s\nIDENTREE_SHARED_SECRET=%s\n' \
     "$IDENTREE_SERVER_URL" "$IDENTREE_SHARED_SECRET" > /etc/identree/client.conf
+# Persist optional flags so they survive stripSensitiveEnv() (which strips
+# all IDENTREE_* from the process environment before loading the config file).
+[ -n "$IDENTREE_INSECURE_ALLOW_HTTP_ESCROW" ] && \
+    printf 'IDENTREE_INSECURE_ALLOW_HTTP_ESCROW=%s\n' "$IDENTREE_INSECURE_ALLOW_HTTP_ESCROW" >> /etc/identree/client.conf
 chmod 600 /etc/identree/client.conf
 
 # Token cache directory for identree

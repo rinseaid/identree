@@ -63,7 +63,7 @@ func NewPAMClient(cfg *config.ClientConfig, tokenCache *TokenCache, hostname str
 	// Normalize hostname: lowercase + strip trailing dot for consistent matching
 	hostname = strings.ToLower(strings.TrimSuffix(hostname, "."))
 
-	if strings.HasPrefix(cfg.ServerURL, "http://") {
+	if strings.HasPrefix(cfg.ServerURL, "http://") && !cfg.InsecureAllowHTTPEscrow {
 		return nil, fmt.Errorf("identree: ServerURL must use https://, not http:// (shared secret would be sent in cleartext)")
 	}
 

@@ -142,8 +142,8 @@ const pamProc = spawn("docker", [
 ], { stdio: ["ignore", "pipe", "pipe"] });
 
 pamProc.stdout.on("data", d => { pamOutput += d.toString(); });
-pamProc.stderr.on("data", () => {});
-pamProc.on("exit", () => { pamDone = true; });
+pamProc.stderr.on("data", d => { process.stderr.write(d); });
+pamProc.on("exit", code => { pamDone = true; if (code !== 0 && code !== null) console.warn(`  PAM process exited with code ${code}`); });
 
 // Wait up to 10s for the "Code:" line to appear
 const pamStart = Date.now();
