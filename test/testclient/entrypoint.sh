@@ -82,11 +82,37 @@ SSSD_BASE
 # SID-based ID mapping: required for AD schema (id_provider=ldap defaults to false)
 [ "$SSSD_ID_MAPPING" = "true" ]   && echo "ldap_id_mapping         = true"                       >> /etc/sssd/sssd.conf
 
-# Append bind credentials when a non-anonymous bind is required
+# Append bind credentials when a non-anonymous bind is required.
+# When LDAP_BIND_DN is empty and IDENTREE_SERVER_URL is set, auto-provision
+# per-host bind credentials from the identree provision endpoint.
 if [ -n "$LDAP_BIND_DN" ]; then
     printf '\nldap_default_bind_dn      = %s\n' "$LDAP_BIND_DN" >> /etc/sssd/sssd.conf
     printf 'ldap_default_authtok_type = password\n' >> /etc/sssd/sssd.conf
     printf 'ldap_default_authtok = %s\n' "$LDAP_BIND_PW" >> /etc/sssd/sssd.conf
+elif [ -n "$IDENTREE_SERVER_URL" ] && [ -n "$IDENTREE_SHARED_SECRET" ]; then
+    # Fetch per-host LDAP bind credentials from identree provision endpoint.
+    # This is the full-mode path where identree acts as the LDAP server.
+    HOSTNAME_FOR_PROV="$(hostname)"
+    echo "Auto-provisioning LDAP bind credentials for ${HOSTNAME_FOR_PROV}..."
+    PROV_JSON=$(curl -sf \
+        -H "X-Shared-Secret: ${IDENTREE_SHARED_SECRET}" \
+        -H "X-Hostname: ${HOSTNAME_FOR_PROV}" \
+        "${IDENTREE_SERVER_URL}/api/client/provision" 2>/dev/null || echo "")
+    if [ -n "$PROV_JSON" ]; then
+        PROV_BIND_DN=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('bind_dn',''))" 2>/dev/null || echo "")
+        PROV_BIND_PW=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('bind_password',''))" 2>/dev/null || echo "")
+        PROV_LDAP_URL=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ldap_url',''))" 2>/dev/null || echo "")
+        if [ -n "$PROV_BIND_DN" ]; then
+            printf '\nldap_default_bind_dn      = %s\n' "$PROV_BIND_DN" >> /etc/sssd/sssd.conf
+            printf 'ldap_default_authtok_type = password\n' >> /etc/sssd/sssd.conf
+            printf 'ldap_default_authtok = %s\n' "$PROV_BIND_PW" >> /etc/sssd/sssd.conf
+            echo "  bind_dn: ${PROV_BIND_DN}"
+        else
+            echo "WARNING: provision response missing bind_dn — SSSD may fail to authenticate"
+        fi
+    else
+        echo "WARNING: provision endpoint not available — SSSD will use anonymous bind"
+    fi
 fi
 
 cat >> /etc/sssd/sssd.conf <<SSSD_REST

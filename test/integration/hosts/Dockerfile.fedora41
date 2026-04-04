@@ -1,0 +1,54 @@
+FROM golang:1.26 AS builder
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /app/identree ./cmd/identree/
+
+FROM fedora:41
+
+RUN dnf install -y \
+    sssd \
+    sssd-ldap \
+    sssd-tools \
+    openldap-clients \
+    curl \
+    iproute \
+    iputils \
+    ca-certificates \
+    sudo \
+    authselect \
+    oddjob-mkhomedir \
+    && dnf clean all
+
+COPY --from=builder /app/identree /usr/local/bin/identree
+
+# authselect: configure sssd profile (creates PAM includes pointing to sssd).
+# --force overwrites conflicting files. The sssd profile enables pam_sss.so
+# in system-auth, password-auth, and related stacks.
+RUN authselect select sssd --force
+
+RUN sed -i \
+    -e 's/^passwd:.*/passwd:     files sss systemd/' \
+    -e 's/^group:.*/group:      files sss systemd/' \
+    -e 's/^shadow:.*/shadow:     files/' \
+    /etc/nsswitch.conf && \
+    grep -q '^sudoers:' /etc/nsswitch.conf || echo 'sudoers:        files sss' >> /etc/nsswitch.conf
+
+# Prepend identree pam_exec line before auth include in /etc/pam.d/sudo.
+# The RHEL/Fedora sudo PAM file uses "auth include system-auth" style, not
+# @include. pam_exec runs identree first; remaining auth modules are skipped
+# if identree fails (required), keeping the challenge flow clean.
+RUN sed -i '0,/^auth/s//auth    required    pam_exec.so    stdout \/usr\/local\/bin\/identree\nauth/' \
+    /etc/pam.d/sudo || \
+    printf '#%%PAM-1.0\nauth    required    pam_exec.so    stdout /usr/local/bin/identree\nauth       include      system-auth\naccount    include      system-auth\npassword   include      system-auth\nsession    optional     pam_keyinit.so revoke\nsession    required     pam_limits.so\nsession    include      system-auth\n' \
+    > /etc/pam.d/sudo
+
+# Auto-create home dirs for LDAP users on first login.
+RUN authselect enable-feature with-mkhomedir 2>/dev/null || true
+
+COPY test/testclient/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["sleep", "infinity"]

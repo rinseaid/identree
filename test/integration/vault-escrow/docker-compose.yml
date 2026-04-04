@@ -1,0 +1,267 @@
+# Integration test: lldap + Dex + Vault escrow with 5 multi-OS hosts.
+# Ports: lldap-ui=17177, ldap=3413, dex=5563, vault=8201, identree=8114
+# Start:  make integration-vault-escrow
+# Setup:  make integration-vault-escrow-setup
+# Run:    make integration-vault-escrow-run
+services:
+  lldap:
+    image: lldap/lldap:stable
+    container_name: integ-vault-lldap
+    restart: unless-stopped
+    environment:
+      LLDAP_JWT_SECRET: "integ-vault-escrow-jwt-secret"
+      LLDAP_KEY_SEED: "integ-vault-escrow-key-seed"
+      LLDAP_LDAP_BASE_DN: "dc=integ,dc=local"
+      LLDAP_LDAP_USER_DN: "admin"
+      LLDAP_LDAP_USER_PASS: "lldap-integ-admin-pass"
+      LLDAP_HTTP_URL: "http://lldap:17170"
+    volumes:
+      - lldap-data:/data
+    ports:
+      - "127.0.0.1:17177:17170"
+      - "127.0.0.1:3413:3890"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:17170/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  dex:
+    image: dexidp/dex:v2.41.0
+    container_name: integ-vault-dex
+    restart: unless-stopped
+    depends_on:
+      lldap:
+        condition: service_healthy
+    volumes:
+      - ./dex-config.yaml:/etc/dex/config.yaml:ro
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "127.0.0.1:5563:5556"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5556/dex/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  vault:
+    image: hashicorp/vault:latest
+    container_name: integ-vault-vault
+    restart: unless-stopped
+    command: ["vault", "server", "-dev"]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "integ-vault-test-token"
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "127.0.0.1:8201:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://localhost:8200"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  identree:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: integ-vault-identree
+    restart: unless-stopped
+    depends_on:
+      dex:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    environment:
+      IDENTREE_OIDC_ISSUER_URL: "http://dex:5556/dex"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:5563/dex"
+      IDENTREE_OIDC_CLIENT_ID: "identree"
+      IDENTREE_OIDC_CLIENT_SECRET: "identree-integ-vault-dex-secret"
+      IDENTREE_EXTERNAL_URL: "http://localhost:8114"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "integ-vault-escrow-shared-secret-xyz"
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "true"
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+      # Vault KV v2 escrow — dev mode, direct token auth
+      IDENTREE_ESCROW_BACKEND: "vault"
+      IDENTREE_ESCROW_URL: "http://vault:8200"
+      IDENTREE_ESCROW_AUTH_SECRET: "integ-vault-test-token"
+      IDENTREE_ESCROW_PATH: "secret/identree"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8114:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ── Host containers ────────────────────────────────────────────────────────
+
+  host-ubuntu2204:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.ubuntu2204
+    container_name: integ-vault-ubuntu2204
+    hostname: vault-ubuntu22-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      lldap:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://lldap:3890"
+      LDAP_BASE: "dc=integ,dc=local"
+      LDAP_BIND_DN: "uid=admin,ou=people,dc=integ,dc=local"
+      LDAP_BIND_PW: "lldap-integ-admin-pass"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
+      SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
+      SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;carol ALL=(ALL) ALL;dave ALL=(ALL) ALL;erin ALL=(ALL) ALL;frank ALL=(ALL) ALL;grace ALL=(ALL) ALL;henry ALL=(ALL) ALL;iris ALL=(ALL) ALL;jack ALL=(ALL) ALL;kate ALL=(ALL) ALL;liam ALL=(ALL) ALL;mia ALL=(ALL) ALL;noah ALL=(ALL) ALL;olivia ALL=(ALL) ALL;paul ALL=(ALL) ALL;quinn ALL=(ALL) ALL;rose ALL=(ALL) ALL;steve ALL=(ALL) ALL;theo ALL=(ALL) ALL;sam ALL=(ALL) ALL;tina ALL=(ALL) ALL;ursula ALL=(ALL) ALL;victor ALL=(ALL) ALL;wendy ALL=(ALL) ALL"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-vault-escrow-shared-secret-xyz"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+  host-ubuntu2404:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.ubuntu2404
+    container_name: integ-vault-ubuntu2404
+    hostname: vault-ubuntu24-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      lldap:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://lldap:3890"
+      LDAP_BASE: "dc=integ,dc=local"
+      LDAP_BIND_DN: "uid=admin,ou=people,dc=integ,dc=local"
+      LDAP_BIND_PW: "lldap-integ-admin-pass"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
+      SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
+      SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;carol ALL=(ALL) ALL;dave ALL=(ALL) ALL;erin ALL=(ALL) ALL;frank ALL=(ALL) ALL;grace ALL=(ALL) ALL;henry ALL=(ALL) ALL;iris ALL=(ALL) ALL;jack ALL=(ALL) ALL;kate ALL=(ALL) ALL;liam ALL=(ALL) ALL;mia ALL=(ALL) ALL;noah ALL=(ALL) ALL;olivia ALL=(ALL) ALL;paul ALL=(ALL) ALL;quinn ALL=(ALL) ALL;rose ALL=(ALL) ALL;steve ALL=(ALL) ALL;theo ALL=(ALL) ALL;sam ALL=(ALL) ALL;tina ALL=(ALL) ALL;ursula ALL=(ALL) ALL;victor ALL=(ALL) ALL;wendy ALL=(ALL) ALL"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-vault-escrow-shared-secret-xyz"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+  host-debian12:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.debian12
+    container_name: integ-vault-debian12
+    hostname: vault-debian12-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      lldap:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://lldap:3890"
+      LDAP_BASE: "dc=integ,dc=local"
+      LDAP_BIND_DN: "uid=admin,ou=people,dc=integ,dc=local"
+      LDAP_BIND_PW: "lldap-integ-admin-pass"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
+      SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
+      SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;carol ALL=(ALL) ALL;dave ALL=(ALL) ALL;erin ALL=(ALL) ALL;frank ALL=(ALL) ALL;grace ALL=(ALL) ALL;henry ALL=(ALL) ALL;iris ALL=(ALL) ALL;jack ALL=(ALL) ALL;kate ALL=(ALL) ALL;liam ALL=(ALL) ALL;mia ALL=(ALL) ALL;noah ALL=(ALL) ALL;olivia ALL=(ALL) ALL;paul ALL=(ALL) ALL;quinn ALL=(ALL) ALL;rose ALL=(ALL) ALL;steve ALL=(ALL) ALL;theo ALL=(ALL) ALL;sam ALL=(ALL) ALL;tina ALL=(ALL) ALL;ursula ALL=(ALL) ALL;victor ALL=(ALL) ALL;wendy ALL=(ALL) ALL"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-vault-escrow-shared-secret-xyz"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+  host-fedora41:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.fedora41
+    container_name: integ-vault-fedora41
+    hostname: vault-fedora41-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      lldap:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://lldap:3890"
+      LDAP_BASE: "dc=integ,dc=local"
+      LDAP_BIND_DN: "uid=admin,ou=people,dc=integ,dc=local"
+      LDAP_BIND_PW: "lldap-integ-admin-pass"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
+      SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
+      SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;carol ALL=(ALL) ALL;dave ALL=(ALL) ALL;erin ALL=(ALL) ALL;frank ALL=(ALL) ALL;grace ALL=(ALL) ALL;henry ALL=(ALL) ALL;iris ALL=(ALL) ALL;jack ALL=(ALL) ALL;kate ALL=(ALL) ALL;liam ALL=(ALL) ALL;mia ALL=(ALL) ALL;noah ALL=(ALL) ALL;olivia ALL=(ALL) ALL;paul ALL=(ALL) ALL;quinn ALL=(ALL) ALL;rose ALL=(ALL) ALL;steve ALL=(ALL) ALL;theo ALL=(ALL) ALL;sam ALL=(ALL) ALL;tina ALL=(ALL) ALL;ursula ALL=(ALL) ALL;victor ALL=(ALL) ALL;wendy ALL=(ALL) ALL"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-vault-escrow-shared-secret-xyz"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+  host-rocky9:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.rocky9
+    container_name: integ-vault-rocky9
+    hostname: vault-rocky9-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+      lldap:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://lldap:3890"
+      LDAP_BASE: "dc=integ,dc=local"
+      LDAP_BIND_DN: "uid=admin,ou=people,dc=integ,dc=local"
+      LDAP_BIND_PW: "lldap-integ-admin-pass"
+      SSSD_SCHEMA: "rfc2307bis"
+      SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
+      SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
+      SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;carol ALL=(ALL) ALL;dave ALL=(ALL) ALL;erin ALL=(ALL) ALL;frank ALL=(ALL) ALL;grace ALL=(ALL) ALL;henry ALL=(ALL) ALL;iris ALL=(ALL) ALL;jack ALL=(ALL) ALL;kate ALL=(ALL) ALL;liam ALL=(ALL) ALL;mia ALL=(ALL) ALL;noah ALL=(ALL) ALL;olivia ALL=(ALL) ALL;paul ALL=(ALL) ALL;quinn ALL=(ALL) ALL;rose ALL=(ALL) ALL;steve ALL=(ALL) ALL;theo ALL=(ALL) ALL;sam ALL=(ALL) ALL;tina ALL=(ALL) ALL;ursula ALL=(ALL) ALL;victor ALL=(ALL) ALL;wendy ALL=(ALL) ALL"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-vault-escrow-shared-secret-xyz"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  lldap-data:
+  identree-data:

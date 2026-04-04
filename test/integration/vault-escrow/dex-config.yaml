@@ -1,0 +1,43 @@
+issuer: http://localhost:5563/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+connectors:
+  - type: ldap
+    id: ldap
+    name: lldap
+    config:
+      host: lldap:3890
+      insecureNoSSL: true
+      bindDN: uid=admin,ou=people,dc=integ,dc=local
+      bindPW: lldap-integ-admin-pass
+      usernamePrompt: Username
+      userSearch:
+        baseDN: ou=people,dc=integ,dc=local
+        filter: "(objectClass=inetOrgPerson)"
+        username: uid
+        idAttr: uid
+        emailAttr: mail
+        nameAttr: displayName
+      groupSearch:
+        baseDN: ou=groups,dc=integ,dc=local
+        filter: "(objectClass=groupOfUniqueNames)"
+        userAttr: DN
+        groupAttr: uniqueMember
+        nameAttr: cn
+
+oauth2:
+  skipApprovalScreen: true
+  responseTypes: ["code"]
+
+staticClients:
+  - id: identree
+    redirectURIs:
+      - "http://localhost:8114/auth/callback"
+      - "http://identree:8090/auth/callback"
+    name: identree
+    secret: identree-integ-vault-dex-secret

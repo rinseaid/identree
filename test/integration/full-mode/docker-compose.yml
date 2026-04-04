@@ -1,0 +1,192 @@
+# Integration test: PocketID full-mode with 5 multi-OS hosts.
+# Ports: pocketid=1413, identree=8110, ldap=3410
+# Start:  make integration-full-mode
+# Setup:  make integration-full-mode-setup
+# Run:    make integration-full-mode-run
+services:
+  pocketid:
+    image: ghcr.io/pocket-id/pocket-id:latest
+    container_name: integ-full-pocketid
+    restart: unless-stopped
+    environment:
+      APP_URL: "http://localhost:1413"
+      ENCRYPTION_KEY: "integ-full-mode-key-5678"
+      STATIC_API_KEY: "integ-full-static-key"
+      APP_ENV: production
+      DISABLE_RATE_LIMITING: "true"
+    volumes:
+      - pocketid-data:/app/data
+    ports:
+      - "127.0.0.1:1413:1411"
+    healthcheck:
+      test: ["CMD", "/app/pocket-id", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  identree:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: integ-full-identree
+    restart: unless-stopped
+    depends_on:
+      pocketid:
+        condition: service_healthy
+    environment:
+      IDENTREE_OIDC_ISSUER_URL: "http://pocketid:1411"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:1413"
+      IDENTREE_OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      IDENTREE_OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
+      IDENTREE_POCKETID_API_KEY: "integ-full-static-key"
+      IDENTREE_POCKETID_API_URL: "http://pocketid:1411"
+      IDENTREE_EXTERNAL_URL: "http://localhost:8110"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "integ-full-shared-secret-abc123456"
+      IDENTREE_LDAP_ENABLED: "true"
+      IDENTREE_LDAP_LISTEN_ADDR: ":3389"
+      IDENTREE_LDAP_BASE_DN: "dc=integ,dc=local"
+      IDENTREE_LDAP_REFRESH_INTERVAL: "15s"
+      IDENTREE_LDAP_PROVISION_ENABLED: "true"
+      IDENTREE_LDAP_EXTERNAL_URL: "ldap://identree:3389"
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_ESCROW_BACKEND: "local"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "c26eb4f2f5fed5feedf64caed9319eef7d3090715d6ff228181784c13efe2f41"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+      IDENTREE_LDAP_UID_MAP_FILE: "/data/uidmap.json"
+      IDENTREE_SUDO_RULES_FILE: "/data/sudorules.json"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "true"
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8110:8090"
+      - "127.0.0.1:3410:3389"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ── Host containers — one per OS ───────────────────────────────────────────
+
+  host-ubuntu2204:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.ubuntu2204
+    container_name: integ-full-ubuntu2204
+    hostname: prod-ubuntu22-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://identree:3389"
+      LDAP_BASE: "dc=integ,dc=local"
+      SSSD_SCHEMA: "rfc2307"
+      SSSD_SUDO_PROVIDER: "ldap"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-full-shared-secret-abc123456"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+  host-ubuntu2404:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.ubuntu2404
+    container_name: integ-full-ubuntu2404
+    hostname: prod-ubuntu24-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://identree:3389"
+      LDAP_BASE: "dc=integ,dc=local"
+      SSSD_SCHEMA: "rfc2307"
+      SSSD_SUDO_PROVIDER: "ldap"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-full-shared-secret-abc123456"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+  host-debian12:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.debian12
+    container_name: integ-full-debian12
+    hostname: prod-debian12-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://identree:3389"
+      LDAP_BASE: "dc=integ,dc=local"
+      SSSD_SCHEMA: "rfc2307"
+      SSSD_SUDO_PROVIDER: "ldap"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-full-shared-secret-abc123456"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+  host-fedora41:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.fedora41
+    container_name: integ-full-fedora41
+    hostname: prod-fedora41-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://identree:3389"
+      LDAP_BASE: "dc=integ,dc=local"
+      SSSD_SCHEMA: "rfc2307"
+      SSSD_SUDO_PROVIDER: "ldap"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-full-shared-secret-abc123456"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+  host-rocky9:
+    build:
+      context: ../../..
+      dockerfile: test/integration/hosts/Dockerfile.rocky9
+    container_name: integ-full-rocky9
+    hostname: prod-rocky9-01
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_healthy
+    environment:
+      LDAP_URI: "ldap://identree:3389"
+      LDAP_BASE: "dc=integ,dc=local"
+      SSSD_SCHEMA: "rfc2307"
+      SSSD_SUDO_PROVIDER: "ldap"
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "integ-full-shared-secret-abc123456"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  pocketid-data:
+  identree-data:
