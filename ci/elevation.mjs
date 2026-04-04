@@ -139,7 +139,7 @@ const pamProc = spawn("docker", [
   "exec",
   "-e", "PAM_TYPE=auth",
   "-e", "PAM_USER=" + USER,
-  "-e", "SUDO_REASON=restarting nginx before my cat notices prod is down",
+  "-e", "SUDO_REASON=nginx declared war. help me win this battle.",
   "identree-test-client",
   "identree",
 ], { stdio: ["ignore", "pipe", "pipe"] });
@@ -177,7 +177,7 @@ await saveTermShot("elevation-1", [
   [{ c: "dim", t: "    [3] Deployment" }],
   [{ c: "dim", t: "    [4] Other (enter custom reason)" }],
   [{ c: "dim", t: "  Choice [1]: " }, { c: "cmd", t: "4" }],
-  [{ c: "dim", t: "  Enter reason: " }, { c: "cmd", t: "restarting nginx before my cat notices prod is down" }],
+  [{ c: "dim", t: "  Enter reason: " }, { c: "cmd", t: "nginx declared war. help me win this battle." }],
   [],
   [{ c: "dim", t: "  Sudo requires Pocket ID approval." }],
   [{ c: "dim", t: "  Approve at: " }, { c: "url", t: approveURL }],
@@ -245,7 +245,7 @@ await saveTermShot("elevation-3", [
 // ── Create multiple pending challenges for elevation-4 and elevation-5 ────────
 
 console.log("Creating multiple pending challenges for eve...");
-const ch1 = await createApiChallenge(USER, "staging-01",     "Deploy new release");
+const ch1 = await createApiChallenge(USER, HOST,             "nginx declared war. help me win this battle.");
 const ch2 = await createApiChallenge(USER, "data-worker-01", null);
 const ch3 = await createApiChallenge(USER, "prod-db-01",     "Routine maintenance");
 console.log(`  challenge IDs: ${ch1} ${ch2} ${ch3}`);
