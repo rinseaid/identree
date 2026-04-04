@@ -716,6 +716,7 @@ const sharedCSS = `
     .pending-table-row:hover { background: var(--surface-2); }
     .pending-table-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
     .pending-table-actions form { display: contents; }
+    .pending-table-actions .btn { flex: 1; text-align: center; }
     /* Justification choice picker */
     .just-pick { display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
     .just-sel { font-size: 0.75rem; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); cursor: pointer; }
@@ -820,10 +821,8 @@ const pendingBarHTML = `{{if .Pending}}
       </div>
       {{end}}
     </div>
-    <div class="pending-table-footer{{if .IsAdmin}} pending-table--admin{{end}}" style="border-top:1px solid var(--border);border-bottom:none;padding-top:12px;margin-top:4px">
-      {{if .IsAdmin}}<div></div>{{end}}
-      <div></div><div></div><div></div><div></div>
-      <div class="pending-table-actions">
+    <div class="pending-table-footer" style="border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:6px;padding:12px 12px 10px">
+      <div class="pending-table-actions" style="flex:none">
         <form method="POST" action="/api/challenges/approve-all" style="display:inline">
           <input type="hidden" name="username" value="{{.Username}}">
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
