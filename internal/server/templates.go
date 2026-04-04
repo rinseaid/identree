@@ -698,14 +698,14 @@ const sharedCSS = `
       body.has-pending { padding-top: 44px; }
     }
     /* Pending approvals modal */
-    .pending-modal-box { max-width: 920px; }
-    .pending-table { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr minmax(160px,1fr) auto; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
-    .pending-table--admin { grid-template-columns: 0.7fr 1.2fr 1fr 0.7fr minmax(160px,1fr) auto; }
+    .pending-modal-box { width: max-content; min-width: 680px; max-width: min(1200px, 95vw); }
+    .pending-table { display: grid; grid-template-columns: minmax(140px,1.4fr) minmax(120px,1fr) minmax(min-content,0.7fr) minmax(160px,1fr) auto; column-gap: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+    .pending-table--admin { grid-template-columns: minmax(80px,0.7fr) minmax(120px,1.2fr) minmax(100px,1fr) minmax(min-content,0.7fr) minmax(160px,1fr) auto; }
     .pending-table-header { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; background: var(--surface-2); border-bottom: 1px solid var(--border); }
     .pending-table-row { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; border-bottom: 1px solid var(--border); align-items: center; }
-    .pending-table-footer { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr minmax(160px,1fr) auto; gap: 0; padding: 10px 12px; align-items: center; }
-    .pending-table-footer.pending-table--admin { grid-template-columns: 0.7fr 1.2fr 1fr 0.7fr minmax(160px,1fr) auto; }
-    .pending-table-header > .gtcol { padding: 8px 6px; }
+    .pending-table-footer { display: grid; grid-template-columns: minmax(140px,1.4fr) minmax(120px,1fr) minmax(min-content,0.7fr) minmax(160px,1fr) auto; column-gap: 12px; padding: 10px 12px; align-items: center; }
+    .pending-table-footer.pending-table--admin { grid-template-columns: minmax(80px,0.7fr) minmax(120px,1.2fr) minmax(100px,1fr) minmax(min-content,0.7fr) minmax(160px,1fr) auto; }
+    .pending-table-header > .gtcol { padding: 8px 6px; white-space: nowrap; }
     .pending-table-header > .gtcol:first-child { padding-left: 12px; }
     .pending-table-header > .gtcol:last-child { padding-right: 12px; }
     .pending-table-row > .gtcol { padding: 10px 6px; }
