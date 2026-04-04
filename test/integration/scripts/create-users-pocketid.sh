@@ -88,7 +88,11 @@ create_user() {
 create_group() {
     local name="$1"
     echo "    Creating group: ${name}"
-    pocket_post "/user-groups" "{\"name\":\"${name}\"}" >/dev/null 2>&1 || echo "    (${name} may already exist)"
+    # PocketID v2.5+ requires friendlyName alongside name; omitting it returns 400.
+    local resp
+    resp=$(pocket_post "/user-groups" "{\"name\":\"${name}\",\"friendlyName\":\"${name}\"}" 2>&1) || {
+        echo "    WARNING: group creation failed for ${name}: ${resp}" >&2
+    }
 }
 
 add_to_group() {
@@ -117,6 +121,10 @@ sleep 1  # allow PocketID to settle
 DEV_ID=$(get_group_id "developers")
 ADM_ID=$(get_group_id "admins")
 echo "    developers=${DEV_ID:-?}  admins=${ADM_ID:-?}"
+if [ -z "$DEV_ID" ] || [ -z "$ADM_ID" ]; then
+    echo "ERROR: group creation failed — developers or admins group not found in PocketID" >&2
+    exit 1
+fi
 
 # ── Create 25 users ────────────────────────────────────────────────────────────
 # 20 developers (alice–theo) + 5 admins (sam–wendy)
