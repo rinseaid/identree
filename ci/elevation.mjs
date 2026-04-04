@@ -245,7 +245,7 @@ await saveTermShot("elevation-3", [
 // ── Create multiple pending challenges for elevation-4 and elevation-5 ────────
 
 console.log("Creating multiple pending challenges for eve...");
-const ch1 = await createApiChallenge(USER, HOST,             "nginx declared war. help me win this battle.");
+const ch1 = await createApiChallenge(USER, "prod-web-02",    "nginx declared war. help me win this battle.");
 const ch2 = await createApiChallenge(USER, "data-worker-01", null);
 const ch3 = await createApiChallenge(USER, "prod-db-01",     "Routine maintenance");
 console.log(`  challenge IDs: ${ch1} ${ch2} ${ch3}`);
