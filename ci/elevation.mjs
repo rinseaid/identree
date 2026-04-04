@@ -139,7 +139,7 @@ const pamProc = spawn("docker", [
   "exec",
   "-e", "PAM_TYPE=auth",
   "-e", "PAM_USER=" + USER,
-  "-e", "SUDO_REASON=Deployment",
+  "-e", "SUDO_REASON=restarting nginx before my cat notices prod is down",
   "identree-test-client",
   "identree",
 ], { stdio: ["ignore", "pipe", "pipe"] });
@@ -176,7 +176,8 @@ await saveTermShot("elevation-1", [
   [{ c: "dim", t: "    [2] Incident response" }],
   [{ c: "dim", t: "    [3] Deployment" }],
   [{ c: "dim", t: "    [4] Other (enter custom reason)" }],
-  [{ c: "dim", t: "  Choice [1]: " }, { c: "cmd", t: "3" }],
+  [{ c: "dim", t: "  Choice [1]: " }, { c: "cmd", t: "4" }],
+  [{ c: "dim", t: "  Enter reason: " }, { c: "cmd", t: "restarting nginx before my cat notices prod is down" }],
   [],
   [{ c: "dim", t: "  Sudo requires Pocket ID approval." }],
   [{ c: "dim", t: "  Approve at: " }, { c: "url", t: approveURL }],
