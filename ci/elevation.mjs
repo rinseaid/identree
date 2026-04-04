@@ -45,7 +45,7 @@ function renderTermHTML(lines) {
   const rows = lines.map(spans => {
     if (!Array.isArray(spans)) spans = [{ c: "dim", t: String(spans) }];
     return `<div class="line">${spans.map(p => `<span class="${p.c}">${esc(p.t)}</span>`).join("")}</div>`;
-  }).join("\n");
+  }).join("");
 
   return `<!DOCTYPE html>
 <html>
