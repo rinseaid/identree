@@ -43,11 +43,14 @@ SSSD_SUDO_PROVIDER="${SSSD_SUDO_PROVIDER:-ldap}"
 STATIC_SUDO_RULES="${STATIC_SUDO_RULES:-}"
 
 # ── identree client settings ───────────────────────────────────────────────────
-IDENTREE_SERVER_URL="${IDENTREE_SERVER_URL:-http://identree:8090}"
-IDENTREE_SHARED_SECRET="${IDENTREE_SHARED_SECRET:-test-shared-secret-123}"
+# Use export so all variables are visible to `env | grep ^IDENTREE_` when
+# writing client.conf later (bare assignments are shell-local and invisible
+# to env(1) unless the variable was already exported by the parent process).
+export IDENTREE_SERVER_URL="${IDENTREE_SERVER_URL:-http://identree:8090}"
+export IDENTREE_SHARED_SECRET="${IDENTREE_SHARED_SECRET:-test-shared-secret-123}"
 # Token cache requires an OIDC issuer; disable by default in test environments
 # where no issuer is configured. Can be overridden via the docker-compose env.
-IDENTREE_TOKEN_CACHE_ENABLED="${IDENTREE_TOKEN_CACHE_ENABLED:-false}"
+export IDENTREE_TOKEN_CACHE_ENABLED="${IDENTREE_TOKEN_CACHE_ENABLED:-false}"
 
 # ── Write sssd.conf ────────────────────────────────────────────────────────────
 mkdir -p /etc/sssd
