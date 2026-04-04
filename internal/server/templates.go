@@ -741,6 +741,9 @@ const pendingBarHTML = `{{if .Pending}}
       <input type="hidden" name="username" value="{{$.Username}}">
       <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
       <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+      {{if .Reason}}
+      <input type="hidden" name="reason" value="{{.Reason}}">
+      {{else}}
       <span class="just-pick" data-required="{{if $.RequireJustification}}true{{else}}false{{end}}">
         <select class="just-sel">
           {{if not $.RequireJustification}}<option value="">{{call $.T "reason_optional"}}</option>{{end}}
@@ -750,6 +753,7 @@ const pendingBarHTML = `{{if .Pending}}
         <input type="text" class="just-custom" maxlength="500" placeholder="{{call $.T "enter_reason"}}" style="display:none">
         <input type="hidden" class="just-val" name="reason" value="">
       </span>
+      {{end}}
       <button type="submit" class="btn btn-success btn-sm">{{call $.T "approve"}}</button>
     </form>
     {{end}}
@@ -784,11 +788,17 @@ const pendingBarHTML = `{{if .Pending}}
       {{range .Pending}}
       <div class="pending-table-row" role="row">
         {{if $.IsAdmin}}<div class="gtcol" role="cell"><span class="pill user">{{.Username}}</span></div>{{end}}
-        <div class="gtcol" role="cell"><div style="display:flex;flex-direction:column;min-width:0;overflow:hidden;flex:1"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}{{if .Reason}}<span class="challenge-reason" style="font-size:0.75rem;color:var(--text-2);font-style:italic;margin-top:2px">"{{.Reason}}"</span>{{end}}</div></div>
+        <div class="gtcol" role="cell"><div style="display:flex;flex-direction:column;min-width:0;overflow:hidden;flex:1"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}</div></div>
         <div class="gtcol" role="cell"><span class="row-code" style="display:inline">{{.Code}}</span></div>
         <div class="gtcol" role="cell"><span style="font-size:0.8125rem;color:var(--text-2)">{{.ExpiresIn}}</span></div>
         <div class="gtcol" role="cell">
           {{if or (not .AdminRequired) $.IsAdmin}}
+          {{if .Reason}}
+          <span class="just-pick" data-required="false">
+            <input type="hidden" class="just-val" value="{{.Reason}}">
+            <span style="font-size:0.8125rem;color:var(--text-2);font-style:italic">"{{.Reason}}"</span>
+          </span>
+          {{else}}
           <span class="just-pick" data-required="{{if $.RequireJustification}}true{{else}}false{{end}}">
             <select class="just-sel">
               {{if not $.RequireJustification}}<option value="">{{call $.T "reason_optional"}}</option>{{end}}
@@ -798,6 +808,7 @@ const pendingBarHTML = `{{if .Pending}}
             <input type="text" class="just-custom" maxlength="500" placeholder="{{call $.T "enter_reason"}}" style="display:none">
             <input type="hidden" class="just-val" value="">
           </span>
+          {{end}}
           {{end}}
         </div>
         <div class="gtcol pending-table-actions" role="cell">
