@@ -137,6 +137,7 @@ const pamProc = spawn("docker", [
   "exec",
   "-e", "PAM_TYPE=auth",
   "-e", "PAM_USER=" + USER,
+  "-e", "SUDO_REASON=Deployment",
   "identree-test-client",
   "identree",
 ], { stdio: ["ignore", "pipe", "pipe"] });
@@ -165,9 +166,16 @@ console.log(`  challenge created — code: ${userCode}`);
 
 // ── elevation-1: terminal — waiting for approval ──────────────────────────────
 
-console.log("elevation-1 (terminal — waiting)...");
+console.log("elevation-1 (terminal — justification prompt + waiting)...");
 await saveTermShot("elevation-1", [
   cmdLine(USER, HOST, CMD),
+  [{ c: "dim", t: "  Justification required. Select a reason:" }],
+  [{ c: "dim", t: "    [1] Routine maintenance" }],
+  [{ c: "dim", t: "    [2] Incident response" }],
+  [{ c: "dim", t: "    [3] Deployment" }],
+  [{ c: "dim", t: "    [4] Other (enter custom reason)" }],
+  [{ c: "dim", t: "  Choice [1]: " }, { c: "cmd", t: "3" }],
+  [],
   [{ c: "dim", t: "  Sudo requires Pocket ID approval." }],
   [{ c: "dim", t: "  Approve at: " }, { c: "url", t: approveURL }],
   [{ c: "dim", t: "  Code: " }, { c: "code", t: userCode }, { c: "dim", t: " (notification sent)" }],
