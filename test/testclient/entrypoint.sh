@@ -45,6 +45,9 @@ STATIC_SUDO_RULES="${STATIC_SUDO_RULES:-}"
 # ── identree client settings ───────────────────────────────────────────────────
 IDENTREE_SERVER_URL="${IDENTREE_SERVER_URL:-http://identree:8090}"
 IDENTREE_SHARED_SECRET="${IDENTREE_SHARED_SECRET:-test-shared-secret-123}"
+# Token cache requires an OIDC issuer; disable by default in test environments
+# where no issuer is configured. Can be overridden via the docker-compose env.
+IDENTREE_TOKEN_CACHE_ENABLED="${IDENTREE_TOKEN_CACHE_ENABLED:-false}"
 
 # ── Write sssd.conf ────────────────────────────────────────────────────────────
 mkdir -p /etc/sssd
@@ -154,12 +157,10 @@ fi
 
 # ── Write identree client config ───────────────────────────────────────────────
 mkdir -p /etc/identree
-printf 'IDENTREE_SERVER_URL=%s\nIDENTREE_SHARED_SECRET=%s\n' \
-    "$IDENTREE_SERVER_URL" "$IDENTREE_SHARED_SECRET" > /etc/identree/client.conf
-# Persist optional flags so they survive stripSensitiveEnv() (which strips
-# all IDENTREE_* from the process environment before loading the config file).
-[ -n "$IDENTREE_INSECURE_ALLOW_HTTP_ESCROW" ] && \
-    printf 'IDENTREE_INSECURE_ALLOW_HTTP_ESCROW=%s\n' "$IDENTREE_INSECURE_ALLOW_HTTP_ESCROW" >> /etc/identree/client.conf
+# Write all IDENTREE_* settings to the config file so they survive
+# stripSensitiveEnv() (which strips all IDENTREE_* from the process
+# environment before LoadClientConfig reads them).
+env | grep '^IDENTREE_' | sort > /etc/identree/client.conf
 chmod 600 /etc/identree/client.conf
 
 # Token cache directory for identree
