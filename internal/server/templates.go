@@ -417,13 +417,11 @@ const sharedCSS = `
     .btn-primary:hover { background: var(--primary-h); border-color: var(--primary-h); color: var(--primary-fg); }
     .btn-success { background: var(--success); border-color: var(--success); color: #fff; }
     .btn-success:hover { opacity: 0.88; color: #fff; }
-    .btn-danger { border-color: var(--danger-border); color: var(--danger); }
-    .btn-danger:hover { background: var(--danger-bg); border-color: var(--danger); }
+    .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+    .btn-danger:hover { opacity: 0.88; color: #fff; }
     .btn-sm { padding: 6px 12px; font-size: 0.8125rem; border-radius: 7px; min-height: 30px; }
     .btn-ghost { background: none; border-color: transparent; color: var(--text-2); }
     .btn-ghost:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); }
-    .btn-ghost.btn-danger { color: var(--danger); border-color: transparent; }
-    .btn-ghost.btn-danger:hover { background: var(--danger-bg); border-color: transparent; }
     /* Segment button */
     .seg-btn { display: inline-flex; border-radius: 8px; overflow: hidden; border: 1px solid var(--primary); flex-shrink: 0; }
     .seg-btn button, .seg-btn a {
@@ -702,12 +700,12 @@ const sharedCSS = `
     /* Pending approvals modal */
     .pending-modal-box { max-width: 920px; }
     .pending-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
-    .pending-table-header { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr auto; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .pending-table-row { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr auto; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
-    .pending-table-footer { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr auto; gap: 0; padding: 10px 12px; align-items: center; }
+    .pending-table-header { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr minmax(160px,1fr) auto; gap: 0; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    .pending-table-row { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr minmax(160px,1fr) auto; gap: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .pending-table-footer { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr minmax(160px,1fr) auto; gap: 0; padding: 10px 12px; align-items: center; }
     .pending-table--admin .pending-table-header,
     .pending-table--admin .pending-table-row,
-    .pending-table--admin .pending-table-footer { grid-template-columns: 0.7fr 1.2fr 1fr 0.7fr auto; }
+    .pending-table--admin .pending-table-footer { grid-template-columns: 0.7fr 1.2fr 1fr 0.7fr minmax(160px,1fr) auto; }
     .row-code { white-space: nowrap; }
     .pending-table-row:last-child { border-bottom: none; }
     .pending-table-row:hover { background: var(--surface-2); }
@@ -755,7 +753,7 @@ const pendingBarHTML = `{{if .Pending}}
       <input type="hidden" name="username" value="{{$.Username}}">
       <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
       <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-      <button type="submit" class="btn btn-ghost btn-danger btn-sm saction-confirm" data-confirm="{{call $.T "confirm_reject_all"}}">{{call $.T "reject"}}</button>
+      <button type="submit" class="btn btn-danger btn-sm saction-confirm" data-confirm="{{call $.T "confirm_reject_all"}}">{{call $.T "reject"}}</button>
     </form>
   </div>
   {{end}}{{else}}
@@ -775,6 +773,7 @@ const pendingBarHTML = `{{if .Pending}}
         <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "host"}}</span></div>
         <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "code"}}</span></div>
         <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "time_remaining"}}</span></div>
+        <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "reason"}}</span></div>
         <div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "action"}}</span></div>
       </div>
       {{range .Pending}}
@@ -783,9 +782,9 @@ const pendingBarHTML = `{{if .Pending}}
         <div class="gtcol" role="cell"><span class="row-host" style="font-size:0.875rem">{{.Hostname}}</span>{{if .AdminRequired}}&nbsp;<span class="admin-req">&#x1F512; {{call $.T "admin_approval_required"}}</span>{{end}}{{if .Reason}}<span class="challenge-reason" style="display:block;font-size:0.75rem;color:var(--text-2);font-style:italic;margin-top:2px">"{{.Reason}}"</span>{{end}}</div>
         <div class="gtcol" role="cell"><span class="row-code" style="display:inline">{{.Code}}</span></div>
         <div class="gtcol" role="cell"><span style="font-size:0.8125rem;color:var(--text-2)">{{.ExpiresIn}}</span></div>
-        <div class="gtcol pending-table-actions" role="cell">
+        <div class="gtcol" role="cell">
           {{if or (not .AdminRequired) $.IsAdmin}}
-          <span class="just-pick" data-required="{{if $.RequireJustification}}true{{else}}false{{end}}" style="margin-right:4px">
+          <span class="just-pick" data-required="{{if $.RequireJustification}}true{{else}}false{{end}}">
             <select class="just-sel">
               {{if not $.RequireJustification}}<option value="">{{call $.T "reason_optional"}}</option>{{end}}
               {{range $.JustificationChoices}}<option value="{{.}}">{{.}}</option>{{end}}
@@ -794,16 +793,20 @@ const pendingBarHTML = `{{if .Pending}}
             <input type="text" class="just-custom" maxlength="500" placeholder="{{call $.T "enter_reason"}}" style="display:none">
             <input type="hidden" class="just-val" value="">
           </span>
+          {{end}}
+        </div>
+        <div class="gtcol pending-table-actions" role="cell">
+          {{if or (not .AdminRequired) $.IsAdmin}}
           <button type="button" class="btn btn-success btn-sm pending-row-approve" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "approve"}}</button>
           {{end}}
-          <button type="button" class="btn btn-ghost btn-danger btn-sm pending-row-reject" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "reject"}}</button>
+          <button type="button" class="btn btn-danger btn-sm pending-row-reject" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "reject"}}</button>
         </div>
       </div>
       {{end}}
     </div>
     <div class="pending-table-footer{{if .IsAdmin}} pending-table--admin{{end}}" style="border-top:1px solid var(--border);border-bottom:none;padding-top:12px;margin-top:4px">
       {{if .IsAdmin}}<div></div>{{end}}
-      <div></div><div></div><div></div>
+      <div></div><div></div><div></div><div></div>
       <div class="pending-table-actions">
         <form method="POST" action="/api/challenges/approve-all" style="display:inline">
           <input type="hidden" name="username" value="{{.Username}}">
@@ -815,7 +818,7 @@ const pendingBarHTML = `{{if .Pending}}
           <input type="hidden" name="username" value="{{.Username}}">
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
           <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
-          <button type="submit" class="btn btn-ghost btn-danger btn-sm saction-confirm" data-confirm="{{call .T "confirm_reject_all"}}">{{call .T "reject_all"}}</button>
+          <button type="submit" class="btn btn-danger btn-sm saction-confirm" data-confirm="{{call .T "confirm_reject_all"}}">{{call .T "reject_all"}}</button>
         </form>
       </div>
     </div>

@@ -391,5 +391,6 @@
   "custom_reason": "Custom...",
   "enter_reason": "Enter reason...",
   "cfg_require_justification": "Require Justification",
-  "cfg_justification_choices": "Justification Choices"
+  "cfg_justification_choices": "Justification Choices",
+  "reason": "原因"
 }
