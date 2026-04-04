@@ -219,6 +219,15 @@ Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 | `IDENTREE_GRACE_PERIOD` | `0` | Skip re-auth if user approved on this host within this window |
 | `IDENTREE_ONE_TAP_MAX_AGE` | `24h` | Max PocketID session age for silent one-tap approval |
 
+#### Justification
+
+| Variable | Default | Description |
+|---|---|---|
+| `IDENTREE_REQUIRE_JUSTIFICATION` | `false` | Require a written justification for every elevation |
+| `IDENTREE_JUSTIFICATION_CHOICES` | — | Comma-separated preset choices (defaults to: Routine maintenance, Incident response, Deployment) |
+
+See [docs/justification.md](docs/justification.md) for full details including the terminal prompt flow and `SUDO_REASON` env var.
+
 #### Admin access
 
 | Variable | Default | Description |
