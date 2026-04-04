@@ -593,6 +593,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	justChoices, requireJust := s.justificationTemplateData()
 	w.Header().Set("Content-Type", "text/html")
 	if err := dashboardTmpl.Execute(w, map[string]interface{}{
 		"Username":          username,
@@ -622,6 +623,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"DefaultPageSize":     defaultPageSize,
 		"Durations":           elevateDurations,
 		"PocketIDUnavailable": pocketIDUnavailable,
+		"JustificationChoices": justChoices,
+		"RequireJustification": requireJust,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
 	}
@@ -931,6 +934,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 
 	csrfTs := strconv.FormatInt(time.Now().Unix(), 10)
 	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
+	accessJustChoices, accessRequireJust := s.justificationTemplateData()
 
 	// Elevate duration options clamped to GracePeriod.
 	var elevateDurations []durationOption
@@ -973,8 +977,10 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		"BridgeMode":      s.isBridgeMode(),
 		"DefaultPageSize": defaultPageSize,
 		"Durations":       elevateDurations,
-		"FilterUser":      accessFilterUser,
-		"Pending":         s.pendingViewsFor(username, lang, isAdmin),
+		"FilterUser":           accessFilterUser,
+		"Pending":              s.pendingViewsFor(username, lang, isAdmin),
+		"JustificationChoices": accessJustChoices,
+		"RequireJustification": accessRequireJust,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
 	}
@@ -1528,6 +1534,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 
 	historyCSRFTs := strconv.FormatInt(time.Now().Unix(), 10)
 	historyCSRFToken := computeCSRFToken(s.hmacBase(), username, historyCSRFTs)
+	histJustChoices, histRequireJust := s.justificationTemplateData()
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := historyTmpl.Execute(w, map[string]interface{}{
@@ -1566,9 +1573,11 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"AdminTab":        "",
 		"BridgeMode":      s.isBridgeMode(),
 		"DefaultPageSize": defaultPageSize,
-		"CSRFToken":       historyCSRFToken,
-		"CSRFTs":          historyCSRFTs,
-		"Pending":         s.pendingViewsFor(username, lang, isAdmin),
+		"CSRFToken":            historyCSRFToken,
+		"CSRFTs":               historyCSRFTs,
+		"Pending":              s.pendingViewsFor(username, lang, isAdmin),
+		"JustificationChoices": histJustChoices,
+		"RequireJustification": histRequireJust,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
 	}

@@ -116,7 +116,9 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 		"Languages":  supportedLanguages,
 		"IsAdmin":    true,
 		"SudoRules":  s.sudoRules.Rules(),
-		"Pending":    s.buildAllPendingViews(lang),
+		"Pending":              s.buildAllPendingViews(lang),
+		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
+		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"CSRFToken":  csrfToken,
 		"CSRFTs":     csrfTs,
 	}); err != nil {

@@ -1,6 +1,7 @@
 package pam
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -117,6 +118,16 @@ type challengeResponse struct {
 	ClientConfig           *clientConfigResponse  `json:"client_config,omitempty"`
 }
 
+// justificationRequiredError is returned by createChallenge when the server
+// requires a justification (HTTP 422 with error=justification_required).
+type justificationRequiredError struct {
+	Choices []string
+}
+
+func (e *justificationRequiredError) Error() string {
+	return "justification_required"
+}
+
 // pollResponse is the response from GET /api/challenge/{id}.
 type pollResponse struct {
 	Status         string `json:"status"`
@@ -200,8 +211,19 @@ func (p *PAMClient) Authenticate(username string) error {
 		// Cache miss, invalid, or revoked — fall through to device flow
 	}
 
-	// 1. Create challenge
-	challenge, err := p.createChallenge(username)
+	// 1. Create challenge (initially without a reason; retry if server requires justification)
+	challenge, err := p.createChallenge(username, "")
+	if err != nil {
+		var justErr *justificationRequiredError
+		if errors.As(err, &justErr) {
+			// Server requires a justification — prompt user interactively.
+			reason, promptErr := p.promptJustification(t, justErr.Choices)
+			if promptErr != nil {
+				return fmt.Errorf("justification required — set SUDO_REASON=<reason> before running sudo")
+			}
+			challenge, err = p.createChallenge(username, reason)
+		}
+	}
 	if err != nil {
 		// Break-glass fallback: if the server is unreachable and a break-glass
 		// hash file exists, fall back to local password authentication.
@@ -556,10 +578,13 @@ func (p *PAMClient) verifyStatusToken(challengeID, username, status, token, rota
 	return hmac.Equal([]byte(expected), []byte(token))
 }
 
-func (p *PAMClient) createChallenge(username string) (*challengeResponse, error) {
+func (p *PAMClient) createChallenge(username, reason string) (*challengeResponse, error) {
 	payload := map[string]string{"username": username}
 	if p.hostname != "" {
 		payload["hostname"] = p.hostname
+	}
+	if reason != "" {
+		payload["reason"] = reason
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, p.cfg.ServerURL+"/api/challenge", bytes.NewReader(body))
@@ -577,6 +602,18 @@ func (p *PAMClient) createChallenge(username string) (*challengeResponse, error)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		// 422: server requires a justification — parse choices and return typed error
+		var errBody struct {
+			Error   string   `json:"error"`
+			Choices []string `json:"justification_choices"`
+		}
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&errBody)
+		if errBody.Error == "justification_required" {
+			return nil, &justificationRequiredError{Choices: errBody.Choices}
+		}
+		return nil, &serverHTTPError{StatusCode: resp.StatusCode, Body: "justification required"}
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		// Limit how much of the error response we read and sanitize for terminal safety
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -667,4 +704,73 @@ func formatDuration(t func(string) string, d time.Duration) string {
 		return fmt.Sprintf("%d%s", m, mSuffix)
 	}
 	return fmt.Sprintf("%ds", int(d.Seconds()))
+}
+
+// promptJustification presents the justification choices to the user on the
+// terminal and reads their selection from stdin. Returns the chosen reason.
+// Falls back to reading SUDO_REASON from the environment if stdin is not a TTY
+// or if reading fails.
+func (p *PAMClient) promptJustification(t func(string) string, choices []string) (string, error) {
+	// First check for the env var shortcut — allows non-interactive use:
+	//   SUDO_REASON="incident response" sudo systemctl restart nginx
+	if env := strings.TrimSpace(os.Getenv("SUDO_REASON")); env != "" {
+		return env, nil
+	}
+
+	if len(choices) == 0 {
+		// No choices available — accept free-form from env only.
+		return "", fmt.Errorf("no justification choices available")
+	}
+
+	// Print choices to the terminal (stdout is piped to PAM conversation).
+	fmt.Fprintln(MessageWriter, "  Justification required. Select a reason:")
+	for i, c := range choices {
+		fmt.Fprintf(MessageWriter, "    [%d] %s\n", i+1, c)
+	}
+	fmt.Fprintf(MessageWriter, "    [%d] Other (enter custom reason)\n", len(choices)+1)
+	fmt.Fprint(MessageWriter, "  Choice [1]: ")
+
+	// Try to read from stdin. pam_exec.so inherits the terminal's stdin,
+	// so this works when sudo is run interactively.
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("could not read justification: %w", err)
+	}
+	line = strings.TrimSpace(line)
+
+	if line == "" {
+		// Default to first choice
+		if len(choices) > 0 {
+			return choices[0], nil
+		}
+		return "", fmt.Errorf("no selection made")
+	}
+
+	// Parse as number
+	idx := 0
+	if _, scanErr := fmt.Sscanf(line, "%d", &idx); scanErr == nil {
+		if idx >= 1 && idx <= len(choices) {
+			return choices[idx-1], nil
+		}
+		if idx == len(choices)+1 {
+			// Custom
+			fmt.Fprint(MessageWriter, "  Enter reason: ")
+			custom, custErr := reader.ReadString('\n')
+			if custErr != nil {
+				return "", fmt.Errorf("could not read custom reason: %w", custErr)
+			}
+			custom = strings.TrimSpace(custom)
+			if custom == "" {
+				return "", fmt.Errorf("empty reason provided")
+			}
+			return custom, nil
+		}
+	}
+
+	// Treat non-numeric input as a custom reason (convenience for scripted calls)
+	if len(line) > 0 {
+		return line, nil
+	}
+	return "", fmt.Errorf("invalid selection")
 }

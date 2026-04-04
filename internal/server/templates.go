@@ -713,6 +713,11 @@ const sharedCSS = `
     .pending-table-row:hover { background: var(--surface-2); }
     .pending-table-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
     .pending-table-actions form { display: contents; }
+    /* Justification choice picker */
+    .just-pick { display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+    .just-sel { font-size: 0.75rem; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); max-width: 170px; cursor: pointer; }
+    .just-custom { font-size: 0.75rem; padding: 3px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); width: 130px; }
+    .just-err { color: var(--danger, #c0392b); font-size: 0.75rem; display: block; margin-top: 2px; }
 `
 
 // pendingBarHTML is the pending-approval notification bar embedded in every
@@ -728,12 +733,20 @@ const pendingBarHTML = `{{if .Pending}}
   </span>
   <div class="pbar-actions">
     {{if or (not .AdminRequired) $.IsAdmin}}
-    <form method="POST" action="/api/challenges/approve" style="display:flex;align-items:center;gap:4px">
+    <form method="POST" action="/api/challenges/approve" style="display:flex;align-items:center;gap:4px" data-has-just="1">
       <input type="hidden" name="challenge_id" value="{{.ID}}">
       <input type="hidden" name="username" value="{{$.Username}}">
       <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
       <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-      <input type="text" name="reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:120px">
+      <span class="just-pick" data-required="{{if $.RequireJustification}}true{{else}}false{{end}}">
+        <select class="just-sel">
+          {{if not $.RequireJustification}}<option value="">{{call $.T "reason_optional"}}</option>{{end}}
+          {{range $.JustificationChoices}}<option value="{{.}}">{{.}}</option>{{end}}
+          <option value="__custom__">{{call $.T "custom_reason"}}</option>
+        </select>
+        <input type="text" class="just-custom" maxlength="500" placeholder="{{call $.T "enter_reason"}}" style="display:none">
+        <input type="hidden" class="just-val" name="reason" value="">
+      </span>
       <button type="submit" class="btn btn-success btn-sm">{{call $.T "approve"}}</button>
     </form>
     {{end}}
@@ -772,7 +785,15 @@ const pendingBarHTML = `{{if .Pending}}
         <div class="gtcol" role="cell"><span style="font-size:0.8125rem;color:var(--text-2)">{{.ExpiresIn}}</span></div>
         <div class="gtcol pending-table-actions" role="cell">
           {{if or (not .AdminRequired) $.IsAdmin}}
-          <input type="text" class="pending-row-reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:140px;margin-right:4px">
+          <span class="just-pick" data-required="{{if $.RequireJustification}}true{{else}}false{{end}}" style="margin-right:4px">
+            <select class="just-sel">
+              {{if not $.RequireJustification}}<option value="">{{call $.T "reason_optional"}}</option>{{end}}
+              {{range $.JustificationChoices}}<option value="{{.}}">{{.}}</option>{{end}}
+              <option value="__custom__">{{call $.T "custom_reason"}}</option>
+            </select>
+            <input type="text" class="just-custom" maxlength="500" placeholder="{{call $.T "enter_reason"}}" style="display:none">
+            <input type="hidden" class="just-val" value="">
+          </span>
           <button type="button" class="btn btn-success btn-sm pending-row-approve" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "approve"}}</button>
           {{end}}
           <button type="button" class="btn btn-ghost btn-danger btn-sm pending-row-reject" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "reject"}}</button>
@@ -827,17 +848,73 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=docum
 document.querySelectorAll('.saction-confirm').forEach(function(btn){
   btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
 });
+// Justification picker: sync hidden value on select change, reveal custom input.
+(function(){
+  function initPicker(pick){
+    var sel=pick.querySelector('.just-sel');
+    var custom=pick.querySelector('.just-custom');
+    var hidden=pick.querySelector('.just-val');
+    if(!sel)return;
+    function sync(){
+      if(sel.value==='__custom__'){
+        if(custom)custom.style.display='';
+        if(hidden)hidden.value=custom?custom.value.trim():'';
+      }else{
+        if(custom)custom.style.display='none';
+        if(hidden)hidden.value=sel.value;
+      }
+    }
+    sel.addEventListener('change',sync);
+    if(custom)custom.addEventListener('input',function(){if(hidden&&sel.value==='__custom__')hidden.value=custom.value.trim();});
+    sync();
+  }
+  document.querySelectorAll('.just-pick').forEach(initPicker);
+  // Re-init pickers inside the modal on modal open (pickers are always present in DOM)
+  var origOpen=window.openPendingModal;
+  if(origOpen)window.openPendingModal=function(){origOpen();document.querySelectorAll('#pending-modal .just-pick').forEach(initPicker);};
+})();
+// Validate justification on form submit for forms with data-has-just attribute.
+document.querySelectorAll('form[data-has-just]').forEach(function(form){
+  form.addEventListener('submit',function(e){
+    var pick=form.querySelector('.just-pick');
+    if(!pick)return;
+    var sel=pick.querySelector('.just-sel');
+    var custom=pick.querySelector('.just-custom');
+    var hidden=pick.querySelector('.just-val');
+    var val=sel&&sel.value==='__custom__'?(custom?custom.value.trim():''):(sel?sel.value:'');
+    if(hidden)hidden.value=val;
+    if(pick.dataset.required==='true'&&!val){
+      e.preventDefault();
+      var err=pick.querySelector('.just-err');
+      if(!err){err=document.createElement('span');err.className='just-err';pick.appendChild(err);}
+      err.textContent='Please select a justification.';
+    }
+  });
+});
 // Per-row approve/reject in modal: fetch, remove row, close modal if empty.
 document.querySelectorAll('.pending-row-approve,.pending-row-reject').forEach(function(btn){
   btn.addEventListener('click',function(){
     var row=btn.closest('.pending-table-row');
     var action=btn.classList.contains('pending-row-approve')?'approve':'reject';
-    var reasonInput=row&&row.querySelector('.pending-row-reason');
+    var pick=row&&row.querySelector('.just-pick');
+    var reason='';
+    if(pick){
+      var sel=pick.querySelector('.just-sel');
+      var custom=pick.querySelector('.just-custom');
+      var hidden=pick.querySelector('.just-val');
+      reason=hidden?hidden.value:(sel&&sel.value!=='__custom__'?sel.value:(custom?custom.value.trim():''));
+    }
+    if(pick&&pick.dataset.required==='true'&&!reason&&action==='approve'){
+      var err=pick.querySelector('.just-err');
+      if(!err){err=document.createElement('span');err.className='just-err';pick.appendChild(err);}
+      err.textContent='Please select a justification.';
+      return;
+    }
     var body='challenge_id='+encodeURIComponent(btn.dataset.id)
       +'&username='+encodeURIComponent(btn.dataset.username)
       +'&csrf_token='+encodeURIComponent(btn.dataset.csrf)
       +'&csrf_ts='+encodeURIComponent(btn.dataset.csrfTs)
-      +(reasonInput?'&reason='+encodeURIComponent(reasonInput.value):'');
+      +(reason?'&reason='+encodeURIComponent(reason):'');
     fetch('/api/challenges/'+action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
       .then(function(){
         if(row)row.remove();

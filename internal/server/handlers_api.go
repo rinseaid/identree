@@ -29,6 +29,29 @@ import (
 	"github.com/rinseaid/identree/internal/notify"
 )
 
+// sanitizeReason trims whitespace, truncates to 500 runes, rejects control
+// characters, and returns the cleaned reason. Returns ("", false) on invalid input.
+func sanitizeReason(r string) (string, bool) {
+	r = strings.TrimSpace(r)
+	const maxLen = 500
+	if utf8.RuneCountInString(r) > maxLen {
+		count := 0
+		for i := range r {
+			if count == maxLen {
+				r = r[:i]
+				break
+			}
+			count++
+		}
+	}
+	for _, ch := range r {
+		if ch < 0x20 && ch != '\t' {
+			return "", false
+		}
+	}
+	return r, true
+}
+
 // apiError writes a JSON error response {"error": "..."} for /api/ routes.
 func apiError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -261,25 +284,28 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 
 	// Sanitize reason: strip whitespace, truncate to 500 runes, reject control chars.
 	if req.Reason != "" {
-		req.Reason = strings.TrimSpace(req.Reason)
-		const maxReasonLen = 500
-		if utf8.RuneCountInString(req.Reason) > maxReasonLen {
-			count := 0
-			for i := range req.Reason {
-				if count == maxReasonLen {
-					req.Reason = req.Reason[:i]
-					break
-				}
-				count++
-			}
+		clean, ok := sanitizeReason(req.Reason)
+		if !ok {
+			apiError(w, http.StatusBadRequest, "reason contains invalid characters")
+			return
 		}
-		// Reject reasons containing control characters to prevent log injection.
-		for _, r := range req.Reason {
-			if r < 0x20 && r != '\t' {
-				apiError(w, http.StatusBadRequest, "reason contains invalid characters")
-				return
-			}
-		}
+		req.Reason = clean
+	}
+
+	// If justification is required and none was provided, return 422 with the
+	// available choices so the client can prompt the user and retry.
+	s.cfgMu.RLock()
+	requireJust := s.cfg.RequireJustification
+	justChoices := s.justificationChoices()
+	s.cfgMu.RUnlock()
+	if requireJust && req.Reason == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":                  "justification_required",
+			"justification_choices":  justChoices,
+		})
+		return
 	}
 
 	// Authenticate: try global shared secret, then per-host secret from registry.

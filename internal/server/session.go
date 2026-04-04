@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/randutil"
 )
 
@@ -164,6 +165,25 @@ func (s *Server) requiresAdminApproval(hostname string) bool {
 		}
 	}
 	return false
+}
+
+// justificationChoices returns the server-configured justification choices,
+// falling back to config.DefaultJustificationChoices when none are configured.
+// Must be called with cfgMu already held by the caller, OR after a snapshot.
+func (s *Server) justificationChoices() []string {
+	if len(s.cfg.JustificationChoices) > 0 {
+		return s.cfg.JustificationChoices
+	}
+	return config.DefaultJustificationChoices
+}
+
+// justificationTemplateData returns the current justification choices and
+// required flag for embedding in template data maps. Safe to call at any time.
+func (s *Server) justificationTemplateData() (choices []string, required bool) {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	choices = s.justificationChoices()
+	return choices, s.cfg.RequireJustification
 }
 
 // setFlashCookie sets a short-lived cookie containing a flash message.

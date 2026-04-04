@@ -93,6 +93,17 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Collect and validate the justification from the approval form.
+	// When RequireJustification is set, block the approval if no reason is given.
+	approvalReason, _ := sanitizeReason(r.FormValue("reason"))
+	s.cfgMu.RLock()
+	requireJust := s.cfg.RequireJustification
+	s.cfgMu.RUnlock()
+	if requireJust && approvalReason == "" {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "justification_required")
+		return
+	}
+
 	// Approve the challenge
 	if err := s.store.Approve(challengeID, username); err != nil {
 		if errors.Is(err, challpkg.ErrDiskWriteFailed) {
@@ -113,7 +124,13 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	if hostname == "" {
 		hostname = "(unknown)"
 	}
-	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, username, challenge.Reason)
+	// Log the approval reason (from the form); fall back to the request reason
+	// when no approval reason was provided (RequireJustification is off).
+	logReason := approvalReason
+	if logReason == "" {
+		logReason = challenge.Reason
+	}
+	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, username, logReason)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "challenge_approved",
@@ -121,7 +138,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		Hostname:  hostname,
 		UserCode:  challenge.UserCode,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Reason:    challenge.Reason,
+		Reason:    logReason,
 		Actor:     username,
 	})
 
@@ -247,6 +264,8 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		csrfTs := strconv.FormatInt(time.Now().Unix(), 10)
 		csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
+		justChoices, requireJust := s.justificationTemplateData()
+
 		w.Header().Set("Content-Type", "text/html")
 		lang := detectLanguage(r)
 		t := T(lang)
@@ -258,6 +277,70 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 			themeClass = ` class="theme-light"`
 		}
 		actionURL := s.baseURL + "/api/onetap/" + template.HTMLEscapeString(token)
+
+		// Build request reason display (if any)
+		requestReasonHTML := ""
+		if challenge.Reason != "" {
+			requestReasonHTML = `<p style="margin:12px 0 0;font-size:0.875rem;color:var(--text-2)"><em>` +
+				template.HTMLEscapeString(t("reason_optional")) + `:</em> ` +
+				template.HTMLEscapeString(challenge.Reason) + `</p>`
+		}
+
+		// Build justification picker HTML when RequireJustification is enabled
+		// or when we want to give the approver a chance to pick a reason.
+		var justPickerHTML string
+		if requireJust || challenge.Reason == "" {
+			reqAttr := ""
+			reqLabel := t("reason_optional")
+			if requireJust {
+				reqAttr = ` data-required="true"`
+				reqLabel = t("reason_optional") // will be overridden client-side
+			}
+			var optionsHTML strings.Builder
+			if !requireJust {
+				optionsHTML.WriteString(`<option value="">` + template.HTMLEscapeString(t("reason_optional")) + `</option>`)
+			}
+			for _, c := range justChoices {
+				optionsHTML.WriteString(`<option value="` + template.HTMLEscapeString(c) + `">` + template.HTMLEscapeString(c) + `</option>`)
+			}
+			optionsHTML.WriteString(`<option value="__custom__">` + template.HTMLEscapeString("Custom...") + `</option>`)
+			justPickerHTML = `<div class="just-pick"` + reqAttr + ` style="margin-top:16px;display:flex;flex-direction:column;gap:6px;text-align:left">
+  <label style="font-size:0.875rem;font-weight:600;color:var(--text)">` + template.HTMLEscapeString(reqLabel) + `</label>
+  <select class="just-sel" style="font-size:0.875rem;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%">` +
+				optionsHTML.String() + `</select>
+  <input type="text" class="just-custom" maxlength="500" placeholder="` + template.HTMLEscapeString("Enter reason...") + `" style="display:none;font-size:0.875rem;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%">
+  <input type="hidden" class="just-val" name="reason" value="">
+</div>
+<script>
+(function(){
+  var pick=document.querySelector('.just-pick');
+  if(!pick)return;
+  var sel=pick.querySelector('.just-sel');
+  var custom=pick.querySelector('.just-custom');
+  var hidden=pick.querySelector('.just-val');
+  if(sel){
+    sel.addEventListener('change',function(){
+      if(sel.value==='__custom__'){if(custom)custom.style.display='';if(hidden)hidden.value='';}
+      else{if(custom)custom.style.display='none';if(hidden)hidden.value=sel.value;}
+    });
+    if(hidden&&sel.value!=='__custom__')hidden.value=sel.value;
+  }
+  if(custom)custom.addEventListener('input',function(){if(hidden)hidden.value=custom.value.trim();});
+  var form=pick.closest('form');
+  if(form)form.addEventListener('submit',function(e){
+    var val=sel&&sel.value==='__custom__'?(custom?custom.value.trim():''):(sel?sel.value:'');
+    if(hidden)hidden.value=val;
+    if(pick.dataset.required==='true'&&!val){
+      e.preventDefault();
+      var err=pick.querySelector('.just-err');
+      if(!err){err=document.createElement('span');err.className='just-err';err.style.cssText='color:var(--danger,#c0392b);font-size:0.8125rem';pick.appendChild(err);}
+      err.textContent='Please select a justification.';
+    }
+  });
+})();
+</script>`
+		}
+
 		fmt.Fprintf(w, `<!DOCTYPE html>
 <html lang="%s"%s>
 <head>
@@ -267,7 +350,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
   <style>%s
     .icon-pending { background: var(--warn-bg,#fff8e1); border: 2px solid var(--warn-border,#f9a825); color: var(--warn,#f57f17); }
     h2 { color: var(--text); }
-    .btn-approve { display:inline-block; margin-top:20px; padding:10px 28px; background:var(--success,#2e7d32); color:#fff; border:none; border-radius:6px; font-size:1rem; font-weight:600; cursor:pointer; }
+    .btn-approve { display:inline-block; margin-top:20px; padding:10px 28px; background:var(--success,#2e7d32); color:#fff; border:none; border-radius:6px; font-size:1rem; font-weight:600; cursor:pointer; width:100%%; }
     .btn-approve:hover { opacity:0.88; }
   </style>
 </head>
@@ -275,11 +358,13 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
   <div class="card">
     <div class="icon icon-pending" aria-hidden="true">&#x3f;</div>
     <h2>Approve sudo access for %s on %s?</h2>
+    %s
     <form method="POST" action="%s">
       <input type="hidden" name="username" value="%s">
       <input type="hidden" name="csrf_token" value="%s">
       <input type="hidden" name="csrf_ts" value="%s">
       <input type="hidden" name="token" value="%s">
+      %s
       <button type="submit" class="btn-approve">%s</button>
     </form>
     <p style="margin-top:16px"><a href="/" style="color:var(--primary);text-decoration:underline">%s</a></p>
@@ -287,11 +372,13 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`, lang, themeClass, template.HTMLEscapeString(t("terminal_approved")), sharedCSS,
 			template.HTMLEscapeString(challenge.Username), template.HTMLEscapeString(hostname),
+			requestReasonHTML,
 			actionURL,
 			template.HTMLEscapeString(username),
 			template.HTMLEscapeString(csrfToken),
 			template.HTMLEscapeString(csrfTs),
 			template.HTMLEscapeString(token),
+			justPickerHTML,
 			template.HTMLEscapeString(t("approve")),
 			template.HTMLEscapeString(t("back_to_dashboard")))
 		return
@@ -318,6 +405,16 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Collect and validate the justification from the one-tap confirmation form.
+	onetapReason, _ := sanitizeReason(r.FormValue("reason"))
+	s.cfgMu.RLock()
+	requireJust := s.cfg.RequireJustification
+	s.cfgMu.RUnlock()
+	if requireJust && onetapReason == "" {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "justification_required")
+		return
+	}
+
 	// OIDC is fresh — atomically consume the single-use token and approve the challenge
 	// under a single lock to eliminate the TOCTOU window where another goroutine could
 	// approve the same challenge between ConsumeOneTap and Approve.
@@ -333,7 +430,11 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	challengesApproved.Inc()
 	challpkg.ActiveChallenges.Dec()
 	challengeDuration.Observe(time.Since(challenge.CreatedAt).Seconds())
-	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, approver, challenge.Reason)
+	onetapLogReason := onetapReason
+	if onetapLogReason == "" {
+		onetapLogReason = challenge.Reason
+	}
+	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, approver, onetapLogReason)
 	s.broadcastSSE(challenge.Username, "challenge_resolved")
 	slog.Info("ONETAP_APPROVED", "user", challenge.Username, "approver", approver, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
 

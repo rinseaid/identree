@@ -56,6 +56,8 @@ var TOMLSections = []TOMLSection{
 		{Key: "challenge_ttl", EnvKey: "IDENTREE_CHALLENGE_TTL"},
 		{Key: "grace_period", EnvKey: "IDENTREE_GRACE_PERIOD"},
 		{Key: "onetap_max_age", EnvKey: "IDENTREE_ONE_TAP_MAX_AGE"},
+		{Key: "require_justification", EnvKey: "IDENTREE_REQUIRE_JUSTIFICATION", IsBool: true},
+		{Key: "justification_choices", EnvKey: "IDENTREE_JUSTIFICATION_CHOICES", IsList: true},
 	}},
 	{Name: "ldap", Fields: []TOMLField{
 		{Key: "enabled", EnvKey: "IDENTREE_LDAP_ENABLED", IsBool: true},

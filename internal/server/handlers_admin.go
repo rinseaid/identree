@@ -452,10 +452,12 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"Lang":                lang,
 		"Languages":           supportedLanguages,
 		"IsAdmin":             true,
-		"CSRFToken":           infoCSRFToken,
-		"CSRFTs":              infoCSRFTs,
-		"Pending":             s.buildAllPendingViews(lang),
-		"AllPendingQueue":     s.buildAllPendingViews(lang),
+		"CSRFToken":            infoCSRFToken,
+		"CSRFTs":               infoCSRFTs,
+		"Pending":              s.buildAllPendingViews(lang),
+		"AllPendingQueue":      s.buildAllPendingViews(lang),
+		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
+		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"Version":             version,
 		"CommitShort":         commitShort(commit),
 		"Commit":              commit,
@@ -653,10 +655,12 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		"Lang":          lang,
 		"Languages":     supportedLanguages,
 		"IsAdmin":       true,
-		"CSRFToken":     csrfToken,
-		"CSRFTs":        csrfTs,
-		"Pending":       s.buildAllPendingViews(lang),
-		"AllPendingQueue": s.buildAllPendingViews(lang),
+		"CSRFToken":            csrfToken,
+		"CSRFTs":               csrfTs,
+		"Pending":              s.buildAllPendingViews(lang),
+		"AllPendingQueue":      s.buildAllPendingViews(lang),
+		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
+		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"ConfigValues":          configToValues(s.cfg),
 		"ConfigLocked":          configLockedKeys(),
 		"ConfigSecrets":         configSecretStatus(s.cfg),
@@ -691,6 +695,8 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_CHALLENGE_TTL":                   formatDuration(nil, cfg.ChallengeTTL),
 		"IDENTREE_GRACE_PERIOD":                    formatDuration(nil, cfg.GracePeriod),
 		"IDENTREE_ONE_TAP_MAX_AGE":                 formatDuration(nil, cfg.OneTapMaxAge),
+		"IDENTREE_REQUIRE_JUSTIFICATION":           boolToString(cfg.RequireJustification),
+		"IDENTREE_JUSTIFICATION_CHOICES":           strings.Join(cfg.JustificationChoices, ", "),
 		"IDENTREE_LDAP_ENABLED":                    boolToString(cfg.LDAPEnabled),
 		"IDENTREE_LDAP_LISTEN_ADDR":                cfg.LDAPListenAddr,
 		"IDENTREE_LDAP_BASE_DN":                    cfg.LDAPBaseDN,
@@ -1028,6 +1034,17 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 		} else {
 			s.cfg.OneTapMaxAge = d
 		}
+	}
+	if !config.IsEnvSourced("IDENTREE_REQUIRE_JUSTIFICATION") {
+		s.cfg.RequireJustification = values["IDENTREE_REQUIRE_JUSTIFICATION"] == "true"
+	}
+	if !config.IsEnvSourced("IDENTREE_JUSTIFICATION_CHOICES") {
+		newChoices := parseSlice("IDENTREE_JUSTIFICATION_CHOICES")
+		if fmt.Sprintf("%v", newChoices) != fmt.Sprintf("%v", s.cfg.JustificationChoices) {
+			slog.Info("JUSTIFICATION_CHOICES_CHANGED", "actor", actor,
+				"old", s.cfg.JustificationChoices, "new", newChoices)
+		}
+		s.cfg.JustificationChoices = newChoices
 	}
 	if !config.IsEnvSourced("IDENTREE_ADMIN_GROUPS") {
 		newGroups := parseSlice("IDENTREE_ADMIN_GROUPS")
@@ -1473,10 +1490,12 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		"Users":         userViews,
 		"UserSort":      userSortBy,
 		"UserDir":       userSortDir,
-		"CSRFToken":     csrfToken,
-		"CSRFTs":        csrfTs,
-		"Pending":       s.buildAllPendingViews(lang),
-		"AllPendingQueue": s.buildAllPendingViews(lang),
+		"CSRFToken":            csrfToken,
+		"CSRFTs":               csrfTs,
+		"Pending":              s.buildAllPendingViews(lang),
+		"AllPendingQueue":      s.buildAllPendingViews(lang),
+		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
+		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
@@ -1663,8 +1682,10 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		"Lang":          lang,
 		"Languages":     supportedLanguages,
 		"IsAdmin":       true,
-		"Pending":       s.buildAllPendingViews(lang),
-		"AllPendingQueue": s.buildAllPendingViews(lang),
+		"Pending":              s.buildAllPendingViews(lang),
+		"AllPendingQueue":      s.buildAllPendingViews(lang),
+		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
+		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
@@ -2045,8 +2066,10 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"Lang":             lang,
 		"Languages":        supportedLanguages,
 		"IsAdmin":          true,
-		"Pending":          s.buildAllPendingViews(lang),
-		"AllPendingQueue":  s.buildAllPendingViews(lang),
+		"Pending":              s.buildAllPendingViews(lang),
+		"AllPendingQueue":      s.buildAllPendingViews(lang),
+		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
+		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"HasEscrowedHosts": hasEscrowed,
 		"AllGroups":        allGroups,
 		"GroupFilter":      groupFilter,

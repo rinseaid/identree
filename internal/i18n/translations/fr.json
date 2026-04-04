@@ -387,5 +387,9 @@
   "idp_user": "Identity provider user",
   "pocketid_unavailable": "PocketID is currently unavailable — group permissions may be stale.",
   "ldap_sync_error": "LDAP sync error",
-  "reason_optional": "Reason (optional)"
+  "reason_optional": "Reason (optional)",
+  "custom_reason": "Custom...",
+  "enter_reason": "Enter reason...",
+  "cfg_require_justification": "Require Justification",
+  "cfg_justification_choices": "Justification Choices"
 }

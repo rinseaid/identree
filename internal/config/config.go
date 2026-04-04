@@ -36,6 +36,17 @@ const (
 	SudoNoAuthClaims SudoNoAuthenticate = "claims"
 )
 
+// DefaultJustificationChoices is the built-in list of justification options
+// shown in the approval UI when IDENTREE_JUSTIFICATION_CHOICES is not set.
+var DefaultJustificationChoices = []string{
+	"Routine maintenance",
+	"Incident response",
+	"Deployment",
+	"Debugging / troubleshooting",
+	"Security investigation",
+	"Configuration change",
+}
+
 // EscrowBackend names the native escrow integration to use.
 type EscrowBackend string
 
@@ -77,6 +88,16 @@ type ServerConfig struct {
 	ChallengeTTL time.Duration // how long a pending challenge lives (default 120s)
 	GracePeriod  time.Duration // skip re-auth if approved within this window (default 0 = disabled)
 	OneTapMaxAge time.Duration // max age of last OIDC auth for silent one-tap (default 24h)
+
+	// RequireJustification enforces that every elevation approval includes a
+	// justification selected from JustificationChoices (or entered as custom text).
+	// When true, the dashboard and one-tap confirmation page block approval until
+	// a reason is chosen, and POST /api/challenge also rejects requests with no reason.
+	RequireJustification bool
+	// JustificationChoices is the ordered list of preset justification options
+	// presented in the approval UI. Defaults to DefaultJustificationChoices when empty.
+	// Configurable via IDENTREE_JUSTIFICATION_CHOICES (comma-separated) or the admin UI.
+	JustificationChoices []string
 
 	// ── LDAP server ───────────────────────────────────────────────────────────
 	LDAPEnabled        bool          // whether to start the embedded LDAP server
@@ -332,9 +353,11 @@ func LoadServerConfig() (*ServerConfig, error) {
 		HMACSecret:   get("IDENTREE_HMAC_SECRET"),
 		MetricsToken: get("IDENTREE_METRICS_TOKEN"),
 
-		ChallengeTTL: getDuration("IDENTREE_CHALLENGE_TTL", 120*time.Second),
-		GracePeriod:  getDuration("IDENTREE_GRACE_PERIOD", 0),
-		OneTapMaxAge: getDuration("IDENTREE_ONE_TAP_MAX_AGE", 24*time.Hour),
+		ChallengeTTL:         getDuration("IDENTREE_CHALLENGE_TTL", 120*time.Second),
+		GracePeriod:          getDuration("IDENTREE_GRACE_PERIOD", 0),
+		OneTapMaxAge:         getDuration("IDENTREE_ONE_TAP_MAX_AGE", 24*time.Hour),
+		RequireJustification: getBool("IDENTREE_REQUIRE_JUSTIFICATION", false),
+		JustificationChoices: getSlice("IDENTREE_JUSTIFICATION_CHOICES"),
 
 		LDAPEnabled:            getBool("IDENTREE_LDAP_ENABLED", true),
 		LDAPListenAddr:         stringDefault(get("IDENTREE_LDAP_LISTEN_ADDR"), ":389"),
