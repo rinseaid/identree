@@ -235,7 +235,14 @@ if (!pamDone) {
 console.log("elevation-3 (terminal — approved)...");
 await saveTermShot("elevation-3", [
   cmdLine(USER, HOST, CMD),
-  [{ c: "dim", t: "  Reason: " }, { c: "dim", t: "\u201cnginx declared war. help me win this battle.\u201d" }],
+  [{ c: "dim", t: "  Justification required. Select a reason:" }],
+  [{ c: "dim", t: "    [1] Routine maintenance" }],
+  [{ c: "dim", t: "    [2] Incident response" }],
+  [{ c: "dim", t: "    [3] Deployment" }],
+  [{ c: "dim", t: "    [4] Other (enter custom reason)" }],
+  [{ c: "dim", t: "  Choice [4]: " }],
+  [{ c: "dim", t: "  Enter reason: " }, { c: "cmd", t: "nginx declared war. help me win this battle." }],
+  [],
   [{ c: "dim", t: "  Sudo requires Pocket ID approval." }],
   [{ c: "dim", t: "  Approve at: " }, { c: "url", t: approveURL }],
   [{ c: "dim", t: "  Code: " }, { c: "code", t: userCode }, { c: "dim", t: " (notification sent)" }],
