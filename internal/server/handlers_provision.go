@@ -59,6 +59,15 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// When the host registry is active, only registered hostnames may provision credentials.
+	if s.hostRegistry.IsEnabled() {
+		if !s.hostRegistry.HasHost(hostname) {
+			slog.Warn("PROVISION_REJECTED hostname not registered", "hostname", hostname, "remote_addr", remoteAddr(r))
+			http.Error(w, "hostname not registered", http.StatusForbidden)
+			return
+		}
+	}
+
 	if s.cfg.SharedSecret == "" {
 		slog.Error("provision: IDENTREE_SHARED_SECRET is not set — cannot derive per-host bind password")
 		http.Error(w, "server misconfigured", http.StatusInternalServerError)

@@ -236,6 +236,14 @@ func remoteAddr(r *http.Request) string {
 // handleCreateChallenge creates a new sudo challenge.
 // POST /api/challenge {"username": "jordan"}
 func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() {
+		// Pad all responses to a minimum of 5ms to prevent timing side channels
+		if elapsed := time.Since(start); elapsed < 5*time.Millisecond {
+			time.Sleep(5*time.Millisecond - elapsed)
+		}
+	}()
+
 	if r.Method != http.MethodPost {
 		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
