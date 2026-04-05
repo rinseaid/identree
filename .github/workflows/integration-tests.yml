@@ -267,6 +267,97 @@ jobs:
           echo "$SYSLOG" | head -1 | grep -q 'event=' || { echo "FAIL: missing SD event param"; exit 1; }
           echo "  Syslog format: OK"
 
+      - name: "Test: identree setup --sssd on fresh container"
+        run: |
+          # 1. Determine the compose default network name
+          NETWORK=$(docker inspect integ-full-identree --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+          echo "Using network: ${NETWORK}"
+
+          # 2. Run a fresh ubuntu:24.04 container on the same network
+          docker run -d --name integ-full-setup-test \
+            --hostname setup-test-01 \
+            --network "$NETWORK" \
+            ubuntu:24.04 sleep infinity
+
+          # 3. Install SSSD packages
+          docker exec integ-full-setup-test bash -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq sssd sssd-ldap libpam-sss libnss-sss libsss-sudo sudo >/dev/null
+          '
+
+          # 4. Copy the identree binary from the identree container
+          docker cp integ-full-identree:/usr/local/bin/identree /tmp/identree-ci-bin
+          docker cp /tmp/identree-ci-bin integ-full-setup-test:/usr/local/bin/identree
+          docker exec integ-full-setup-test chmod 755 /usr/local/bin/identree
+
+          # 5. Write /etc/identree/client.conf
+          docker exec integ-full-setup-test bash -c 'mkdir -p /etc/identree && printf "IDENTREE_SERVER_URL=http://identree:8090\nIDENTREE_SHARED_SECRET=integ-full-shared-secret-abc123456\n" > /etc/identree/client.conf && chmod 600 /etc/identree/client.conf'
+
+          # 6. Run identree setup --sssd --hostname setup-test-01
+          docker exec integ-full-setup-test identree setup --sssd --hostname setup-test-01
+
+          # 7. Verify sssd.conf was created
+          docker exec integ-full-setup-test test -f /etc/sssd/sssd.conf
+          echo "OK: /etc/sssd/sssd.conf exists"
+
+          # 8. Verify sssd.conf contains sudo_provider = ldap
+          docker exec integ-full-setup-test grep -q 'sudo_provider.*=.*ldap' /etc/sssd/sssd.conf
+          echo "OK: sssd.conf contains sudo_provider = ldap"
+
+          # 9. Verify sssd.conf contains ldap_sudo_search_base
+          docker exec integ-full-setup-test grep -q 'ldap_sudo_search_base' /etc/sssd/sssd.conf
+          echo "OK: sssd.conf contains ldap_sudo_search_base"
+
+          # 10. Verify PAM sudo has pam_exec.so
+          docker exec integ-full-setup-test grep -q 'pam_exec.so' /etc/pam.d/sudo
+          echo "OK: /etc/pam.d/sudo contains pam_exec.so"
+
+          # 11. Verify nsswitch.conf has sss in passwd, group, and sudoers lines
+          docker exec integ-full-setup-test grep -E '^passwd:' /etc/nsswitch.conf | grep -q sss
+          echo "OK: nsswitch.conf passwd has sss"
+          docker exec integ-full-setup-test grep -E '^group:' /etc/nsswitch.conf | grep -q sss
+          echo "OK: nsswitch.conf group has sss"
+          docker exec integ-full-setup-test grep -E '^sudoers:' /etc/nsswitch.conf | grep -q sss
+          echo "OK: nsswitch.conf sudoers has sss"
+
+          # 12. Clear stale SSSD state and start SSSD
+          docker exec integ-full-setup-test bash -c '
+            rm -rf /var/lib/sss/db/* /var/lib/sss/mc/* /run/sssd.pid 2>/dev/null || true
+            sssd -D
+          '
+          echo "SSSD started, waiting for user resolution..."
+          timeout 60 bash -c '
+            until docker exec integ-full-setup-test getent passwd alice 2>/dev/null | grep -q alice; do
+              sleep 3
+            done'
+          echo "OK: getent passwd alice resolved via identree setup --sssd"
+          docker exec integ-full-setup-test getent passwd alice
+
+      - name: "Test: /install.sh endpoint"
+        run: |
+          # 1. Fetch the install script
+          curl -sf http://localhost:8110/install.sh -o /tmp/install-script.sh
+          echo "OK: fetched /install.sh ($(wc -c < /tmp/install-script.sh) bytes)"
+
+          # 2. Verify it contains the correct server URL
+          #    IDENTREE_INSTALL_URL (http://identree:8090) takes priority over
+          #    EXTERNAL_URL when rendering the install script, so the embedded
+          #    SERVER_URL points at the internal address that client hosts use.
+          grep -q 'http://identree:8090' /tmp/install-script.sh || \
+            { echo "FAIL: install.sh missing expected SERVER_URL (http://identree:8090)"; exit 1; }
+          echo "OK: install.sh contains correct server URL (http://identree:8090)"
+
+          # 3. Verify it contains identree setup invocation
+          grep -q 'identree.*setup' /tmp/install-script.sh || \
+            grep -q 'identree setup' /tmp/install-script.sh || \
+            { echo "FAIL: install.sh missing identree setup invocation"; exit 1; }
+          echo "OK: install.sh contains identree setup invocation"
+
+          # 4. Verify valid bash syntax
+          bash -n /tmp/install-script.sh
+          echo "OK: install.sh passes bash -n syntax check"
+
       - name: Capture logs on failure
         if: failure()
         run: |
@@ -280,10 +371,20 @@ jobs:
           docker exec integ-full-ubuntu2404 cat /var/log/sssd/sssd_LDAP.log 2>/dev/null | tail -30 || true
           echo "=== ubuntu2404 entrypoint output ==="
           docker logs integ-full-ubuntu2404 2>&1 | tail -40
+          echo "=== setup-test sssd.conf ==="
+          docker exec integ-full-setup-test cat /etc/sssd/sssd.conf 2>/dev/null || true
+          echo "=== setup-test nsswitch.conf ==="
+          docker exec integ-full-setup-test cat /etc/nsswitch.conf 2>/dev/null || true
+          echo "=== setup-test pam.d/sudo ==="
+          docker exec integ-full-setup-test cat /etc/pam.d/sudo 2>/dev/null || true
+          echo "=== setup-test sssd log ==="
+          docker exec integ-full-setup-test cat /var/log/sssd/sssd_identree.log 2>/dev/null | tail -30 || true
 
       - name: Tear down
         if: always()
-        run: docker compose -f test/integration/full-mode/docker-compose.yml down -v
+        run: |
+          docker rm -f integ-full-setup-test 2>/dev/null || true
+          docker compose -f test/integration/full-mode/docker-compose.yml down -v
 
   # ── lldap + Dex bridge mode ───────────────────────────────────────────────────
   lldap-dex:
