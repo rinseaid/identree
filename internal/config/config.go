@@ -224,16 +224,13 @@ type ServerConfig struct {
 	EnforceOIDCIPBinding bool
 
 	// ── mTLS client authentication ──────────────────────────────────────────
-	// MTLSMode controls mutual TLS client certificate authentication for PAM
-	// endpoints. When set, shared-secret auth is replaced by certificate auth.
-	//   "embedded" — identree generates a CA and issues client certs at provision time.
-	//   "external" — operator provides a CA cert; identree only verifies, does not issue.
-	//   ""         — disabled (use shared-secret auth).
-	MTLSMode     string        // "embedded" | "external" | "" (disabled)
-	MTLSCACert   string        // path to CA certificate PEM (embedded mode: may be auto-generated)
-	MTLSCAKey    string        // path to CA private key PEM (embedded mode only)
-	MTLSClientCA string        // path to client CA cert PEM (external mode: what to trust)
-	MTLSCertTTL  time.Duration // client cert validity (default 365 days)
+	// MTLSEnabled is true when the embedded CA is configured. identree generates
+	// a self-signed CA and issues client certificates at provision time.
+	// Enabled automatically when MTLSCACert/MTLSCAKey are set (or auto-generated).
+	MTLSEnabled bool
+	MTLSCACert  string        // path to CA certificate PEM (may be auto-generated)
+	MTLSCAKey   string        // path to CA private key PEM
+	MTLSCertTTL time.Duration // client cert validity (default 365 days)
 
 	// ── LDAP auto-provisioning ────────────────────────────────────────────────
 	// When LDAPProvisionEnabled is true, GET /api/client/provision returns LDAP
@@ -520,11 +517,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ClientBreakglassPasswordType: get("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"),
 		ClientBreakglassRotationDays: getInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", 0),
 
-		MTLSMode:     get("IDENTREE_MTLS_MODE"),
-		MTLSCACert:   get("IDENTREE_MTLS_CA_CERT"),
-		MTLSCAKey:    get("IDENTREE_MTLS_CA_KEY"),
-		MTLSClientCA: get("IDENTREE_MTLS_CLIENT_CA"),
-		MTLSCertTTL:  getDuration("IDENTREE_MTLS_CERT_TTL", 365*24*time.Hour),
+		MTLSCACert:  get("IDENTREE_MTLS_CA_CERT"),
+		MTLSCAKey:   get("IDENTREE_MTLS_CA_KEY"),
+		MTLSCertTTL: getDuration("IDENTREE_MTLS_CERT_TTL", 365*24*time.Hour),
 
 		WebhookSecret:        get("IDENTREE_WEBHOOK_SECRET"),
 		EnforceOIDCIPBinding: getBool("IDENTREE_OIDC_ENFORCE_IP_BINDING", false),
@@ -718,11 +713,10 @@ func LoadServerConfig() (*ServerConfig, error) {
 		return nil, fmt.Errorf("IDENTREE_AUTH_PROTOCOL must be \"oidc\" or \"saml\" (got %q)", cfg.AuthProtocol)
 	}
 
-	// Validate MTLSMode.
-	switch cfg.MTLSMode {
-	case "":
-		// Disabled — use shared-secret auth.
-	case "embedded":
+	// Enable mTLS when CA cert/key paths are configured (or default them).
+	// Also accept the legacy IDENTREE_MTLS_MODE=embedded as a trigger.
+	if cfg.MTLSCACert != "" || cfg.MTLSCAKey != "" || get("IDENTREE_MTLS_MODE") == "embedded" {
+		cfg.MTLSEnabled = true
 		if cfg.MTLSCACert == "" {
 			cfg.MTLSCACert = "/config/mtls-ca.crt"
 		}
@@ -732,12 +726,6 @@ func LoadServerConfig() (*ServerConfig, error) {
 		if cfg.MTLSCertTTL <= 0 {
 			cfg.MTLSCertTTL = 365 * 24 * time.Hour
 		}
-	case "external":
-		if cfg.MTLSClientCA == "" {
-			return nil, fmt.Errorf("IDENTREE_MTLS_CLIENT_CA is required when IDENTREE_MTLS_MODE=external")
-		}
-	default:
-		return nil, fmt.Errorf("IDENTREE_MTLS_MODE must be \"embedded\", \"external\", or empty (got %q)", cfg.MTLSMode)
 	}
 
 	// Validate StateBackend.
@@ -775,9 +763,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_SECRET is required")
 	}
 	// SharedSecret is required unless mTLS is enabled (mTLS replaces shared-secret auth).
-	if cfg.MTLSMode == "" {
+	if !cfg.MTLSEnabled {
 		if cfg.SharedSecret == "" {
-			return nil, fmt.Errorf("IDENTREE_SHARED_SECRET is required (or set IDENTREE_MTLS_MODE to use mTLS instead)")
+			return nil, fmt.Errorf("IDENTREE_SHARED_SECRET is required (or configure IDENTREE_MTLS_CA_CERT/KEY to use mTLS instead)")
 		}
 		if len(cfg.SharedSecret) < 32 {
 			return nil, fmt.Errorf("IDENTREE_SHARED_SECRET must be at least 32 characters")

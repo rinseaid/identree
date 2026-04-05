@@ -1,10 +1,6 @@
 // Package mtls provides mutual TLS client certificate authentication for
-// identree's PAM client endpoints. It supports two modes:
-//
-//   - Embedded CA: identree generates a self-signed CA and issues client
-//     certificates at provision time.
-//   - External CA: an operator-provided CA is trusted for client verification;
-//     identree does not issue certificates.
+// identree's PAM client endpoints. identree generates a self-signed CA and
+// issues client certificates at provision time.
 package mtls
 
 import (
@@ -218,29 +214,6 @@ func VerifyClientCert(caCert *x509.Certificate, peerCerts []*x509.Certificate) (
 	}
 
 	return hostname, nil
-}
-
-// LoadCACert loads a PEM-encoded CA certificate from a file and returns the
-// parsed x509.Certificate.
-func LoadCACert(path string) (*x509.Certificate, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read CA cert: %w", err)
-	}
-	return ParseCACert(data)
-}
-
-// ParseCACert parses a PEM-encoded CA certificate.
-func ParseCACert(pemData []byte) (*x509.Certificate, error) {
-	block, _ := pem.Decode(pemData)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("PEM data does not contain a CERTIFICATE block")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse certificate: %w", err)
-	}
-	return cert, nil
 }
 
 // randomSerial generates a random 128-bit serial number for X.509 certificates.

@@ -231,8 +231,8 @@ func runServer() {
 		"redirect_uri", strings.TrimRight(cfg.ExternalURL, "/")+"/callback",
 		"challenge_ttl", cfg.ChallengeTTL,
 	)
-	if cfg.MTLSMode != "" {
-		slog.Info("mTLS client authentication enabled", "mode", cfg.MTLSMode)
+	if cfg.MTLSEnabled {
+		slog.Info("mTLS client authentication enabled")
 	}
 	if cfg.GracePeriod > 0 {
 		slog.Info("grace period enabled", "duration", cfg.GracePeriod)

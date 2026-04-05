@@ -21,7 +21,7 @@ type provisionResponse struct {
 	BindPassword string `json:"bind_password"`
 	TLSCACert    string `json:"tls_ca_cert,omitempty"`
 
-	// mTLS fields — only populated in embedded CA mode.
+	// mTLS fields — only populated when mTLS is enabled.
 	ClientCert string `json:"client_cert,omitempty"` // PEM-encoded client certificate
 	ClientKey  string `json:"client_key,omitempty"`  // PEM-encoded client private key
 	CACert     string `json:"ca_cert,omitempty"`     // PEM-encoded CA certificate
@@ -31,7 +31,7 @@ type provisionResponse struct {
 // credentials so that `identree setup --sssd` can auto-configure SSSD without
 // requiring manual admin intervention on each host.
 //
-// In embedded mTLS mode, the endpoint also issues and returns a client
+// When mTLS is enabled, the endpoint also issues and returns a client
 // certificate signed by the embedded CA.
 //
 // Authentication: X-Shared-Secret (global or per-host registry) + X-Hostname.
@@ -114,8 +114,8 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 		TLSCACert:    s.cfg.LDAPTLSCACert,
 	}
 
-	// In embedded mTLS mode, issue a client certificate for this host.
-	if s.cfg.MTLSMode == "embedded" && s.mtlsCA != nil {
+	// When mTLS is enabled, issue a client certificate for this host.
+	if s.cfg.MTLSEnabled && s.mtlsCA != nil {
 		certPEM, keyPEM, err := mtls.IssueCert(*s.mtlsCA, hostname, s.cfg.MTLSCertTTL)
 		if err != nil {
 			slog.Error("provision: failed to issue mTLS client cert", "hostname", hostname, "err", err)

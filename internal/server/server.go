@@ -496,11 +496,10 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 
 	// ── mTLS client certificate authentication ─────────────────────────────
-	switch cfg.MTLSMode {
-	case "embedded":
+	if cfg.MTLSEnabled {
 		ca, err := mtls.LoadOrGenerateCA(cfg.MTLSCACert, cfg.MTLSCAKey)
 		if err != nil {
-			return nil, fmt.Errorf("mTLS embedded CA: %w", err)
+			return nil, fmt.Errorf("mTLS CA: %w", err)
 		}
 		s.mtlsCA = &ca
 		caCert := ca.Leaf
@@ -511,14 +510,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 			}
 		}
 		s.mtlsCACert = caCert
-		slog.Info("mTLS embedded CA loaded", "subject", caCert.Subject.CommonName, "not_after", caCert.NotAfter.Format(time.RFC3339))
-	case "external":
-		caCert, err := mtls.LoadCACert(cfg.MTLSClientCA)
-		if err != nil {
-			return nil, fmt.Errorf("mTLS external CA: %w", err)
-		}
-		s.mtlsCACert = caCert
-		slog.Info("mTLS external CA loaded", "subject", caCert.Subject.CommonName, "not_after", caCert.NotAfter.Format(time.RFC3339))
+		slog.Info("mTLS CA loaded", "subject", caCert.Subject.CommonName, "not_after", caCert.NotAfter.Format(time.RFC3339))
 	}
 
 	if cfg.EscrowBackend == config.EscrowBackendLocal {

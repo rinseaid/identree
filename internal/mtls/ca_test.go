@@ -192,7 +192,8 @@ func TestVerifyClientCert_WrongCA(t *testing.T) {
 	ca1.Leaf = caCert1
 
 	certPEM2, _, _ := GenerateCA()
-	caCert2, _ := ParseCACert(certPEM2)
+	block2, _ := pem.Decode(certPEM2)
+	caCert2, _ := x509.ParseCertificate(block2.Bytes)
 
 	// Issue cert with CA1
 	clientCertPEM, _, _ := IssueCert(ca1, "host1.local", 24*time.Hour)
@@ -233,28 +234,11 @@ func TestVerifyClientCert_Expired(t *testing.T) {
 
 func TestVerifyClientCert_NoCerts(t *testing.T) {
 	certPEM, _, _ := GenerateCA()
-	caCert, _ := ParseCACert(certPEM)
+	block, _ := pem.Decode(certPEM)
+	caCert, _ := x509.ParseCertificate(block.Bytes)
 
 	_, err := VerifyClientCert(caCert, nil)
 	if err == nil {
 		t.Fatal("expected error for empty peer certs")
-	}
-}
-
-func TestParseCACert(t *testing.T) {
-	certPEM, _, _ := GenerateCA()
-	cert, err := ParseCACert(certPEM)
-	if err != nil {
-		t.Fatalf("ParseCACert: %v", err)
-	}
-	if !cert.IsCA {
-		t.Error("parsed cert should be a CA")
-	}
-}
-
-func TestParseCACert_Invalid(t *testing.T) {
-	_, err := ParseCACert([]byte("not a PEM"))
-	if err == nil {
-		t.Fatal("expected error for invalid PEM")
 	}
 }

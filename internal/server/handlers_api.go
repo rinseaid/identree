@@ -134,7 +134,7 @@ func (a *authFailTracker) recentCount(ip string) int {
 
 // mtlsEnabled returns true when mTLS client certificate authentication is active.
 func (s *Server) mtlsEnabled() bool {
-	return s.cfg.MTLSMode == "embedded" || s.cfg.MTLSMode == "external"
+	return s.cfg.MTLSEnabled
 }
 
 // verifyMTLSClient extracts and verifies the client certificate from the TLS
