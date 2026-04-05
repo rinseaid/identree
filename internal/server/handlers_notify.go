@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +13,37 @@ import (
 	"github.com/rinseaid/identree/internal/adminnotify"
 	"github.com/rinseaid/identree/internal/notify"
 )
+
+// channelNameRe validates notification channel names. Must be lowercase
+// alphanumeric with hyphens, dots, or underscores (safe for env var construction).
+var channelNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// notifyCfgForSave returns a deep copy of the notification config with
+// secrets (Token, Command) stripped. This prevents env-injected secrets
+// from leaking to the JSON config file on disk.
+func (s *Server) notifyCfgForSave() *notify.NotificationConfig {
+	s.notifyCfgMu.RLock()
+	defer s.notifyCfgMu.RUnlock()
+	channels := make([]notify.Channel, len(s.notifyCfg.Channels))
+	for i, ch := range s.notifyCfg.Channels {
+		channels[i] = notify.Channel{
+			Name:    ch.Name,
+			Backend: ch.Backend,
+			URL:     ch.URL,
+			Timeout: ch.Timeout,
+			// Token and Command intentionally omitted — env-only secrets.
+		}
+	}
+	routes := make([]notify.Route, len(s.notifyCfg.Routes))
+	copy(routes, s.notifyCfg.Routes)
+	return &notify.NotificationConfig{Channels: channels, Routes: routes}
+}
+
+// validateGlobPattern checks if a glob pattern is syntactically valid.
+func validateGlobPattern(pattern string) bool {
+	_, err := filepath.Match(pattern, "")
+	return err == nil
+}
 
 // handleAdminNotifications renders the notification channels, routes, and
 // per-admin preferences management page.
@@ -167,6 +200,10 @@ func (s *Server) handleNotifyChannelAdd(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "name and backend are required", http.StatusBadRequest)
 		return
 	}
+	if !channelNameRe.MatchString(ch.Name) {
+		http.Error(w, "channel name must be lowercase alphanumeric with hyphens/dots/underscores (1-64 chars)", http.StatusBadRequest)
+		return
+	}
 
 	switch ch.Backend {
 	case "ntfy", "slack", "discord", "apprise", "webhook", "custom":
@@ -184,14 +221,14 @@ func (s *Server) handleNotifyChannelAdd(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	s.notifyCfg.Channels = append(s.notifyCfg.Channels, ch)
-	cfg := s.notifyCfg
 	s.notifyCfgMu.Unlock()
 
+	saveCfg := s.notifyCfgForSave()
 	s.cfgMu.RLock()
 	path := s.cfg.NotificationConfigFile
 	s.cfgMu.RUnlock()
 
-	if err := notify.SaveNotificationConfig(path, cfg); err != nil {
+	if err := notify.SaveNotificationConfig(path, saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
@@ -236,7 +273,6 @@ func (s *Server) handleNotifyChannelDelete(w http.ResponseWriter, r *http.Reques
 			break
 		}
 	}
-	cfg := s.notifyCfg
 	s.notifyCfgMu.Unlock()
 
 	if !found {
@@ -244,12 +280,15 @@ func (s *Server) handleNotifyChannelDelete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	saveCfg := s.notifyCfgForSave()
 	s.cfgMu.RLock()
 	path := s.cfg.NotificationConfigFile
 	s.cfgMu.RUnlock()
 
-	if err := notify.SaveNotificationConfig(path, cfg); err != nil {
+	if err := notify.SaveNotificationConfig(path, saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
+		http.Error(w, "failed to save", http.StatusInternalServerError)
+		return
 	}
 
 	slog.Info("NOTIFY_CHANNEL_DELETED", "admin", adminUser, "channel", name)
@@ -285,16 +324,26 @@ func (s *Server) handleNotifyRouteAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate glob patterns.
+	for _, patterns := range [][]string{route.Events, route.Hosts, route.Users} {
+		for _, p := range patterns {
+			if !validateGlobPattern(p) {
+				http.Error(w, "invalid glob pattern: "+p, http.StatusBadRequest)
+				return
+			}
+		}
+	}
+
 	s.notifyCfgMu.Lock()
 	s.notifyCfg.Routes = append(s.notifyCfg.Routes, route)
-	cfg := s.notifyCfg
 	s.notifyCfgMu.Unlock()
 
+	saveCfg := s.notifyCfgForSave()
 	s.cfgMu.RLock()
 	path := s.cfg.NotificationConfigFile
 	s.cfgMu.RUnlock()
 
-	if err := notify.SaveNotificationConfig(path, cfg); err != nil {
+	if err := notify.SaveNotificationConfig(path, saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
@@ -334,15 +383,17 @@ func (s *Server) handleNotifyRouteDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.notifyCfg.Routes = append(s.notifyCfg.Routes[:idx], s.notifyCfg.Routes[idx+1:]...)
-	cfg := s.notifyCfg
 	s.notifyCfgMu.Unlock()
 
+	saveCfg := s.notifyCfgForSave()
 	s.cfgMu.RLock()
 	path := s.cfg.NotificationConfigFile
 	s.cfgMu.RUnlock()
 
-	if err := notify.SaveNotificationConfig(path, cfg); err != nil {
+	if err := notify.SaveNotificationConfig(path, saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
+		http.Error(w, "failed to save", http.StatusInternalServerError)
+		return
 	}
 
 	slog.Info("NOTIFY_ROUTE_DELETED", "admin", adminUser, "index", idx)

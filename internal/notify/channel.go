@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
+	"syscall"
 	"time"
 
 	"github.com/rinseaid/identree/internal/sanitize"
@@ -45,12 +45,28 @@ type NotificationConfig struct {
 
 // LoadNotificationConfig reads the notification config from a JSON file.
 // Returns an empty config (not an error) if the file does not exist.
+// Uses O_NOFOLLOW to prevent symlink-based attacks, consistent with other state files.
 func LoadNotificationConfig(path string) (*NotificationConfig, error) {
 	cfg := &NotificationConfig{}
-	data, err := os.ReadFile(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if os.IsNotExist(err) {
 		return cfg, nil
 	}
+	if err != nil {
+		return nil, fmt.Errorf("notify: open %s: %w", path, err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("notify: stat %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("notify: %s is not a regular file", path)
+	}
+	if mode := info.Mode().Perm(); mode&0022 != 0 {
+		return nil, fmt.Errorf("notify: %s is group/world writable (mode %04o)", path, mode)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 4<<20)) // 4 MiB limit
 	if err != nil {
 		return nil, fmt.Errorf("notify: read %s: %w", path, err)
 	}
@@ -267,10 +283,7 @@ func isAs(err error, target interface{}) bool {
 
 // ── Custom command execution ─────────────────────────────────────────────────
 
-var (
-	commandMu       sync.Mutex // not used yet, placeholder for future semaphore
-	maxCommandOutput = 1 << 20 // 1 MB
-)
+const maxCommandOutput = 1 << 20 // 1 MB
 
 func runChannelCommand(ch Channel, data WebhookData, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

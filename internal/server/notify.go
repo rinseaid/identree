@@ -117,11 +117,13 @@ func (s *Server) deliverToChannel(ch notify.Channel, d notify.WebhookData, defau
 	}()
 }
 
-// notifyRoutes returns the current notification routes (thread-safe).
+// notifyRoutes returns a copy of the current notification routes (thread-safe).
 func (s *Server) notifyRoutes() []notify.Route {
 	s.notifyCfgMu.RLock()
 	defer s.notifyCfgMu.RUnlock()
-	return s.notifyCfg.Routes
+	out := make([]notify.Route, len(s.notifyCfg.Routes))
+	copy(out, s.notifyCfg.Routes)
+	return out
 }
 
 // notifyChannelMap returns a name→Channel lookup (thread-safe).
