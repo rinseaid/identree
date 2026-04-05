@@ -111,10 +111,17 @@ func (s *SplunkHECSink) flush() {
 
 	// Splunk HEC accepts multiple JSON objects concatenated (no array wrapper).
 	var body bytes.Buffer
+	var dropped int
 	enc := json.NewEncoder(&body)
 	enc.SetEscapeHTML(false)
 	for _, e := range batch {
-		_ = enc.Encode(e)
+		if err := enc.Encode(e); err != nil {
+			dropped++
+			slog.Warn("AUDIT splunk_hec: encode event failed, dropping", "err", err, "event", e.Event.Event)
+		}
+	}
+	if dropped > 0 {
+		slog.Warn("AUDIT splunk_hec: dropped events in batch", "dropped", dropped, "total", len(batch))
 	}
 
 	req, err := http.NewRequest(http.MethodPost, s.url, &body)

@@ -973,6 +973,12 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Per-user mutation rate limit.
+	if !s.mutationRL.allow(actor) {
+		apiError(w, http.StatusTooManyRequests, "rate limit exceeded")
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	var req struct {
 		Hostname string `json:"hostname"`

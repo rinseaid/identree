@@ -3,6 +3,7 @@ package challenge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -471,6 +472,9 @@ func (s *RedisStore) Create(username, hostname, breakglassRotateBefore, reason s
 func (s *RedisStore) Get(id string) (Challenge, bool) {
 	data, err := s.client.Get(s.ctx(), s.challengeKey(id)).Result()
 	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			slog.Error("redis Get: connection error", "key", s.challengeKey(id), "err", err)
+		}
 		return Challenge{}, false
 	}
 	c, err := redisToChallengeData(data)

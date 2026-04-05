@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -335,9 +336,15 @@ func (s *Server) verifyFormAuth(w http.ResponseWriter, r *http.Request) string {
 // since JSON requests cannot include form values. Returns the username on success or writes
 // an HTTP error and returns "" on failure.
 func (s *Server) verifyJSONAdminAuth(w http.ResponseWriter, r *http.Request) string {
+	jsonErr := func(code int, msg string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck
+	}
+
 	data, valid := s.parseSessionCookie(r)
 	if !valid {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		jsonErr(http.StatusUnauthorized, "unauthorized")
 		return ""
 	}
 	username := data.Username
@@ -351,35 +358,35 @@ func (s *Server) verifyJSONAdminAuth(w http.ResponseWriter, r *http.Request) str
 		}
 	}
 	if username == "" || role != "admin" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		jsonErr(http.StatusUnauthorized, "unauthorized")
 		return ""
 	}
 
 	if s.hmacBase() == "" {
-		http.Error(w, "server misconfiguration", http.StatusInternalServerError)
+		jsonErr(http.StatusInternalServerError, "server misconfiguration")
 		return ""
 	}
 
 	csrfToken := r.Header.Get("X-CSRF-Token")
 	csrfTs := r.Header.Get("X-CSRF-Ts")
 	if csrfToken == "" || csrfTs == "" {
-		http.Error(w, "missing CSRF headers", http.StatusForbidden)
+		jsonErr(http.StatusForbidden, "missing CSRF headers")
 		return ""
 	}
 
 	tsInt, err := strconv.ParseInt(csrfTs, 10, 64)
 	if err != nil {
-		http.Error(w, "invalid CSRF timestamp", http.StatusForbidden)
+		jsonErr(http.StatusForbidden, "invalid CSRF timestamp")
 		return ""
 	}
 	if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > sessionCookieTTL {
-		http.Error(w, "CSRF token expired", http.StatusForbidden)
+		jsonErr(http.StatusForbidden, "CSRF token expired")
 		return ""
 	}
 
 	expected := computeCSRFToken(s.hmacBase(), username, csrfTs)
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(csrfToken)) != 1 {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		jsonErr(http.StatusForbidden, "invalid CSRF token")
 		return ""
 	}
 

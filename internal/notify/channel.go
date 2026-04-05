@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -222,7 +223,7 @@ func postChannelWebhook(ch Channel, data WebhookData, timeout time.Duration) err
 			return nil
 		}
 		var se *WebhookStatusError
-		if ok := isAs(lastErr, &se); ok && se.Status >= 400 && se.Status < 500 {
+		if errors.As(lastErr, &se) && se.Status >= 400 && se.Status < 500 {
 			return lastErr // permanent error, don't retry
 		}
 		slog.Warn("notify: webhook attempt failed", "channel", ch.Name, "attempt", attempt+1, "err", lastErr)
@@ -263,22 +264,6 @@ type WebhookStatusError struct {
 
 func (e *WebhookStatusError) Error() string {
 	return fmt.Sprintf("server returned %d: %s", e.Status, e.Body)
-}
-
-// isAs is a helper to avoid importing errors in this file for a single call.
-func isAs(err error, target interface{}) bool {
-	// Use type assertion instead of errors.As to keep imports minimal.
-	// This works because we only check our own concrete type.
-	if err == nil {
-		return false
-	}
-	if se, ok := err.(*WebhookStatusError); ok {
-		if t, ok2 := target.(**WebhookStatusError); ok2 {
-			*t = se
-			return true
-		}
-	}
-	return false
 }
 
 // ── Custom command execution ─────────────────────────────────────────────────

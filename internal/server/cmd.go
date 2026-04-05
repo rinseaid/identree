@@ -202,6 +202,27 @@ func runServer() {
 		srv.revokedAdminSessions.Store(username, revokedAt)
 	}
 
+	// Clean up orphaned temp files from previous runs (atomic-write leftovers).
+	// Derive the config directory from SessionStateFile (all state files share the same dir).
+	if configDir := filepath.Dir(cfg.SessionStateFile); configDir != "" && configDir != "." {
+		patterns := []string{
+			".identree-*", ".sessions-tmp-*", ".hosts-tmp-*",
+			".sudorules-tmp-*", ".notify-config-*", ".admin-notify-*",
+		}
+		var cleaned int
+		for _, pat := range patterns {
+			matches, _ := filepath.Glob(filepath.Join(configDir, pat))
+			for _, m := range matches {
+				if err := os.Remove(m); err == nil {
+					cleaned++
+				}
+			}
+		}
+		if cleaned > 0 {
+			slog.Info("cleaned orphaned temp files", "count", cleaned, "dir", configDir)
+		}
+	}
+
 	slog.Info("identree server starting",
 		"version", version,
 		"listen", cfg.ListenAddr,
