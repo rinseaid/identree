@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -501,6 +503,30 @@ func runServer() {
 		MaxHeaderBytes:    8192,
 	}
 
+	// When TLS cert/key are configured, enable HTTPS with optional client cert
+	// verification. RequestClientCert asks clients for a certificate but does
+	// not require one — endpoints that need mTLS verify the cert themselves via
+	// r.TLS.PeerCertificates. This allows the provision endpoint (shared-secret
+	// auth) and web UI to work without a client cert on the same listener.
+	useTLS := cfg.TLSCertFile != "" && cfg.TLSKeyFile != ""
+	if useTLS {
+		tlsCfg := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ClientAuth: tls.RequestClientCert,
+		}
+		// When mTLS is enabled, add the CA cert pool so Go can verify client
+		// certs against our CA. We still use RequestClientCert (not
+		// RequireAndVerifyClientCert) because not all endpoints need mTLS.
+		if cfg.MTLSEnabled && srv.mtlsCACert != nil {
+			pool := x509.NewCertPool()
+			pool.AddCert(srv.mtlsCACert)
+			tlsCfg.ClientCAs = pool
+			tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
+		}
+		httpServer.TLSConfig = tlsCfg
+		slog.Info("TLS enabled", "cert", cfg.TLSCertFile, "key", cfg.TLSKeyFile)
+	}
+
 	shutdownDone := make(chan struct{})
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -555,8 +581,14 @@ func runServer() {
 		shutdownCancel()
 	}()
 
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("server error", "err", err)
+	var listenErr error
+	if useTLS {
+		listenErr = httpServer.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
+	} else {
+		listenErr = httpServer.ListenAndServe()
+	}
+	if listenErr != nil && listenErr != http.ErrServerClosed {
+		slog.Error("server error", "err", listenErr)
 		os.Exit(1)
 	}
 	<-shutdownDone

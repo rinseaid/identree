@@ -208,6 +208,24 @@ test-samba-ad-dex-validate:
 		http://localhost:5560/dex \
 		ldap://localhost:3897
 
+# ── mTLS (full mode with TLS + client certificate authentication) ─────────────
+.PHONY: test-mtls test-mtls-down test-mtls-logs test-mtls-setup test-mtls-validate
+
+test-mtls:
+	docker compose -f test/providers/mtls/docker-compose.yml up --build -d
+
+test-mtls-down:
+	docker compose -f test/providers/mtls/docker-compose.yml down -v
+
+test-mtls-logs:
+	docker compose -f test/providers/mtls/docker-compose.yml logs -f identree
+
+test-mtls-setup:
+	bash test/providers/mtls/setup.sh
+
+test-mtls-validate:
+	bash test/providers/mtls/validate.sh
+
 # ── Integration suite: full-mode (PocketID + 5 OS hosts) ─────────────────────
 .PHONY: integration-full-mode integration-full-mode-down integration-full-mode-logs integration-full-mode-setup integration-full-mode-run
 
@@ -288,4 +306,4 @@ integration-all-down: integration-full-mode-down integration-lldap-dex-down inte
 # ── Convenience: bring down all environments ──────────────────────────────────
 .PHONY: down-all
 
-down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down test-openldap-dex-down test-authentik-down test-authentik-saml-down test-samba-ad-dex-down integration-all-down
+down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down test-openldap-dex-down test-authentik-down test-authentik-saml-down test-samba-ad-dex-down test-mtls-down integration-all-down

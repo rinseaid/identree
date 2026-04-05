@@ -223,6 +223,13 @@ type ServerConfig struct {
 	// because legitimate users behind NAT/load balancers can have different IPs.
 	EnforceOIDCIPBinding bool
 
+	// ── TLS server ──────────────────────────────────────────────────────────
+	// When TLSCertFile and TLSKeyFile are set, the HTTP server listens on HTTPS
+	// instead of plain HTTP. Required for mTLS (client certificate verification
+	// needs Go's TLS termination to populate r.TLS.PeerCertificates).
+	TLSCertFile string // path to server certificate PEM
+	TLSKeyFile  string // path to server private key PEM
+
 	// ── mTLS client authentication ──────────────────────────────────────────
 	// MTLSEnabled is true when the embedded CA is configured. identree generates
 	// a self-signed CA and issues client certificates at provision time.
@@ -517,6 +524,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ClientBreakglassPasswordType: get("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"),
 		ClientBreakglassRotationDays: getInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", 0),
 
+		TLSCertFile: get("IDENTREE_TLS_CERT_FILE"),
+		TLSKeyFile:  get("IDENTREE_TLS_KEY_FILE"),
+
 		MTLSCACert:  get("IDENTREE_MTLS_CA_CERT"),
 		MTLSCAKey:   get("IDENTREE_MTLS_CA_KEY"),
 		MTLSCertTTL: getDuration("IDENTREE_MTLS_CERT_TTL", 365*24*time.Hour),
@@ -726,6 +736,12 @@ func LoadServerConfig() (*ServerConfig, error) {
 		if cfg.MTLSCertTTL <= 0 {
 			cfg.MTLSCertTTL = 365 * 24 * time.Hour
 		}
+	}
+
+	// Warn when mTLS is enabled but the server has no TLS config. Without TLS,
+	// r.TLS will be nil and client certificates will never be available.
+	if cfg.MTLSEnabled && (cfg.TLSCertFile == "" || cfg.TLSKeyFile == "") {
+		slog.Warn("mTLS is enabled but IDENTREE_TLS_CERT_FILE/IDENTREE_TLS_KEY_FILE are not set — client certificate verification requires TLS termination by identree (set TLS cert/key or use a reverse proxy that forwards client certs)")
 	}
 
 	// Validate StateBackend.

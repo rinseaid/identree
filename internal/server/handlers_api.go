@@ -169,14 +169,19 @@ func (s *Server) verifySharedSecret(r *http.Request) bool {
 }
 
 // verifyAPISecret checks client authentication for API endpoints (poll, grace-status,
-// escrow) where the hostname isn't known at request time.
-// When mTLS is enabled, verifies the client certificate.
-// Otherwise falls back to shared-secret or per-host registry auth.
+// escrow, provision) where the hostname isn't known at request time.
+// When mTLS is enabled, tries the client certificate first. If no cert is
+// presented, falls back to shared-secret or per-host registry auth. This
+// fallback is essential for the provision endpoint which issues mTLS certs
+// (clients authenticate with shared secret to bootstrap their first cert).
 func (s *Server) verifyAPISecret(r *http.Request) bool {
-	// mTLS takes precedence when enabled.
+	// mTLS takes precedence when a client cert is actually presented.
 	if s.mtlsEnabled() {
 		_, err := s.verifyMTLSClient(r)
-		return err == nil
+		if err == nil {
+			return true
+		}
+		// No valid cert presented — fall through to shared-secret auth.
 	}
 	if s.verifySharedSecret(r) {
 		return true
