@@ -482,6 +482,7 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "host_removed",
+		Username:  adminUser,
 		Hostname:  req.Hostname,
 		Actor:     adminUser,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -722,6 +723,7 @@ func (s *Server) runDeployJob(job *deployJob, hostname string, port int, sshUser
 			s.store.LogAction(job.initiator, challpkg.ActionDeployed, logHost, "", "")
 			s.sendEventNotification(notify.WebhookData{
 				Event:     "deployed",
+				Username:  job.initiator,
 				Hostname:  logHost,
 				Actor:     job.initiator,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),

@@ -1009,6 +1009,7 @@ func (s *Server) handleRotateHost(w http.ResponseWriter, r *http.Request) {
 	s.sseBroadcaster.Broadcast(username, "host_changed")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "breakglass_rotation_requested",
+		Username:  username,
 		Hostname:  hostname,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Actor:     username,

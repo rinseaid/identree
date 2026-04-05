@@ -466,13 +466,13 @@ print(hmac.new(key, ('escrow:${hostname}:${ts}').encode(), hashlib.sha256).hexdi
         -d "{\"hostname\":\"${hostname}\",\"password\":\"${password}\"}" >/dev/null
 }
 
-escrow_password "prod-web-01"      "K7#mPx!4qRz@9LvN2wYs"
-escrow_password "prod-web-02"      "Bw3&fGn!8TpJ#5xMc@Yq"
-escrow_password "prod-db-01"       "H9$kLm@2vXnR!7pZq#Wd"
-escrow_password "prod-lb-01"       "Qx5!rTn#3JwK@8mPv$Yz"
-escrow_password "staging-01"       "Dn6@wMp!4vRx#9LkJ$Qs"
-escrow_password "staging-02"       "Fg8#bYn!2TqK@5xMw$Lz"
-escrow_password "data-worker-01"   "Jv4!pRm#7XnL@3wKq$Ys"
+escrow_password "prod-web-01"      'K7#mPx!4qRz@9LvN2wYs'
+escrow_password "prod-web-02"      'Bw3&fGn!8TpJ#5xMc@Yq'
+escrow_password "prod-db-01"       'H9$kLm@2vXnR!7pZq#Wd'
+escrow_password "prod-lb-01"       'Qx5!rTn#3JwK@8mPv$Yz'
+escrow_password "staging-01"       'Dn6@wMp!4vRx#9LkJ$Qs'
+escrow_password "staging-02"       'Fg8#bYn!2TqK@5xMw$Lz'
+escrow_password "data-worker-01"   'Jv4!pRm#7XnL@3wKq$Ys'
 
 echo "    7 break-glass passwords escrowed."
 

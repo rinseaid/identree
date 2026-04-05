@@ -177,6 +177,7 @@ func (s *Server) handleSudoRuleAdd(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "sudo_rule_modified",
+		Username:  adminUser,
 		Hostname:  rule.Group,
 		Actor:     adminUser,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -236,6 +237,7 @@ func (s *Server) handleSudoRuleUpdate(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "sudo_rule_modified",
+		Username:  adminUser,
 		Hostname:  rule.Group,
 		Actor:     adminUser,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -283,6 +285,7 @@ func (s *Server) handleSudoRuleDelete(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, group, "", adminUser)
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "sudo_rule_modified",
+		Username:  adminUser,
 		Hostname:  group,
 		Actor:     adminUser,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),

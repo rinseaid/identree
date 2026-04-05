@@ -87,6 +87,9 @@ SSSD_BASE
 [ -n "$SSSD_USER_NAME_ATTR" ]     && printf 'ldap_user_name          = %s\n' "$SSSD_USER_NAME_ATTR"     >> /etc/sssd/sssd.conf
 # SID-based ID mapping: required for AD schema (id_provider=ldap defaults to false)
 [ "$SSSD_ID_MAPPING" = "true" ]   && echo "ldap_id_mapping         = true"                       >> /etc/sssd/sssd.conf
+# Fallback home directory for providers that don't expose homeDirectory in LDAP
+# (e.g. Kanidm). Uses %u placeholder for the username.
+[ -n "${SSSD_FALLBACK_HOMEDIR:-}" ] && printf 'fallback_homedir        = %s\n' "$SSSD_FALLBACK_HOMEDIR" >> /etc/sssd/sssd.conf
 
 # Append bind credentials when a non-anonymous bind is required.
 # When LDAP_BIND_DN is empty and IDENTREE_SERVER_URL is set, auto-provision

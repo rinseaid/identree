@@ -597,6 +597,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		s.store.LogAction(username, challpkg.ActionConfigChanged, "", "", username)
 		s.sendEventNotification(notify.WebhookData{
 			Event:     "config_changed",
+			Username:  username,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Actor:     username,
 		})
@@ -2498,6 +2499,7 @@ func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(username, challpkg.ActionServerRestarted, "", "", username)
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "server_restarted",
+		Username:  username,
 		Actor:     username,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})

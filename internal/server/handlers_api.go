@@ -949,6 +949,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	slog.Warn("BREAKGLASS_ESCROWED", "host", req.Hostname, "backend", backendName, "timestamp", time.Now().UTC().Format(time.RFC3339), "remote_addr", remoteAddr(r))
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "breakglass_escrowed",
+		Username:  req.Hostname,
 		Hostname:  req.Hostname,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
@@ -1034,6 +1035,7 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "revealed_breakglass",
+		Username:  actor,
 		Hostname:  hostname,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Actor:     actor,

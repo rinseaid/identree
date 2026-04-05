@@ -134,6 +134,7 @@ services:
       LDAP_USER_SEARCH_BASE: "dc=localhost"
       LDAP_GROUP_SEARCH_BASE: "dc=localhost"
 
+      SSSD_FALLBACK_HOMEDIR: "/home/%u"
       SSSD_SUDO_PROVIDER: "none"
       STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
 
