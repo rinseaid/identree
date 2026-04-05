@@ -44,7 +44,12 @@ py() { python3 -c "import sys,json; d=json.load(sys.stdin); $1"; }
 wait_for "${AK_URL}/-/health/live/" "authentik"
 # Give the worker time to run migrations and create default objects
 echo "==> Waiting for Authentik worker (migrations + default flows)..."
-until ak GET /flows/instances/ 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if len(d.get('results',[]))>0 else 1)" 2>/dev/null; do
+# Wait until all three required flow designations exist (authorization,
+# authentication, invalidation). Just checking "any flow" is not enough —
+# the worker creates them asynchronously after migrations.
+until ak GET "/flows/instances/?designation=authorization" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('results') else 1)" 2>/dev/null \
+   && ak GET "/flows/instances/?designation=authentication" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('results') else 1)" 2>/dev/null \
+   && ak GET "/flows/instances/?designation=invalidation" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('results') else 1)" 2>/dev/null; do
     sleep 5
 done
 echo "    Authentik API ready."
