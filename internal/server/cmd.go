@@ -453,25 +453,30 @@ func runServer() {
 	periodicFlushDone := make(chan struct{})
 
 	// Periodically flush session state to disk to minimize data loss on crash.
-	go func() {
-		defer close(periodicFlushDone)
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("periodic flush panic recovered", "panic", r)
+	// Skip when using Redis — all state is already persisted.
+	if cfg.StateBackend != "redis" {
+		go func() {
+			defer close(periodicFlushDone)
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("periodic flush panic recovered", "panic", r)
+				}
+			}()
+			ticker := time.NewTicker(10 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					srv.store.SaveState()
+					slog.Debug("periodic state flush completed")
+				case <-periodicFlushCtx.Done():
+					return
+				}
 			}
 		}()
-		ticker := time.NewTicker(10 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				srv.store.SaveState()
-				slog.Debug("periodic state flush completed")
-			case <-periodicFlushCtx.Done():
-				return
-			}
-		}
-	}()
+	} else {
+		close(periodicFlushDone) // no goroutine to wait for
+	}
 
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,

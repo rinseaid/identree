@@ -131,7 +131,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		logReason = challenge.Reason
 	}
 	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, username, logReason)
-	s.broadcastSSE(challenge.Username, "challenge_resolved")
+	s.sseBroadcaster.Broadcast(challenge.Username, "challenge_resolved")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "challenge_approved",
 		Username:  challenge.Username,
@@ -435,7 +435,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		onetapLogReason = challenge.Reason
 	}
 	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, approver, onetapLogReason)
-	s.broadcastSSE(challenge.Username, "challenge_resolved")
+	s.sseBroadcaster.Broadcast(challenge.Username, "challenge_resolved")
 	slog.Info("ONETAP_APPROVED", "user", challenge.Username, "approver", approver, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
 
 	// Render a simple success page
@@ -523,7 +523,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 
 	// Log the action
 	s.store.LogAction(sessionOwner, challpkg.ActionRevoked, displayHostname, "", actor)
-	s.broadcastSSE(sessionOwner, "session_changed")
+	s.sseBroadcaster.Broadcast(sessionOwner, "session_changed")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "session_revoked",
 		Username:  sessionOwner,
@@ -589,7 +589,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.broadcastSSE(username, "challenge_resolved")
+	s.sseBroadcaster.Broadcast(username, "challenge_resolved")
 	if count == 0 {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
@@ -643,7 +643,7 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 		slog.Info("BULK_REVOKE_ALL", "user", sessUser, "host", sess.Hostname, "remote_addr", remoteAddr(r))
 		count++
 		if !notified[sessUser] {
-			s.broadcastSSE(sessUser, "session_changed")
+			s.sseBroadcaster.Broadcast(sessUser, "session_changed")
 			notified[sessUser] = true
 		}
 	}
@@ -721,7 +721,7 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogAction(username, challpkg.ActionExtended, displayHostname, "", actor)
 	slog.Info("EXTENDED", "user", username, "host", displayHostname, "remaining", remaining, "remote_addr", remoteAddr(r))
-	s.broadcastSSE(username, "session_changed")
+	s.sseBroadcaster.Broadcast(username, "session_changed")
 
 	dest := safeRedirectDest(r.FormValue("from"))
 	expiry := time.Now().Add(remaining)
@@ -758,7 +758,7 @@ func (s *Server) handleExtendAll(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-	s.broadcastSSE(targetUser, "session_changed")
+	s.sseBroadcaster.Broadcast(targetUser, "session_changed")
 	slog.Info("BULK_EXTEND_ALL", "user", username, "count", count, "target_user", targetUser, "remote_addr", remoteAddr(r))
 
 	expiry := time.Now().Add(s.cfg.GracePeriod)
@@ -812,7 +812,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("REJECTED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
 	s.store.LogActionWithReason(challenge.Username, challpkg.ActionRejected, hostname, challenge.UserCode, username, challenge.Reason)
-	s.broadcastSSE(challenge.Username, "challenge_resolved")
+	s.sseBroadcaster.Broadcast(challenge.Username, "challenge_resolved")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "challenge_rejected",
 		Username:  challenge.Username,
@@ -867,7 +867,7 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.broadcastSSE(username, "challenge_resolved")
+	s.sseBroadcaster.Broadcast(username, "challenge_resolved")
 	if count == 0 {
 		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 		return
@@ -961,7 +961,7 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 	s.store.CreateGraceSession(targetUser, hostname, duration)
 	s.store.LogAction(targetUser, challpkg.ActionElevated, hostname, "", username)
 	slog.Info("ELEVATED", "user", targetUser, "host", hostname, "duration", duration, "by", username, "remote_addr", remoteAddr(r))
-	s.broadcastSSE(targetUser, "session_changed")
+	s.sseBroadcaster.Broadcast(targetUser, "session_changed")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "grace_elevated",
 		Username:  targetUser,
@@ -1006,7 +1006,7 @@ func (s *Server) handleRotateHost(w http.ResponseWriter, r *http.Request) {
 	s.store.SetHostRotateBefore(hostname)
 	s.store.LogAction(username, challpkg.ActionRotationRequested, hostname, "", username)
 	slog.Info("ROTATE_BREAKGLASS", "user", username, "host", hostname, "remote_addr", remoteAddr(r))
-	s.broadcastSSE(username, "host_changed")
+	s.sseBroadcaster.Broadcast(username, "host_changed")
 	s.sendEventNotification(notify.WebhookData{
 		Event:     "breakglass_rotation_requested",
 		Hostname:  hostname,
@@ -1053,7 +1053,7 @@ func (s *Server) handleRotateAllHosts(w http.ResponseWriter, r *http.Request) {
 		s.store.LogAction(username, challpkg.ActionRotationRequested, h, "", username)
 	}
 	slog.Info("ROTATE_ALL_BREAKGLASS", "user", username, "count", len(hosts), "remote_addr", remoteAddr(r))
-	s.broadcastSSE(username, "host_changed")
+	s.sseBroadcaster.Broadcast(username, "host_changed")
 	s.setFlashCookie(w, fmt.Sprintf("rotated_all:%d", len(hosts)))
 	http.Redirect(w, r, s.baseURL+"/admin/hosts", http.StatusSeeOther)
 }

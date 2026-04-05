@@ -210,6 +210,7 @@ type healthCheckResult struct {
 	pocketid   string // "ok" or "unreachable" (empty when in bridge mode)
 	oidc       string // "ok" or "unreachable"
 	ldapServer string // "ok" or "not_started" (empty when LDAP disabled)
+	redis      string // "ok" or "error" (empty when state backend is local)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +243,15 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		s.healthzMu.Unlock()
 		if !stateOK {
 			res.disk = "not_writable"
+		}
+	}
+
+	// ── 1b. Store health check (Redis PING when backend=redis) ───────────────
+	if s.cfg.StateBackend == "redis" {
+		if err := s.store.HealthCheck(); err != nil {
+			res.redis = "error"
+		} else {
+			res.redis = "ok"
 		}
 	}
 
@@ -350,7 +360,8 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	// the server can continue serving LDAP queries from its in-memory cache.
 	criticalFail := res.disk == "not_writable" ||
 		res.ldapSync == "stale" ||
-		res.ldapServer == "not_started"
+		res.ldapServer == "not_started" ||
+		res.redis == "error"
 	degradedFail := res.pocketid == "unreachable" || res.oidc == "unreachable"
 
 	checksJSON := buildChecksJSON(res)
@@ -384,6 +395,9 @@ func buildChecksJSON(res healthCheckResult) string {
 	}
 	if res.ldapServer != "" {
 		pairs = append(pairs, `"ldap_server":"`+res.ldapServer+`"`)
+	}
+	if res.redis != "" {
+		pairs = append(pairs, `"redis":"`+res.redis+`"`)
 	}
 	return strings.Join(pairs, ",")
 }

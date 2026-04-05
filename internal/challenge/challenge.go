@@ -213,6 +213,9 @@ type ChallengeStore struct {
 
 	usedEscrowTokens   map[string]time.Time // escrow token key -> first-seen time (replay prevention)
 	usedEscrowTokensMu sync.Mutex
+
+	sessionNoncesMap map[string]SessionNonceData // nonce -> OIDC login state
+	sessionNoncesMu  sync.Mutex
 }
 
 // persistedState is the JSON-serializable snapshot of grace sessions, revocation timestamps,
@@ -260,6 +263,7 @@ func NewChallengeStore(ttl, gracePeriod time.Duration, persistPath string) *Chal
 		oneTapUsed:         make(map[string]bool),
 		lastOIDCAuth:       make(map[string]time.Time),
 		usedEscrowTokens:   make(map[string]time.Time),
+		sessionNoncesMap:   make(map[string]SessionNonceData),
 		ttl:                ttl,
 		gracePeriod:        gracePeriod,
 		persistPath:        persistPath,
@@ -1459,6 +1463,15 @@ func (s *ChallengeStore) reap() {
 	if noncePruned {
 		s.dirty.Store(true)
 	}
+	// Prune stale session nonces (OIDC login state older than 15 minutes).
+	sessionNonceCutoff := now.Add(-15 * time.Minute)
+	s.sessionNoncesMu.Lock()
+	for nonce, data := range s.sessionNoncesMap {
+		if data.IssuedAt.Before(sessionNonceCutoff) {
+			delete(s.sessionNoncesMap, nonce)
+		}
+	}
+	s.sessionNoncesMu.Unlock()
 	graceSessions.Set(float64(len(s.lastApproval)))
 	s.mu.Unlock()
 	if data != nil {
@@ -1998,6 +2011,47 @@ func (s *ChallengeStore) SaveState() {
 	data, rotate := s.marshalStateLocked()
 	s.mu.Unlock()
 	s.writeStateToDisk(data, rotate)
+}
+
+// HealthCheck verifies the local store is operational. For the file-backed store
+// this checks that the persist directory is writable (when persistence is enabled).
+func (s *ChallengeStore) HealthCheck() error {
+	if s.persistPath == "" {
+		return nil
+	}
+	dir := filepath.Dir(s.persistPath)
+	tmp, err := os.CreateTemp(dir, ".healthz-store-*")
+	if err != nil {
+		return fmt.Errorf("store health check: %w", err)
+	}
+	tmp.Close()
+	os.Remove(tmp.Name())
+	return nil
+}
+
+// StoreSessionNonce stores OIDC login state for an in-flight session.
+// For the local store this is an in-memory map; ttl is ignored (pruning is
+// handled by the server's periodic cleanup goroutine).
+func (s *ChallengeStore) StoreSessionNonce(nonce string, data SessionNonceData, _ time.Duration) error {
+	s.sessionNoncesMu.Lock()
+	defer s.sessionNoncesMu.Unlock()
+	s.sessionNoncesMap[nonce] = data
+	return nil
+}
+
+// GetSessionNonce retrieves OIDC login state by nonce.
+func (s *ChallengeStore) GetSessionNonce(nonce string) (SessionNonceData, bool) {
+	s.sessionNoncesMu.Lock()
+	defer s.sessionNoncesMu.Unlock()
+	d, ok := s.sessionNoncesMap[nonce]
+	return d, ok
+}
+
+// DeleteSessionNonce removes OIDC login state for the given nonce.
+func (s *ChallengeStore) DeleteSessionNonce(nonce string) {
+	s.sessionNoncesMu.Lock()
+	defer s.sessionNoncesMu.Unlock()
+	delete(s.sessionNoncesMap, nonce)
 }
 
 // generateUserCode creates a human-friendly code like "ABCDEF-123456".

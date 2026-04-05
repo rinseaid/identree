@@ -23,6 +23,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/oauth2"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/rinseaid/identree/internal/audit"
 	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
@@ -79,7 +81,7 @@ type Server struct {
 	cfg    *config.ServerConfig
 	cfgMu  sync.RWMutex // protects concurrent reads/writes of cfg slice fields during live updates
 	baseURL      string // cfg.ExternalURL with trailing slashes stripped; precomputed once
-	store        *challenge.ChallengeStore
+	store        challenge.Store
 	hostRegistry *HostRegistry
 	oidcConfig   oauth2.Config
 	verifier     *oidc.IDTokenVerifier
@@ -90,8 +92,9 @@ type Server struct {
 	sessionNonces  map[string]sessionNonceData
 	sessionNonceMu sync.Mutex
 
-	sseClients map[string][]chan string
-	sseMu      sync.RWMutex
+	sseClients     map[string][]chan string
+	sseMu          sync.RWMutex
+	sseBroadcaster SSEBroadcaster
 
 	// ldapLastSync tracks the last successful LDAP refresh time for healthz.
 	ldapLastSync   time.Time
@@ -288,10 +291,27 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	}
 
+	// Create the store based on the configured state backend.
+	var challengeStore challenge.Store
+	var storeRedisClient redis.UniversalClient // non-nil when backend=redis; used for SSE and metrics
+	switch cfg.StateBackend {
+	case "redis":
+		var err error
+		storeRedisClient, err = newRedisClient(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("redis client: %w", err)
+		}
+		challengeStore = challenge.NewRedisStore(storeRedisClient, cfg.RedisKeyPrefix, cfg.ChallengeTTL, cfg.GracePeriod)
+		slog.Info("state backend: redis", "prefix", cfg.RedisKeyPrefix)
+	default:
+		challengeStore = challenge.NewChallengeStore(cfg.ChallengeTTL, cfg.GracePeriod, cfg.SessionStateFile)
+		slog.Info("state backend: local", "path", cfg.SessionStateFile)
+	}
+
 	s := &Server{
 		cfg:           cfg,
 		baseURL:       strings.TrimRight(cfg.ExternalURL, "/"),
-		store:         challenge.NewChallengeStore(cfg.ChallengeTTL, cfg.GracePeriod, cfg.SessionStateFile),
+		store:         challengeStore,
 		hostRegistry:  NewHostRegistry(cfg.HostRegistryFile),
 		oidcConfig:    oidcConfig,
 		verifier:      verifier,
@@ -320,6 +340,20 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 				return http.ErrUseLastResponse
 			},
 		},
+	}
+
+	// ── SSE broadcaster ─────────────────────────────────────────────────────
+	if cfg.StateBackend == "redis" && storeRedisClient != nil {
+		// Create a dedicated Redis client for pub/sub to avoid blocking the store client.
+		sseRedisClient, err := newRedisClient(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("redis SSE client: %w", err)
+		}
+		s.sseBroadcaster = newRedisBroadcaster(s, sseRedisClient, cfg.RedisKeyPrefix)
+		// Start Redis pool metrics collection using the store's client.
+		startRedisMetrics(storeRedisClient, s.stopCh)
+	} else {
+		s.sseBroadcaster = &localBroadcaster{server: s}
 	}
 
 	// ── Audit streamer ──────────────────────────────────────────────────────
@@ -401,26 +435,8 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		}
 	}()
 
-	// Periodically prune sessionNonces entries older than 15 minutes.
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				cutoff := time.Now().Add(-15 * time.Minute)
-				s.sessionNonceMu.Lock()
-				for nonce, data := range s.sessionNonces {
-					if data.issuedAt.Before(cutoff) {
-						delete(s.sessionNonces, nonce)
-					}
-				}
-				s.sessionNonceMu.Unlock()
-			case <-s.stopCh:
-				return
-			}
-		}
-	}()
+	// Session nonce pruning is now handled by the store (ChallengeStore.reap
+	// for local backend, Redis TTL for redis backend).
 
 	s.registerRoutes()
 	return s, nil
@@ -707,6 +723,9 @@ func (s *Server) buildDisabledMap() map[string]bool {
 // Stop cleanly shuts down background resources.
 func (s *Server) Stop() {
 	close(s.stopCh)
+	if s.sseBroadcaster != nil {
+		s.sseBroadcaster.Close()
+	}
 	s.store.Stop()
 	if s.audit != nil {
 		s.audit.Close()

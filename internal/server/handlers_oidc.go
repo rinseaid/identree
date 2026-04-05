@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/randutil"
 	"github.com/rinseaid/identree/internal/sanitize"
 	"golang.org/x/oauth2"
@@ -127,19 +128,15 @@ func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 
 	verifier := oauth2.GenerateVerifier()
 
-	s.sessionNonceMu.Lock()
-	s.cleanExpiredSessionNonces()
-	if len(s.sessionNonces) > 5000 {
-		s.sessionNonceMu.Unlock()
-		http.Error(w, "too many requests — try again later", http.StatusTooManyRequests)
+	if err := s.store.StoreSessionNonce(nonce, challenge.SessionNonceData{
+		IssuedAt:     time.Now(),
+		CodeVerifier: verifier,
+		ClientIP:     remoteAddr(r),
+	}, 15*time.Minute); err != nil {
+		slog.Error("store session nonce", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.sessionNonces[nonce] = sessionNonceData{
-		issuedAt:     time.Now(),
-		codeVerifier: verifier,
-		clientIP:     remoteAddr(r),
-	}
-	s.sessionNonceMu.Unlock()
 
 	state := "sessions:" + nonce
 	authURL := s.oidcConfig.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
@@ -177,13 +174,16 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Verify and consume the nonce
-	s.sessionNonceMu.Lock()
-	s.cleanExpiredSessionNonces()
-	nonceData, nonceValid := s.sessionNonces[stateNonce]
+	storeNonceData, nonceValid := s.store.GetSessionNonce(stateNonce)
 	if nonceValid {
-		delete(s.sessionNonces, stateNonce)
+		s.store.DeleteSessionNonce(stateNonce)
 	}
-	s.sessionNonceMu.Unlock()
+	// Convert to local type for compatibility.
+	nonceData := sessionNonceData{
+		issuedAt:     storeNonceData.IssuedAt,
+		codeVerifier: storeNonceData.CodeVerifier,
+		clientIP:     storeNonceData.ClientIP,
+	}
 
 	if !nonceValid {
 		slog.Warn("SECURITY unknown or expired sessions nonce", "remote_addr", remoteAddr(r))

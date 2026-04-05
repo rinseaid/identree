@@ -223,6 +223,23 @@ type ServerConfig struct {
 	// DevLoginEnabled enables /dev/login?user=X&role=Y for bypassing OIDC in
 	// local test environments. NEVER enable in production.
 	DevLoginEnabled bool
+
+	// ── State backend ───────────────────────────────────────────��────────────
+	StateBackend        string        // "local" (default) | "redis"
+	RedisURL            string        // redis://host:6379/0
+	RedisPassword       string
+	RedisPasswordFile   string
+	RedisDB             int           // default 0
+	RedisKeyPrefix      string        // default "identree:"
+	RedisTLS            bool
+	RedisTLSCACert      string        // PEM CA cert path
+	RedisSentinelMaster string
+	RedisSentinelAddrs  []string
+	RedisClusterAddrs   []string
+	RedisPoolSize       int           // default 10
+	RedisDialTimeout    time.Duration // default 5s
+	RedisReadTimeout    time.Duration // default 3s
+	RedisWriteTimeout   time.Duration // default 3s
 }
 
 // DeriveLDAPBindPassword returns the per-host LDAP bind password for hostname.
@@ -466,6 +483,22 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPProvisionEnabled: getBool("IDENTREE_LDAP_PROVISION_ENABLED", false),
 		LDAPExternalURL:      get("IDENTREE_LDAP_EXTERNAL_URL"),
 		LDAPTLSCACert:        get("IDENTREE_LDAP_TLS_CA_CERT"),
+
+		StateBackend:        stringDefault(get("IDENTREE_STATE_BACKEND"), "local"),
+		RedisURL:            get("IDENTREE_REDIS_URL"),
+		RedisPassword:       get("IDENTREE_REDIS_PASSWORD"),
+		RedisPasswordFile:   get("IDENTREE_REDIS_PASSWORD_FILE"),
+		RedisDB:             getInt("IDENTREE_REDIS_DB", 0),
+		RedisKeyPrefix:      stringDefault(get("IDENTREE_REDIS_KEY_PREFIX"), "identree:"),
+		RedisTLS:            getBool("IDENTREE_REDIS_TLS", false),
+		RedisTLSCACert:      get("IDENTREE_REDIS_TLS_CA_CERT"),
+		RedisSentinelMaster: get("IDENTREE_REDIS_SENTINEL_MASTER"),
+		RedisSentinelAddrs:  getSlice("IDENTREE_REDIS_SENTINEL_ADDRS"),
+		RedisClusterAddrs:   getSlice("IDENTREE_REDIS_CLUSTER_ADDRS"),
+		RedisPoolSize:       getInt("IDENTREE_REDIS_POOL_SIZE", 10),
+		RedisDialTimeout:    getDuration("IDENTREE_REDIS_DIAL_TIMEOUT", 5*time.Second),
+		RedisReadTimeout:    getDuration("IDENTREE_REDIS_READ_TIMEOUT", 3*time.Second),
+		RedisWriteTimeout:   getDuration("IDENTREE_REDIS_WRITE_TIMEOUT", 3*time.Second),
 	}
 
 	// Backward compatibility: accept old env var names with deprecation warnings.
@@ -617,6 +650,30 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 		if data, err := os.ReadFile(cfg.EscrowAuthSecretFile); err == nil {
 			cfg.EscrowAuthSecret = strings.TrimSpace(string(data))
+		}
+	}
+
+	// Validate StateBackend.
+	switch cfg.StateBackend {
+	case "", "local":
+		cfg.StateBackend = "local"
+	case "redis":
+		if cfg.RedisURL == "" && len(cfg.RedisClusterAddrs) == 0 {
+			return nil, fmt.Errorf("IDENTREE_REDIS_URL or IDENTREE_REDIS_CLUSTER_ADDRS must be set when IDENTREE_STATE_BACKEND=redis")
+		}
+	default:
+		return nil, fmt.Errorf("IDENTREE_STATE_BACKEND must be \"local\" or \"redis\" (got %q)", cfg.StateBackend)
+	}
+
+	// Load Redis password from file if RedisPasswordFile is set and RedisPassword is empty.
+	if cfg.RedisPasswordFile != "" && cfg.RedisPassword == "" {
+		for _, seg := range strings.Split(cfg.RedisPasswordFile, "/") {
+			if seg == ".." || seg == "." {
+				return nil, fmt.Errorf("IDENTREE_REDIS_PASSWORD_FILE must not contain path traversal sequences")
+			}
+		}
+		if data, err := os.ReadFile(cfg.RedisPasswordFile); err == nil {
+			cfg.RedisPassword = strings.TrimSpace(string(data))
 		}
 	}
 

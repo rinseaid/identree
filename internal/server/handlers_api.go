@@ -346,7 +346,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	challengesCreated.Inc()
 	challpkg.ActiveChallenges.Inc()
 	slog.Info("CHALLENGE created", "challenge", challenge.ID[:8], "user", req.Username, "remote_addr", remoteAddr(r), "host", req.Hostname)
-	s.broadcastSSE(req.Username, "challenge_created")
+	s.sseBroadcaster.Broadcast(req.Username, "challenge_created")
 
 	// Build client_config if any server-side client overrides are set
 	clientCfg := s.buildClientConfig()
