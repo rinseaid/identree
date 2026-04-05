@@ -109,14 +109,15 @@ elif [ -n "$IDENTREE_SERVER_URL" ] && [ -n "$IDENTREE_SHARED_SECRET" ]; then
     echo "Auto-provisioning LDAP bind credentials for ${HOSTNAME_FOR_PROV}..."
     PROV_JSON=""
     for _attempt in $(seq 1 30); do
+        HTTP_CODE=""
         HTTP_CODE=$(curl -s -o /tmp/_prov_body -w '%{http_code}' \
             -H "X-Shared-Secret: ${IDENTREE_SHARED_SECRET}" \
             -H "X-Hostname: ${HOSTNAME_FOR_PROV}" \
-            "${IDENTREE_SERVER_URL}/api/client/provision" 2>/dev/null || echo "000")
+            "${IDENTREE_SERVER_URL}/api/client/provision" 2>/dev/null) || true
         if [ "$HTTP_CODE" = "200" ]; then
             PROV_JSON=$(cat /tmp/_prov_body)
             break
-        elif [ "$HTTP_CODE" != "000" ]; then
+        elif [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" != "000" ]; then
             # Server responded but with an error — provision not enabled or misconfigured.
             echo "  provision returned HTTP ${HTTP_CODE}, skipping auto-provision."
             break
