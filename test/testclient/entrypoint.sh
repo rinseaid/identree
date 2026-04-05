@@ -103,18 +103,28 @@ elif [ -n "$IDENTREE_SERVER_URL" ] && [ -n "$IDENTREE_SHARED_SECRET" ]; then
     # This is the full-mode path where identree acts as the LDAP server.
     # Retry up to 30 times (60s) — the identree server may still be starting,
     # or may be restarted with OIDC credentials after initial boot.
+    # Stop immediately if the server responds with an HTTP error (e.g. 404 means
+    # provision is not enabled — no point retrying). Only retry on connection failure.
     HOSTNAME_FOR_PROV="$(hostname)"
     echo "Auto-provisioning LDAP bind credentials for ${HOSTNAME_FOR_PROV}..."
     PROV_JSON=""
     for _attempt in $(seq 1 30); do
-        PROV_JSON=$(curl -sf \
+        HTTP_CODE=$(curl -s -o /tmp/_prov_body -w '%{http_code}' \
             -H "X-Shared-Secret: ${IDENTREE_SHARED_SECRET}" \
             -H "X-Hostname: ${HOSTNAME_FOR_PROV}" \
-            "${IDENTREE_SERVER_URL}/api/client/provision" 2>/dev/null || echo "")
-        [ -n "$PROV_JSON" ] && break
+            "${IDENTREE_SERVER_URL}/api/client/provision" 2>/dev/null || echo "000")
+        if [ "$HTTP_CODE" = "200" ]; then
+            PROV_JSON=$(cat /tmp/_prov_body)
+            break
+        elif [ "$HTTP_CODE" != "000" ]; then
+            # Server responded but with an error — provision not enabled or misconfigured.
+            echo "  provision returned HTTP ${HTTP_CODE}, skipping auto-provision."
+            break
+        fi
         [ "$_attempt" -eq 1 ] && echo "  provision endpoint not ready, retrying..."
         sleep 2
     done
+    rm -f /tmp/_prov_body
     if [ -n "$PROV_JSON" ]; then
         PROV_BIND_DN=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('bind_dn',''))" 2>/dev/null || echo "")
         PROV_BIND_PW=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('bind_password',''))" 2>/dev/null || echo "")

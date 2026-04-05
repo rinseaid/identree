@@ -221,11 +221,8 @@ echo "    bob:";       kapi POST /v1/person/bob/_unix \
 echo "    testadmin:"; kapi POST /v1/person/testadmin/_unix \
     -d '{"shell": "/bin/bash"}' | head -c 200; echo
 
-# Set homedirectory via _attr (posixaccount class now present after _unix call).
-echo "    homedirs:"; \
-    kapi PUT /v1/person/alice/_attr/homedirectory    -d '["/home/alice"]'      | head -c 100; echo; \
-    kapi PUT /v1/person/bob/_attr/homedirectory      -d '["/home/bob"]'        | head -c 100; echo; \
-    kapi PUT /v1/person/testadmin/_attr/homedirectory -d '["/home/testadmin"]' | head -c 100; echo
+# Kanidm does not support the homeDirectory LDAP attribute; SSSD uses
+# fallback_homedir = /home/%u instead (set in docker-compose env).
 
 # ── Assign group membership ────────────────────────────────────────────────────
 # Groups were created by idm_admin (non-HP, no entry_managed_by), so
