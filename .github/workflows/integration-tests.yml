@@ -286,10 +286,12 @@ jobs:
             apt-get install -y -qq sssd sssd-ldap libpam-sss libnss-sss libsss-sudo sudo >/dev/null
           '
 
-          # 4. Copy the identree binary from the identree container
-          docker cp integ-full-identree:/usr/local/bin/identree /tmp/identree-ci-bin
+          # 4. Copy the identree binary from the identree container.
+          # The binary may be a symlink in the container, so use cat to
+          # dereference it and get the actual file content.
+          docker exec integ-full-identree cat /usr/local/bin/identree > /tmp/identree-ci-bin
+          chmod 755 /tmp/identree-ci-bin
           docker cp /tmp/identree-ci-bin integ-full-setup-test:/usr/local/bin/identree
-          docker exec integ-full-setup-test chmod 755 /usr/local/bin/identree
 
           # 5. Write /etc/identree/client.conf
           docker exec integ-full-setup-test bash -c 'mkdir -p /etc/identree && printf "IDENTREE_SERVER_URL=http://identree:8090\nIDENTREE_SHARED_SECRET=integ-full-shared-secret-abc123456\n" > /etc/identree/client.conf && chmod 600 /etc/identree/client.conf'
