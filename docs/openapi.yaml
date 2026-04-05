@@ -1,0 +1,2281 @@
+openapi: 3.1.0
+info:
+  title: identree API
+  description: >
+    identree bridges PAM sudo challenges to an OIDC identity provider, serves
+    an admin dashboard, exposes an LDAP directory, and manages break-glass
+    password escrow. This specification covers all HTTP API endpoints.
+  version: 0.1.0
+  license:
+    name: MIT
+
+servers:
+  - url: "{scheme}://{host}"
+    variables:
+      scheme:
+        default: https
+        enum: [http, https]
+      host:
+        default: identree.example.com
+
+# ---------------------------------------------------------------------------
+# Security schemes
+# ---------------------------------------------------------------------------
+security: []
+
+components:
+  securitySchemes:
+    sharedSecret:
+      type: apiKey
+      in: header
+      name: X-Shared-Secret
+      description: >
+        Global shared secret or per-host secret from the host registry.
+        Used by PAM clients for challenge creation, polling, grace-status,
+        escrow, and client provisioning.
+
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: identree_session
+      description: >
+        HMAC-signed session cookie set after OIDC login.
+        Used by browser-based dashboard and admin endpoints.
+        Most mutating endpoints also require CSRF token fields.
+
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: >
+        API key passed as `Authorization: Bearer <key>`.
+        Configured via IDENTREE_API_KEYS. Used for programmatic access.
+
+    metricsToken:
+      type: http
+      scheme: bearer
+      description: >
+        Metrics scrape token set via IDENTREE_METRICS_TOKEN.
+        Can also be passed as `?token=<value>` query parameter.
+
+    webhookSignature:
+      type: apiKey
+      in: header
+      name: X-Webhook-Signature
+      description: >
+        HMAC-SHA256 signature computed over the request body using
+        IDENTREE_WEBHOOK_SECRET. Used by PocketID webhook events.
+
+  schemas:
+    # -- Core domain types --------------------------------------------------
+
+    ChallengeStatus:
+      type: string
+      enum: [pending, approved, denied, expired]
+
+    Challenge:
+      type: object
+      properties:
+        id:
+          type: string
+          description: 32-character hex challenge ID.
+        user_code:
+          type: string
+          description: Short human-readable approval code.
+        username:
+          type: string
+        status:
+          $ref: "#/components/schemas/ChallengeStatus"
+        hostname:
+          type: string
+        reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    ActionLogEntry:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        action:
+          type: string
+          description: >
+            One of: approved, rejected, auto_approved, revoked, extended,
+            elevated, rotated_breakglass, revealed_breakglass, removed_host,
+            user_removed, rotation_requested, deployed, config_changed,
+            sudo_rule_modified, server_restarted, claims_updated.
+        hostname:
+          type: string
+        code:
+          type: string
+        actor:
+          type: string
+        reason:
+          type: string
+
+    GraceSession:
+      type: object
+      properties:
+        username:
+          type: string
+        hostname:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    EscrowRecord:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        item_id:
+          type: string
+        vault_id:
+          type: string
+
+    WebhookData:
+      type: object
+      description: Payload sent to configured notification webhook endpoints.
+      properties:
+        event:
+          type: string
+          description: >
+            Event type: challenge_created, challenge_approved,
+            challenge_rejected, auto_approved, session_revoked,
+            sessions_revoked_bulk, grace_elevated,
+            breakglass_rotation_requested, revealed_breakglass,
+            host_removed, user_removed, config_changed, test.
+        username:
+          type: string
+        hostname:
+          type: string
+        user_code:
+          type: string
+        approval_url:
+          type: string
+        onetap_url:
+          type: string
+        expires_in:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+        reason:
+          type: string
+        actor:
+          type: string
+
+    AuditEvent:
+      type: object
+      description: Structured audit record emitted to SIEM sinks.
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        event:
+          type: string
+        username:
+          type: string
+        hostname:
+          type: string
+        code:
+          type: string
+        actor:
+          type: string
+        reason:
+          type: string
+        source:
+          type: string
+          description: Always "identree".
+        version:
+          type: string
+
+    ClientConfig:
+      type: object
+      description: Server-side client configuration overrides returned in challenge responses.
+      properties:
+        poll_interval:
+          type: string
+          description: Duration string (e.g. "2s").
+        timeout:
+          type: string
+          description: Duration string (e.g. "5m").
+        breakglass_enabled:
+          type: boolean
+        breakglass_password_type:
+          type: string
+        breakglass_rotation_days:
+          type: integer
+        token_cache_enabled:
+          type: boolean
+
+    HealthzResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, unhealthy]
+        checks:
+          type: object
+          properties:
+            disk:
+              type: string
+              enum: [ok, not_writable]
+            ldap_sync:
+              type: string
+              enum: [ok, stale]
+            pocketid:
+              type: string
+              enum: [ok, unreachable]
+            oidc:
+              type: string
+              enum: [ok, unreachable]
+            ldap_server:
+              type: string
+              enum: [ok, not_started]
+
+    ProvisionResponse:
+      type: object
+      properties:
+        ldap_url:
+          type: string
+        base_dn:
+          type: string
+        bind_dn:
+          type: string
+        bind_password:
+          type: string
+        tls_ca_cert:
+          type: string
+
+    SudoRule:
+      type: object
+      properties:
+        group:
+          type: string
+        hosts:
+          type: string
+        commands:
+          type: string
+        run_as_user:
+          type: string
+        run_as_group:
+          type: string
+        options:
+          type: string
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+# ---------------------------------------------------------------------------
+# Tags
+# ---------------------------------------------------------------------------
+tags:
+  - name: Challenges
+    description: Create, poll, approve, reject, and manage sudo challenges.
+  - name: Sessions
+    description: Manage grace-period sessions (revoke, extend, elevate).
+  - name: Breakglass
+    description: Break-glass password escrow and reveal.
+  - name: Admin
+    description: Admin-only endpoints for users, groups, config, and operations.
+  - name: Deploy
+    description: Remote SSH deploy, remove, and stream operations.
+  - name: LDAP
+    description: LDAP client provisioning.
+  - name: Health
+    description: Health checks and metrics.
+  - name: Downloads
+    description: Binary downloads, install scripts, and systemd units.
+  - name: Webhooks
+    description: Incoming webhook receivers.
+  - name: SudoRules
+    description: Sudo rule management (bridge mode only).
+  - name: Dashboard
+    description: Browser-facing pages and utilities.
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+
+  # ── Challenges ──────────────────────────────────────────────────────────
+
+  /api/challenge:
+    post:
+      operationId: createChallenge
+      summary: Create a sudo challenge
+      tags: [Challenges]
+      security:
+        - sharedSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username:
+                  type: string
+                hostname:
+                  type: string
+                reason:
+                  type: string
+                  description: Optional justification for sudo access.
+      responses:
+        "201":
+          description: Challenge created (may be auto-approved if within grace period).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challenge_id:
+                    type: string
+                  user_code:
+                    type: string
+                  verification_url:
+                    type: string
+                  expires_in:
+                    type: integer
+                  status:
+                    type: string
+                    description: Present and set to "approved" when auto-approved.
+                  approval_token:
+                    type: string
+                    description: HMAC token for client-side verification (auto-approved only).
+                  grace_remaining:
+                    type: integer
+                    description: Seconds remaining in grace session (auto-approved only).
+                  notification_queued:
+                    type: boolean
+                  rotate_breakglass_before:
+                    type: string
+                    format: date-time
+                  revoke_tokens_before:
+                    type: string
+                    format: date-time
+                  client_config:
+                    $ref: "#/components/schemas/ClientConfig"
+        "400":
+          description: Invalid request body or username format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Invalid shared secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: Content-Type not application/json.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Justification required but not provided.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    const: justification_required
+                  justification_choices:
+                    type: array
+                    items:
+                      type: string
+        "429":
+          description: Rate limit exceeded or too many auth failures.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/challenge/{id}:
+    get:
+      operationId: pollChallenge
+      summary: Poll challenge status
+      tags: [Challenges]
+      security:
+        - sharedSecret: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{32}$"
+        - name: hostname
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Must match the challenge's origin hostname.
+      responses:
+        "200":
+          description: Current challenge status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: "#/components/schemas/ChallengeStatus"
+                  expires_in:
+                    type: integer
+                  approval_token:
+                    type: string
+                    description: Present when status is "approved".
+                  denial_token:
+                    type: string
+                    description: Present when status is "denied".
+                  id_token:
+                    type: string
+                    description: Raw OIDC ID token (approved only, when token cache enabled).
+                  grace_remaining:
+                    type: integer
+                    description: Grace period seconds remaining (approved only).
+        "400":
+          description: Invalid challenge ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Hostname mismatch or credential does not match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: Challenge expired or not found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: expired
+
+  /api/challenges/approve:
+    post:
+      operationId: approveChallenge
+      summary: Approve a pending challenge from the dashboard
+      tags: [Challenges]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, challenge_id]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                challenge_id:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to dashboard with flash message.
+        "400":
+          description: Invalid request.
+        "403":
+          description: CSRF failure or admin approval required.
+        "404":
+          description: Challenge not found or already resolved.
+
+  /api/challenges/approve-all:
+    post:
+      operationId: approveAllChallenges
+      summary: Approve all pending challenges for the user
+      tags: [Challenges]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to dashboard with flash message.
+
+  /api/challenges/reject:
+    post:
+      operationId: rejectChallenge
+      summary: Reject a pending challenge
+      tags: [Challenges]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, challenge_id]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                challenge_id:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to dashboard with flash message.
+        "404":
+          description: Challenge not found or already resolved.
+
+  /api/challenges/reject-all:
+    post:
+      operationId: rejectAllChallenges
+      summary: Reject all pending challenges for the user
+      tags: [Challenges]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to dashboard with flash message.
+
+  /api/onetap/{token}:
+    get:
+      operationId: oneTapConfirm
+      summary: Render one-tap approval confirmation page
+      tags: [Challenges]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "Format: {challenge_id}.{expires_unix}.{hmac_hex}"
+      responses:
+        "200":
+          description: HTML confirmation page.
+          content:
+            text/html: {}
+        "403":
+          description: Invalid or expired token.
+        "410":
+          description: Challenge expired.
+    post:
+      operationId: oneTapApprove
+      summary: Approve a challenge via one-tap link
+      tags: [Challenges]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, token]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                token:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: HTML success page.
+          content:
+            text/html: {}
+        "403":
+          description: Invalid CSRF or unauthorized.
+        "409":
+          description: Challenge already resolved.
+
+  # ── Grace status ────────────────────────────────────────────────────────
+
+  /api/grace-status:
+    get:
+      operationId: getGraceStatus
+      summary: Get grace period remaining for a user@host
+      tags: [Sessions]
+      security:
+        - sharedSecret: []
+      parameters:
+        - name: username
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: hostname
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Grace period status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  grace_remaining:
+                    type: integer
+                    description: Seconds remaining in grace period.
+                  revoke_tokens_before:
+                    type: string
+                    format: date-time
+                    description: Present when token revocation is active.
+        "400":
+          description: Missing or invalid username/hostname.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Hostname mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Sessions ───────��────────────────────────────────────────────────────
+
+  /api/sessions/revoke:
+    post:
+      operationId: revokeSession
+      summary: Revoke a grace session
+      tags: [Sessions]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, hostname]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                hostname:
+                  type: string
+                session_username:
+                  type: string
+                  description: Admin-only. Target user whose session to revoke.
+                from:
+                  type: string
+                  description: Redirect destination after action.
+      responses:
+        "303":
+          description: Redirect with flash message.
+
+  /api/sessions/revoke-all:
+    post:
+      operationId: revokeAllSessions
+      summary: Revoke all active grace sessions
+      tags: [Sessions]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                session_username:
+                  type: string
+                  description: Admin-only. Specific user to revoke, or omit for all users.
+                from:
+                  type: string
+      responses:
+        "303":
+          description: Redirect with flash message.
+
+  /api/sessions/extend:
+    post:
+      operationId: extendSession
+      summary: Extend a grace session
+      tags: [Sessions]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, hostname]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                hostname:
+                  type: string
+                session_username:
+                  type: string
+                  description: Admin-only. Target user whose session to extend.
+                duration:
+                  type: string
+                  description: Duration in seconds, or "max" for full grace period.
+                from:
+                  type: string
+      responses:
+        "303":
+          description: Redirect with flash message.
+        "404":
+          description: No active session found.
+
+  /api/sessions/extend-all:
+    post:
+      operationId: extendAllSessions
+      summary: Extend all active grace sessions to max duration
+      tags: [Sessions]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                session_username:
+                  type: string
+                  description: Admin-only. Specific user to extend.
+                from:
+                  type: string
+      responses:
+        "303":
+          description: Redirect with flash message.
+
+  /api/hosts/elevate:
+    post:
+      operationId: elevateHost
+      summary: Create a grace session for a host manually
+      tags: [Sessions]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, hostname, duration]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                hostname:
+                  type: string
+                duration:
+                  type: string
+                  description: Duration in seconds (clamped to [1h, grace_period]).
+                target_user:
+                  type: string
+                  description: Admin-only. User to elevate (defaults to self).
+                from:
+                  type: string
+      responses:
+        "303":
+          description: Redirect with flash message.
+        "403":
+          description: Not authorized or account disabled.
+
+  # ── Breakglass ──────────���────────────────────────���──────────────────────
+
+  /api/breakglass/escrow:
+    post:
+      operationId: breakglassEscrow
+      summary: Escrow a break-glass password
+      tags: [Breakglass]
+      security:
+        - sharedSecret: []
+      parameters:
+        - name: X-Escrow-Ts
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Unix timestamp for HMAC escrow token (non-registry mode).
+        - name: X-Escrow-Token
+          in: header
+          required: false
+          schema:
+            type: string
+          description: HMAC token binding escrow to hostname and timestamp.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname, password]
+              properties:
+                hostname:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Password escrowed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Invalid credential for hostname or escrow token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: Escrow token already used (replay protection).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Escrow not configured on server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/breakglass/reveal:
+    post:
+      operationId: breakglassReveal
+      summary: Reveal an escrowed break-glass password
+      description: Admin-only. Requires JSON admin auth (session + CSRF headers).
+      tags: [Breakglass]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-CSRF-Ts
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname]
+              properties:
+                hostname:
+                  type: string
+      responses:
+        "200":
+          description: Password revealed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  password:
+                    type: string
+                  escrowed_at:
+                    type: string
+                    format: date-time
+        "400":
+          description: Invalid hostname.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No escrow record for host.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: No escrow backend configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Host rotation ───────────────────────────────────────────────────────
+
+  /api/hosts/rotate:
+    post:
+      operationId: rotateHost
+      summary: Request breakglass rotation for a single host
+      tags: [Breakglass]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, hostname]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                hostname:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to admin/hosts with flash.
+        "403":
+          description: Not admin.
+
+  /api/hosts/rotate-all:
+    post:
+      operationId: rotateAllHosts
+      summary: Request breakglass rotation for all hosts
+      tags: [Breakglass]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to admin/hosts with flash.
+        "403":
+          description: Not admin.
+
+  # ── Deploy ──────���────────────────────────────────��──────────────────────
+
+  /api/deploy:
+    post:
+      operationId: startDeploy
+      summary: Start an SSH remote-install job
+      tags: [Deploy]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname, private_key]
+              properties:
+                hostname:
+                  type: string
+                port:
+                  type: integer
+                  default: 22
+                ssh_user:
+                  type: string
+                  default: root
+                private_key:
+                  type: string
+                  description: SSH private key (PEM format). Never stored.
+                pocketid_user:
+                  type: string
+                  description: Informational only.
+      responses:
+        "200":
+          description: Deploy job started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: Job ID for streaming output.
+        "400":
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized (admin only).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Per-IP rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Too many concurrent deploys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/deploy/stream/{id}:
+    get:
+      operationId: deployStream
+      summary: Stream deploy job output (SSE)
+      tags: [Deploy]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE event stream. Data events contain output lines; a final "status" event carries "done" or "failed".
+          content:
+            text/event-stream: {}
+        "400":
+          description: Invalid job ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Only the initiating admin may stream this job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Job not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/deploy/pubkey:
+    post:
+      operationId: deployPubkey
+      summary: Validate an SSH private key and return its fingerprint
+      tags: [Deploy]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [private_key]
+              properties:
+                private_key:
+                  type: string
+      responses:
+        "200":
+          description: Key info.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    description: SSH key type (e.g. ssh-ed25519).
+                  fingerprint:
+                    type: string
+                    description: SHA256 fingerprint.
+        "400":
+          description: Invalid key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/deploy/users:
+    get:
+      operationId: deployUsers
+      summary: List PocketID users with SSH public keys
+      tags: [Deploy]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Array of users with SSH keys.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    username:
+                      type: string
+                    email:
+                      type: string
+                    ssh_keys:
+                      type: array
+                      items:
+                        type: string
+        "401":
+          description: Unauthorized (admin only).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/deploy/remove:
+    post:
+      operationId: removeDeploy
+      summary: SSH into a host and run uninstall script, then remove from store
+      tags: [Deploy]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname, private_key]
+              properties:
+                hostname:
+                  type: string
+                port:
+                  type: integer
+                  default: 22
+                ssh_user:
+                  type: string
+                  default: root
+                private_key:
+                  type: string
+                unconfigure_pam:
+                  type: boolean
+                remove_files:
+                  type: boolean
+      responses:
+        "200":
+          description: Removal job started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+        "400":
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Too many concurrent deploys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/deploy/uninstall-script:
+    get:
+      operationId: getUninstallScript
+      summary: Get rendered uninstall shell script
+      tags: [Deploy]
+      parameters:
+        - name: pam
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false"]
+          description: Whether to unconfigure PAM (default true).
+        - name: files
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false"]
+          description: Whether to remove binary and config files (default true).
+      responses:
+        "200":
+          description: Shell script.
+          content:
+            text/x-shellscript: {}
+
+  /api/hosts/remove-host:
+    post:
+      operationId: removeHost
+      summary: Remove a host from identree store (no SSH cleanup)
+      tags: [Deploy]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname]
+              properties:
+                hostname:
+                  type: string
+      responses:
+        "200":
+          description: Host removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+        "400":
+          description: Invalid hostname.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized (admin only).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── LDAP Provisioning ─────��─────────────────────────────────────────────
+
+  /api/client/provision:
+    get:
+      operationId: clientProvision
+      summary: Get LDAP configuration for client host auto-provisioning
+      description: >
+        Returns LDAP URL, base DN, per-host bind DN/password, and optional TLS
+        CA cert. Only active when IDENTREE_LDAP_PROVISION_ENABLED=true.
+      tags: [LDAP]
+      security:
+        - sharedSecret: []
+      parameters:
+        - name: X-Hostname
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Client hostname for per-host bind credential derivation.
+      responses:
+        "200":
+          description: LDAP provisioning data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProvisionResponse"
+        "400":
+          description: Missing or invalid X-Hostname header.
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Provisioning not enabled.
+        "500":
+          description: Server misconfigured (missing secret, base DN, or LDAP URL).
+
+  # ── SSE Events ──────────────────────────────────────────────────────────
+
+  /api/events:
+    get:
+      operationId: sseEvents
+      summary: Server-Sent Events for live dashboard updates
+      tags: [Dashboard]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: >
+            SSE stream. Event type "update" with data payloads like
+            "challenge_created", "challenge_resolved", "session_changed",
+            "host_changed". Heartbeat comments every 30 seconds.
+          content:
+            text/event-stream: {}
+        "401":
+          description: Unauthorized.
+        "429":
+          description: Too many SSE connections.
+
+  # ── Admin endpoints ─��───────────────────────────────────────────────────
+
+  /api/users/remove:
+    post:
+      operationId: removeUser
+      summary: Remove a user from host registry and action log
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, target_user]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                target_user:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to admin/users.
+        "403":
+          description: Not admin or trying to remove self.
+
+  /api/admin/groups/claims:
+    post:
+      operationId: updateGroupClaims
+      summary: Update editable claims on a PocketID group
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, group_id]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                group_id:
+                  type: string
+                sudoCommands:
+                  type: string
+                sudoHosts:
+                  type: string
+                sudoRunAsUser:
+                  type: string
+                sudoRunAsGroup:
+                  type: string
+                sudoOptions:
+                  type: string
+                accessHosts:
+                  type: string
+      responses:
+        "200":
+          description: JSON response when Accept is application/json.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "303":
+          description: Redirect to admin/groups (default).
+        "403":
+          description: Not admin.
+
+  /api/admin/users/claims:
+    post:
+      operationId: updateUserClaims
+      summary: Update SSH keys and POSIX claims on a PocketID user
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, user_id]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                user_id:
+                  type: string
+                loginShell:
+                  type: string
+                homeDirectory:
+                  type: string
+                ssh_keys:
+                  type: string
+                  description: One SSH public key per line.
+      responses:
+        "303":
+          description: Redirect to admin/users.
+        "400":
+          description: Invalid SSH key or claim value.
+        "403":
+          description: Not admin.
+
+  /api/admin/users/claims-json:
+    get:
+      operationId: getUserClaims
+      summary: Get a user's SSH keys and claims as JSON
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User claims.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ssh_keys:
+                    type: array
+                    items:
+                      type: string
+                  other_claims:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                        value:
+                          type: string
+        "400":
+          description: Invalid user_id.
+        "401":
+          description: Unauthorized.
+        "403":
+          description: Referer header does not match ExternalURL.
+
+  /api/admin/test-notification:
+    post:
+      operationId: testNotification
+      summary: Send a test notification via the configured backend
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-CSRF-Ts
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Test notification sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "502":
+          description: Notification delivery failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  error:
+                    type: string
+        "503":
+          description: No notification backend configured.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  error:
+                    type: string
+
+  /api/admin/restart:
+    post:
+      operationId: adminRestart
+      summary: Restart the server (sends SIGTERM for graceful shutdown)
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+      responses:
+        "204":
+          description: Restart initiated.
+        "403":
+          description: Not admin.
+
+  # ── Sudo Rules (bridge mode) ──────────��─────────────────────────────────
+
+  /api/sudo-rules/add:
+    post:
+      operationId: addSudoRule
+      summary: Add a new sudo rule (bridge mode only)
+      tags: [SudoRules]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, group, commands]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                group:
+                  type: string
+                hosts:
+                  type: string
+                commands:
+                  type: string
+                run_as_user:
+                  type: string
+                run_as_group:
+                  type: string
+                options:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to admin/sudo-rules.
+        "400":
+          description: Invalid input.
+        "403":
+          description: Not admin.
+        "404":
+          description: Bridge mode not active.
+        "409":
+          description: Rule for this group already exists.
+
+  /api/sudo-rules/update:
+    post:
+      operationId: updateSudoRule
+      summary: Update an existing sudo rule (bridge mode only)
+      tags: [SudoRules]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, group, commands]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                group:
+                  type: string
+                hosts:
+                  type: string
+                commands:
+                  type: string
+                run_as_user:
+                  type: string
+                run_as_group:
+                  type: string
+                options:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to admin/sudo-rules.
+        "400":
+          description: Invalid input.
+        "403":
+          description: Not admin.
+        "404":
+          description: Rule not found or bridge mode not active.
+
+  /api/sudo-rules/delete:
+    post:
+      operationId: deleteSudoRule
+      summary: Delete a sudo rule (bridge mode only)
+      tags: [SudoRules]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, group]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                group:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to admin/sudo-rules.
+        "400":
+          description: Invalid input.
+        "403":
+          description: Not admin.
+        "404":
+          description: Rule not found or bridge mode not active.
+
+  # ── History ────���────────────────────────────────────────────────────────
+
+  /api/history/export:
+    get:
+      operationId: exportHistory
+      summary: Export action history as CSV
+      tags: [Dashboard]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: user
+          in: query
+          schema:
+            type: string
+          description: Filter by username (admin only).
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: CSV file download.
+          content:
+            text/csv: {}
+        "401":
+          description: Unauthorized.
+
+  # ── Webhooks ───────��────────────────────────────────────────────────────
+
+  /api/webhook/pocketid:
+    post:
+      operationId: pocketIDWebhook
+      summary: Receive PocketID directory change webhook
+      description: >
+        Validates X-Webhook-Signature HMAC-SHA256, then queues an LDAP refresh.
+      tags: [Webhooks]
+      security:
+        - webhookSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: PocketID webhook event payload (opaque to identree).
+      responses:
+        "204":
+          description: Accepted and refresh queued.
+        "403":
+          description: Invalid or missing webhook signature.
+        "415":
+          description: Content-Type not application/json.
+
+  # ── Health & Metrics ────────────────────────────────────────���───────────
+
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Health check
+      tags: [Health]
+      responses:
+        "200":
+          description: Healthy or degraded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthzResponse"
+        "503":
+          description: Unhealthy (disk not writable, LDAP stale, or LDAP not started).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthzResponse"
+
+  /metrics:
+    get:
+      operationId: metrics
+      summary: Prometheus metrics
+      tags: [Health]
+      security:
+        - metricsToken: []
+      parameters:
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Alternative to Authorization header for metrics token.
+      responses:
+        "200":
+          description: Prometheus text exposition format.
+          content:
+            text/plain: {}
+        "401":
+          description: Invalid or missing metrics token (when configured).
+
+  # ── Downloads ──────────��────────────────────────────────────────────────
+
+  /install.sh:
+    get:
+      operationId: getInstallScript
+      summary: Pre-configured installer shell script
+      tags: [Downloads]
+      responses:
+        "200":
+          description: Shell script with embedded server URL.
+          content:
+            text/x-shellscript: {}
+
+  /download/version:
+    get:
+      operationId: getVersion
+      summary: Get running server version string
+      tags: [Downloads]
+      responses:
+        "200":
+          description: Version string.
+          content:
+            text/plain: {}
+
+  /download/identree-linux-amd64:
+    get:
+      operationId: downloadBinaryAmd64
+      summary: Download identree binary (linux/amd64)
+      tags: [Downloads]
+      responses:
+        "200":
+          description: Binary file.
+          content:
+            application/octet-stream: {}
+        "404":
+          description: Binary not available on this server.
+
+  /download/identree-linux-arm64:
+    get:
+      operationId: downloadBinaryArm64
+      summary: Download identree binary (linux/arm64)
+      tags: [Downloads]
+      responses:
+        "200":
+          description: Binary file.
+          content:
+            application/octet-stream: {}
+        "404":
+          description: Binary not available on this server.
+
+  /download/identree-linux-amd64.sha256:
+    get:
+      operationId: downloadChecksumAmd64
+      summary: Download SHA-256 checksum for linux/amd64 binary
+      tags: [Downloads]
+      responses:
+        "200":
+          description: Checksum in "hash  filename" format.
+          content:
+            text/plain: {}
+        "404":
+          description: Binary not available.
+
+  /download/identree-linux-arm64.sha256:
+    get:
+      operationId: downloadChecksumArm64
+      summary: Download SHA-256 checksum for linux/arm64 binary
+      tags: [Downloads]
+      responses:
+        "200":
+          description: Checksum in "hash  filename" format.
+          content:
+            text/plain: {}
+        "404":
+          description: Binary not available.
+
+  /download/systemd/{unit}:
+    get:
+      operationId: downloadSystemdUnit
+      summary: Download embedded systemd unit file
+      tags: [Downloads]
+      parameters:
+        - name: unit
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - identree-rotate.service
+              - identree-rotate.timer
+      responses:
+        "200":
+          description: Systemd unit file.
+          content:
+            text/plain: {}
+        "404":
+          description: Unknown unit name.
+
+  # ── Avatar proxy ────────────────────────────────────────────────────────
+
+  /api/avatar:
+    get:
+      operationId: avatarProxy
+      summary: Proxy a user avatar image (SSRF-safe)
+      tags: [Dashboard]
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+          description: Avatar URL to fetch (must be http/https, no private IPs).
+      responses:
+        "200":
+          description: Proxied image.
+          content:
+            image/*: {}
+        "400":
+          description: Invalid URL or not an image.
+        "404":
+          description: Upstream returned non-200 or URL missing.
+
+  # ── Dashboard pages (HTML) ─────���────────────────────────────────────────
+
+  /:
+    get:
+      operationId: dashboard
+      summary: Main dashboard page
+      tags: [Dashboard]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML dashboard.
+          content:
+            text/html: {}
+        "303":
+          description: Redirect to OIDC login if not authenticated.
+
+  /signout:
+    post:
+      operationId: signOut
+      summary: Sign out and clear session cookie
+      tags: [Dashboard]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [csrf_token, csrf_ts]
+              properties:
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to login page.
+
+  /theme:
+    get:
+      operationId: themeToggle
+      summary: Set theme preference cookie
+      tags: [Dashboard]
+      parameters:
+        - name: set
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [dark, light, system]
+        - name: from
+          in: query
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Redirect back to referring page.
+
+  /sessions/login:
+    get:
+      operationId: sessionsLogin
+      summary: Initiate OIDC login flow
+      tags: [Dashboard]
+      responses:
+        "303":
+          description: Redirect to OIDC provider.
+
+  /callback:
+    get:
+      operationId: oidcCallback
+      summary: OIDC authorization code callback
+      tags: [Dashboard]
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Redirect to dashboard or approval page on success.
+        "403":
+          description: Invalid state, expired nonce, or auth failure.
+
+  /approve/{code}:
+    get:
+      operationId: approvalPage
+      summary: Approval page for a challenge (by user code)
+      tags: [Dashboard]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: HTML approval page.
+          content:
+            text/html: {}
+        "303":
+          description: Redirect to login if not authenticated.
+        "404":
+          description: Challenge not found.
+
+  /history:
+    get:
+      operationId: historyPage
+      summary: Action history page
+      tags: [Dashboard]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML history page.
+          content:
+            text/html: {}
+
+  /access:
+    get:
+      operationId: accessPage
+      summary: Host access and permissions page
+      tags: [Dashboard]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML access page.
+          content:
+            text/html: {}
+
+  # ── Admin pages (HTML) ──────────────────────────────────────────────────
+
+  /admin:
+    get:
+      operationId: adminRedirect
+      summary: Redirect to admin users page
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      responses:
+        "303":
+          description: Redirect to /admin/users.
+
+  /admin/info:
+    get:
+      operationId: adminInfo
+      summary: System information page
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML system info page.
+          content:
+            text/html: {}
+
+  /admin/config:
+    get:
+      operationId: adminConfigGet
+      summary: Server configuration page
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML config form.
+          content:
+            text/html: {}
+    post:
+      operationId: adminConfigPost
+      summary: Save server configuration
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              description: TOML config key-value pairs plus CSRF fields.
+      responses:
+        "303":
+          description: Redirect to /admin/config with flash message.
+
+  /admin/users:
+    get:
+      operationId: adminUsers
+      summary: User management page
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML user management page.
+          content:
+            text/html: {}
+
+  /admin/groups:
+    get:
+      operationId: adminGroups
+      summary: Group management page
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML group management page.
+          content:
+            text/html: {}
+
+  /admin/hosts:
+    get:
+      operationId: adminHosts
+      summary: Host management page
+      tags: [Admin]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML host management page.
+          content:
+            text/html: {}
+
+  /admin/sudo-rules:
+    get:
+      operationId: adminSudoRules
+      summary: Sudo rules page (bridge mode only)
+      tags: [SudoRules]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML sudo rules page.
+          content:
+            text/html: {}
+        "303":
+          description: Redirect if not in bridge mode.
