@@ -60,6 +60,18 @@ func normalizeHostname(h string) string {
 	return strings.ToLower(strings.TrimSuffix(h, "."))
 }
 
+// HasHost returns true if the hostname is present in the registry.
+// When the registry is empty (no hosts registered), returns true for backward compatibility.
+func (r *HostRegistry) HasHost(hostname string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.hosts) == 0 {
+		return true
+	}
+	_, ok := r.hosts[normalizeHostname(hostname)]
+	return ok
+}
+
 // ValidateHost checks if a hostname is registered and the secret matches.
 // Returns true if validation passes. When the registry is empty (no hosts
 // registered), returns true for backward compatibility.

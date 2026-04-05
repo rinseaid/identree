@@ -236,6 +236,14 @@ func remoteAddr(r *http.Request) string {
 // handleCreateChallenge creates a new sudo challenge.
 // POST /api/challenge {"username": "jordan"}
 func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() {
+		// Pad all responses to a minimum of 5ms to prevent timing side channels
+		if elapsed := time.Since(start); elapsed < 5*time.Millisecond {
+			time.Sleep(5*time.Millisecond - elapsed)
+		}
+	}()
+
 	if r.Method != http.MethodPost {
 		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -534,10 +542,8 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		switch challenge.Status {
 		case challpkg.StatusApproved:
 			resp["approval_token"] = s.computeStatusHMAC(id, challenge.Username, "approved", challenge.BreakglassRotateBefore, challenge.RevokeTokensBefore)
-			// id_token is returned for the PAM client's local token cache
-			// (IDENTREE_TOKEN_CACHE_ENABLED). It contains OIDC claims but is
-			// transmitted over the HMAC-authenticated channel and cached locally
-			// on the managed host. It is NOT logged by the server.
+			// Forward the raw ID token so the PAM client can cache it locally
+			// for subsequent authentication without a full device flow.
 			if challenge.RawIDToken != "" {
 				resp["id_token"] = challenge.RawIDToken
 			}
