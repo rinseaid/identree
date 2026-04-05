@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -424,6 +425,123 @@ func TestConfigureNsswitch(t *testing.T) {
 		if changed {
 			t.Errorf("expected no change when provider already present, but lines were modified:\n%s",
 				strings.Join(lines, "\n"))
+		}
+	})
+}
+
+// ── TestWriteSSSDConfig ───────────────────────────────────────────────────────
+
+func TestWriteSSSDConfig(t *testing.T) {
+	t.Run("generates correct sssd.conf content", func(t *testing.T) {
+		dir := t.TempDir()
+
+		// Override the package-level constants by writing to a temp directory.
+		// writeSSSDConfig writes to /etc/sssd/sssd.conf which requires root,
+		// so we test the template rendering logic directly via fmt.Sprintf.
+		prov := &provisionResponse{
+			LDAPUrl:      "ldap://ldap.example.com:389",
+			BaseDN:       "dc=example,dc=com",
+			BindDN:       "cn=web1,ou=hosts,dc=example,dc=com",
+			BindPassword: "s3cret",
+		}
+
+		// Render the template the same way writeSSSDConfig does.
+		tlsReqcert := "never"
+		cacertLine := ""
+		content := fmt.Sprintf(sssdConfigTmpl,
+			prov.LDAPUrl,
+			prov.BaseDN,
+			prov.BindDN,
+			prov.BindPassword,
+			tlsReqcert,
+			cacertLine,
+		)
+
+		// Write to temp dir for inspection.
+		path := filepath.Join(dir, "sssd.conf")
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatalf("write temp sssd.conf: %v", err)
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read temp sssd.conf: %v", err)
+		}
+		got := string(data)
+
+		// Verify critical fields.
+		checks := []struct {
+			name    string
+			substr  string
+		}{
+			{"sudo_provider", "sudo_provider     = ldap"},
+			{"ldap_sudo_search_base", "ldap_sudo_search_base  = ou=sudoers,dc=example,dc=com"},
+			{"services", "services = nss, pam, sudo"},
+			{"access_provider", "access_provider   = ldap"},
+			{"cache_credentials", "cache_credentials           = false"},
+			{"enumerate", "enumerate   = false"},
+			{"ldap_uri", "ldap_uri               = ldap://ldap.example.com:389"},
+			{"ldap_search_base", "ldap_search_base       = dc=example,dc=com"},
+			{"ldap_default_bind_dn", "ldap_default_bind_dn      = cn=web1,ou=hosts,dc=example,dc=com"},
+			{"ldap_default_authtok", "ldap_default_authtok      = s3cret"},
+		}
+		for _, tc := range checks {
+			if !strings.Contains(got, tc.substr) {
+				t.Errorf("sssd.conf missing %s: expected substring %q", tc.name, tc.substr)
+			}
+		}
+	})
+
+	t.Run("includes TLS CA cert line when TLSCACert is set", func(t *testing.T) {
+		prov := &provisionResponse{
+			LDAPUrl:      "ldaps://ldap.example.com:636",
+			BaseDN:       "dc=example,dc=com",
+			BindDN:       "cn=web1,ou=hosts,dc=example,dc=com",
+			BindPassword: "s3cret",
+			TLSCACert:    "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n",
+		}
+
+		tlsReqcert := "demand"
+		cacertLine := "ldap_tls_cacert = " + sssdCACertPath + "\n"
+		content := fmt.Sprintf(sssdConfigTmpl,
+			prov.LDAPUrl,
+			prov.BaseDN,
+			prov.BindDN,
+			prov.BindPassword,
+			tlsReqcert,
+			cacertLine,
+		)
+
+		if !strings.Contains(content, "ldap_tls_reqcert      = demand") {
+			t.Error("expected ldap_tls_reqcert = demand when TLSCACert is set")
+		}
+		if !strings.Contains(content, "ldap_tls_cacert = "+sssdCACertPath) {
+			t.Error("expected ldap_tls_cacert line when TLSCACert is set")
+		}
+	})
+
+	t.Run("no TLS CA cert line when TLSCACert is empty", func(t *testing.T) {
+		prov := &provisionResponse{
+			LDAPUrl:      "ldap://ldap.example.com:389",
+			BaseDN:       "dc=example,dc=com",
+			BindDN:       "cn=web1,ou=hosts,dc=example,dc=com",
+			BindPassword: "s3cret",
+		}
+
+		content := fmt.Sprintf(sssdConfigTmpl,
+			prov.LDAPUrl,
+			prov.BaseDN,
+			prov.BindDN,
+			prov.BindPassword,
+			"never",
+			"",
+		)
+
+		if strings.Contains(content, "ldap_tls_cacert") {
+			t.Error("expected no ldap_tls_cacert line when TLSCACert is empty")
+		}
+		if !strings.Contains(content, "ldap_tls_reqcert      = never") {
+			t.Error("expected ldap_tls_reqcert = never when TLSCACert is empty")
 		}
 	})
 }

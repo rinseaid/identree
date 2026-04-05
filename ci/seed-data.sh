@@ -440,7 +440,43 @@ curl -sf -X POST "${IDENTREE_URL}/dev/seed-history" \
 
 echo "    History entries injected."
 
+# ── Seed break-glass escrow passwords ─────────────────────────────────────────
+
+echo "==> Seeding break-glass escrow passwords..."
+
+SHARED_SECRET="test-shared-secret-1234567890abc"
+
+escrow_password() {
+    local hostname="$1"
+    local password="$2"
+    # Compute HMAC escrow token: deriveKey(sharedSecret, "escrow") then HMAC("escrow:hostname:ts")
+    local ts
+    ts=$(date +%s)
+    local token
+    token=$(python3 -c "
+import hmac, hashlib
+key = hmac.new(b'${SHARED_SECRET}', b'escrow', hashlib.sha256).digest()
+print(hmac.new(key, ('escrow:${hostname}:${ts}').encode(), hashlib.sha256).hexdigest())
+")
+    curl -sf -X POST "${IDENTREE_URL}/api/breakglass/escrow" \
+        -H "Content-Type: application/json" \
+        -H "X-Shared-Secret: ${SHARED_SECRET}" \
+        -H "X-Escrow-Ts: ${ts}" \
+        -H "X-Escrow-Token: ${token}" \
+        -d "{\"hostname\":\"${hostname}\",\"password\":\"${password}\"}" >/dev/null
+}
+
+escrow_password "prod-web-01"      "K7#mPx!4qRz@9LvN2wYs"
+escrow_password "prod-web-02"      "Bw3&fGn!8TpJ#5xMc@Yq"
+escrow_password "prod-db-01"       "H9$kLm@2vXnR!7pZq#Wd"
+escrow_password "prod-lb-01"       "Qx5!rTn#3JwK@8mPv$Yz"
+escrow_password "staging-01"       "Dn6@wMp!4vRx#9LkJ$Qs"
+escrow_password "staging-02"       "Fg8#bYn!2TqK@5xMw$Lz"
+escrow_password "data-worker-01"   "Jv4!pRm#7XnL@3wKq$Ys"
+
+echo "    7 break-glass passwords escrowed."
+
 echo ""
 echo "==> Seed complete."
-echo "    PocketID users/groups, 13 approved sessions, and 3 pending challenges created."
+echo "    PocketID users/groups, 13 approved sessions, 3 pending challenges, and 7 break-glass passwords created."
 echo ""

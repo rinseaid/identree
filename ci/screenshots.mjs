@@ -118,6 +118,60 @@ await screenshot(context, "hosts", async (page) => {
   await page.goto(`${BASE_URL}/admin/hosts`, { waitUntil: "load" });
 });
 
+// ── 4a. Hosts – deploy modal ─────────────────────────────────────────────────
+
+console.log("Hosts (deploy modal)...");
+await screenshot(context, "hosts-deploy-modal", async (page) => {
+  await page.goto(`${BASE_URL}/admin/hosts`, { waitUntil: "load" });
+  // Click the deploy button to open the modal
+  const deployBtn = page.locator("#deploy-open-btn").first();
+  await deployBtn.waitFor({ timeout: 5000 }).catch(() => {});
+  if (await deployBtn.count() > 0) {
+    await deployBtn.click();
+    // Wait for the modal to have the "open" class
+    await page.waitForSelector("#deploy-modal.open", { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(300);
+  }
+});
+
+// ── 4b. Hosts – reveal modal ────────────────────────────────────────────────
+
+console.log("Hosts (reveal modal)...");
+await screenshot(context, "hosts-reveal-modal", async (page) => {
+  await page.goto(`${BASE_URL}/admin/hosts`, { waitUntil: "load" });
+  // Click the first reveal button (requires escrowed break-glass passwords)
+  const revealBtn = page.locator(".reveal-password-btn").first();
+  await revealBtn.waitFor({ timeout: 5000 }).catch(() => {});
+  if (await revealBtn.count() > 0) {
+    await revealBtn.click();
+    // The reveal modal uses display:flex when open (not a class toggle)
+    await page.waitForFunction(
+      () => {
+        const m = document.getElementById("reveal-modal");
+        return m && m.style.display === "flex";
+      },
+      { timeout: 5000 },
+    ).catch(() => {});
+    await page.waitForTimeout(300);
+  }
+});
+
+// ── 4c. Hosts – remove modal ────────────────────────────────────────────────
+
+console.log("Hosts (remove modal)...");
+await screenshot(context, "hosts-remove-modal", async (page) => {
+  await page.goto(`${BASE_URL}/admin/hosts`, { waitUntil: "load" });
+  // Click the first remove button to open the confirmation modal
+  const removeBtn = page.locator(".remove-host-btn").first();
+  await removeBtn.waitFor({ timeout: 5000 }).catch(() => {});
+  if (await removeBtn.count() > 0) {
+    await removeBtn.click();
+    // Wait for the modal to have the "open" class
+    await page.waitForSelector("#remove-modal.open", { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(300);
+  }
+});
+
 // ── 5. Users ───────────────────────────────────────────────────────────────────
 
 console.log("Users...");

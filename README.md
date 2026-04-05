@@ -321,6 +321,10 @@ Set up a webhook in PocketID pointing to `https://identree.example.com/api/webho
 
 See [docs/breakglass.md](docs/breakglass.md) for full details and per-backend examples.
 
+#### Operations
+
+See [docs/operations.md](docs/operations.md) for reverse proxy setup, backup procedures, monitoring, and security hardening.
+
 #### Persistent state files
 
 | Variable | Default | Description |

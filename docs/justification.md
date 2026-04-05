@@ -32,7 +32,7 @@ $ sudo systemctl restart nginx
     [2] Incident response
     [3] Deployment
     [4] Other (enter custom reason)
-  Choice [1]: 3
+  Choice [4]: 3
 
   Sudo requires identree approval.
   Approve at: https://identree.example.com/approve/ABCDEF-123456
@@ -42,7 +42,7 @@ $ sudo systemctl restart nginx
 Selecting the last option prompts for free-form text:
 
 ```
-  Choice [1]: 4
+  Choice [4]: 4
   Enter reason: Rolling back broken migration
 ```
 
@@ -53,6 +53,8 @@ For scripted or automated contexts (CI pipelines, runbooks), set `SUDO_REASON` t
 ```sh
 SUDO_REASON="Deploy release v1.4.2" sudo systemctl restart app
 ```
+
+When `SUDO_REASON` is set, the reason is sent with the initial challenge request regardless of whether justification is required by the server. This means the reason is always recorded in the audit log and shown to approvers.
 
 The value is passed directly to the challenge and recorded as the justification. If `IDENTREE_REQUIRE_JUSTIFICATION=true` and neither `SUDO_REASON` nor an interactive selection is provided, `sudo` fails with:
 

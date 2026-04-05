@@ -172,3 +172,5 @@ identree_audit_events_total{sink="splunk_hec",status="emitted"}
 | `IDENTREE_AUDIT_LOKI_URL` | — | Loki base URL (e.g. `http://loki:3100`) |
 | `IDENTREE_AUDIT_LOKI_TOKEN` | — | Optional Loki bearer token |
 | `IDENTREE_AUDIT_BUFFER_SIZE` | `4096` | Event channel buffer size |
+| `IDENTREE_AUDIT_LOG_MAX_SIZE` | `100MB` | Max bytes per log file before rotation (`0` disables rotation). Accepts human-friendly suffixes: `KB`, `MB`, `GB`. |
+| `IDENTREE_AUDIT_LOG_MAX_FILES` | `5` | Number of rotated log files to keep |
