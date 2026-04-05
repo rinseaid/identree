@@ -143,12 +143,19 @@ jobs:
           print("Provision endpoint: OK")
           PY
 
+      - name: Restart host container (re-run entrypoint after OIDC restart + user population)
+        # The host container's entrypoint calls /api/client/provision on first boot.
+        # It may have started before the OIDC restart and fallen back to anonymous bind.
+        # Restarting ensures the provision endpoint is called against a fully-configured
+        # identree with 25 users synced to LDAP.
+        run: |
+          docker restart integ-full-ubuntu2404
+          sleep 5
+
       - name: Wait for SSSD auto-provisioning on ubuntu2404 host
-        # The entrypoint.sh calls /api/client/provision at startup when LDAP_BIND_DN is empty.
-        # Validate that getent resolves users — proving the full auto-provision path works.
         run: |
           echo "Waiting for SSSD to resolve LDAP users via auto-provisioned bind creds..."
-          timeout 90 bash -c '
+          timeout 120 bash -c '
             until docker exec integ-full-ubuntu2404 getent passwd alice 2>/dev/null | grep -q alice; do
               sleep 5
             done'
