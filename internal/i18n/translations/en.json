@@ -407,6 +407,7 @@
   "terminal_approved": "Approved!",
   "terminal_code": "Code:",
   "terminal_denied": "Denied.",
+  "terminal_deny_reason": "Reason:",
   "terminal_expired": "Expired.",
   "terminal_justification_choice": "Choice [%d]: ",
   "terminal_justification_enter_reason": "Enter reason: ",

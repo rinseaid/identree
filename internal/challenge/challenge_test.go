@@ -579,7 +579,7 @@ func TestDeny(t *testing.T) {
 			t.Fatalf("expected pendingByUser=1 before Deny, got %d", before)
 		}
 
-		if err := s.Deny(c.ID); err != nil {
+		if err := s.Deny(c.ID, "not authorized"); err != nil {
 			t.Fatalf("Deny returned unexpected error: %v", err)
 		}
 
@@ -595,8 +595,28 @@ func TestDeny(t *testing.T) {
 		if ch.Status != StatusDenied {
 			t.Errorf("status after Deny: got %q, want %q", ch.Status, StatusDenied)
 		}
+		if ch.DenyReason != "not authorized" {
+			t.Errorf("DenyReason after Deny: got %q, want %q", ch.DenyReason, "not authorized")
+		}
 		if after != 0 {
 			t.Errorf("expected pendingByUser=0 after Deny, got %d", after)
+		}
+	})
+
+	t.Run("deny without reason leaves DenyReason empty", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.Deny(c.ID, ""); err != nil {
+			t.Fatalf("Deny returned unexpected error: %v", err)
+		}
+		s.mu.RLock()
+		ch := s.challenges[c.ID]
+		s.mu.RUnlock()
+		if ch.DenyReason != "" {
+			t.Errorf("DenyReason should be empty, got %q", ch.DenyReason)
 		}
 	})
 
@@ -606,17 +626,17 @@ func TestDeny(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		if err := s.Deny(c.ID); err != nil {
+		if err := s.Deny(c.ID, ""); err != nil {
 			t.Fatalf("first Deny returned unexpected error: %v", err)
 		}
-		if err := s.Deny(c.ID); err == nil {
+		if err := s.Deny(c.ID, ""); err == nil {
 			t.Fatal("expected error on double Deny, got nil")
 		}
 	})
 
 	t.Run("denying a non-existent challenge ID returns an error", func(t *testing.T) {
 		s := newTestStore(5*time.Minute, 0)
-		if err := s.Deny("does-not-exist"); err == nil {
+		if err := s.Deny("does-not-exist", ""); err == nil {
 			t.Fatal("expected error for nonexistent challenge ID, got nil")
 		}
 	})

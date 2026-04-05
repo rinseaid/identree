@@ -140,6 +140,9 @@ type Challenge struct {
 	// between challenge creation and poll-time approval.
 	RevokeTokensBefore string `json:"-"`
 
+	// DenyReason is an optional explanation provided by the admin when rejecting.
+	DenyReason string `json:"deny_reason,omitempty"`
+
 	// Set after OIDC callback confirms identity
 	ApprovedBy string    `json:"-"`
 	ApprovedAt time.Time `json:"-"`
@@ -495,8 +498,8 @@ func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 	return nil
 }
 
-// Deny marks a challenge as denied.
-func (s *ChallengeStore) Deny(id string) error {
+// Deny marks a challenge as denied, with an optional reason.
+func (s *ChallengeStore) Deny(id, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.challenges[id]
@@ -510,6 +513,7 @@ func (s *ChallengeStore) Deny(id string) error {
 		return fmt.Errorf("challenge already resolved")
 	}
 	c.Status = StatusDenied
+	c.DenyReason = reason
 	s.decPending(c.Username)
 	s.dirty.Store(true)
 	return nil

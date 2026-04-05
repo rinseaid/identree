@@ -136,6 +136,7 @@ type pollResponse struct {
 	DenialToken    string `json:"denial_token,omitempty"`
 	IDToken        string `json:"id_token,omitempty"`
 	GraceRemaining int    `json:"grace_remaining,omitempty"`
+	DenyReason     string `json:"deny_reason,omitempty"`
 
 	// serverExpired is set locally when the server returns 404 (not from JSON).
 	// Used to distinguish server-reported expiry from HMAC-verified status.
@@ -396,6 +397,9 @@ func (p *PAMClient) Authenticate(username string) error {
 				}
 			}
 			fmt.Fprintf(MessageWriter, "  %s\n", t("terminal_denied"))
+			if status.DenyReason != "" {
+				fmt.Fprintf(MessageWriter, "  %s %s\n", t("terminal_deny_reason"), sanitize.ForTerminal(status.DenyReason))
+			}
 			return fmt.Errorf("sudo request denied")
 		case challpkg.StatusExpired:
 			// When HMAC is configured, don't trust ANY unverified expiry.

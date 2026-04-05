@@ -816,8 +816,16 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read optional deny reason from the form and sanitize it.
+	denyReason := ""
+	if raw := r.FormValue("deny_reason"); raw != "" {
+		if clean, ok := sanitizeReason(raw); ok {
+			denyReason = clean
+		}
+	}
+
 	// Deny the challenge
-	if err := s.store.Deny(challengeID); err != nil {
+	if err := s.store.Deny(challengeID, denyReason); err != nil {
 		revokeErrorPage(w, r, http.StatusInternalServerError, "rejection_failed", "rejection_failed_message")
 		return
 	}
@@ -829,8 +837,13 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 	if hostname == "" {
 		hostname = "(unknown)"
 	}
-	slog.Info("REJECTED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
-	s.store.LogActionWithReason(challenge.Username, challpkg.ActionRejected, hostname, challenge.UserCode, username, challenge.Reason)
+	// Log reason: prefer the admin's deny reason; fall back to the original challenge reason.
+	logReason := challenge.Reason
+	if denyReason != "" {
+		logReason = denyReason
+	}
+	slog.Info("REJECTED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "reason", denyReason, "remote_addr", remoteAddr(r))
+	s.store.LogActionWithReason(challenge.Username, challpkg.ActionRejected, hostname, challenge.UserCode, username, logReason)
 	s.sseBroadcaster.Broadcast(challenge.Username, "challenge_resolved")
 	s.dispatchNotification(notify.WebhookData{
 		Event:     "challenge_rejected",
@@ -838,7 +851,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 		Hostname:  hostname,
 		UserCode:  challenge.UserCode,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Reason:    challenge.Reason,
+		Reason:    denyReason,
 		Actor:     username,
 	})
 
@@ -859,11 +872,19 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read optional deny reason from the form and sanitize it.
+	denyReason := ""
+	if raw := r.FormValue("deny_reason"); raw != "" {
+		if clean, ok := sanitizeReason(raw); ok {
+			denyReason = clean
+		}
+	}
+
 	// Reject all pending challenges for this user
 	pending := s.store.PendingChallenges(username)
 	count := 0
 	for _, c := range pending {
-		if err := s.store.Deny(c.ID); err == nil {
+		if err := s.store.Deny(c.ID, denyReason); err == nil {
 			challengesDenied.WithLabelValues("user_rejected").Inc()
 			challpkg.ActiveChallenges.Dec()
 			challengeDuration.Observe(time.Since(c.CreatedAt).Seconds())
@@ -871,16 +892,20 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 			if hostname == "" {
 				hostname = "(unknown)"
 			}
-			s.store.LogActionWithReason(username, challpkg.ActionRejected, hostname, c.UserCode, username, c.Reason)
+			logReason := c.Reason
+			if denyReason != "" {
+				logReason = denyReason
+			}
+			s.store.LogActionWithReason(username, challpkg.ActionRejected, hostname, c.UserCode, username, logReason)
 			count++
-			slog.Info("BULK_REJECT_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
+			slog.Info("BULK_REJECT_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "reason", denyReason, "remote_addr", remoteAddr(r))
 			s.dispatchNotification(notify.WebhookData{
 				Event:     "challenge_rejected",
 				Username:  c.Username,
 				Hostname:  hostname,
 				UserCode:  c.UserCode,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
-				Reason:    c.Reason,
+				Reason:    denyReason,
 				Actor:     username,
 			})
 		}

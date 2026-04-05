@@ -16,7 +16,7 @@ type Store interface {
 	SetNonce(id string, nonce string) error
 	SetRequestedGrace(id string, d time.Duration)
 	Approve(id string, approvedBy string) error
-	Deny(id string) error
+	Deny(id, reason string) error
 	AutoApprove(id string) error
 	AutoApproveIfWithinGracePeriod(username, hostname, id string) bool
 

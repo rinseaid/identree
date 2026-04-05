@@ -407,6 +407,7 @@
   "terminal_approved": "Genehmigt!",
   "terminal_code": "Code:",
   "terminal_denied": "Abgelehnt.",
+  "terminal_deny_reason": "Grund:",
   "terminal_expired": "Abgelaufen.",
   "terminal_justification_choice": "Auswahl [%d]: ",
   "terminal_justification_enter_reason": "Grund eingeben: ",

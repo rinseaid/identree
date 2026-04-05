@@ -553,6 +553,9 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 			}
 		case challpkg.StatusDenied:
 			resp["denial_token"] = s.computeStatusHMAC(id, challenge.Username, "denied", challenge.BreakglassRotateBefore, challenge.RevokeTokensBefore)
+			if challenge.DenyReason != "" {
+				resp["deny_reason"] = challenge.DenyReason
+			}
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

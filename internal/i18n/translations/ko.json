@@ -407,6 +407,7 @@
   "terminal_approved": "승인되었습니다!",
   "terminal_code": "코드:",
   "terminal_denied": "거부되었습니다.",
+  "terminal_deny_reason": "사유:",
   "terminal_expired": "만료되었습니다.",
   "terminal_justification_choice": "선택 [%d]: ",
   "terminal_justification_enter_reason": "사유를 입력하세요: ",

@@ -149,7 +149,7 @@ return cjson.encode(c)
 
 // luaDeny atomically checks status=pending, sets denied, decrements counters.
 // KEYS[1]=challenge:{id} KEYS[2]=pending:{user} KEYS[3]=pending:total
-// ARGV[1]=now_unix
+// ARGV[1]=now_unix ARGV[2]=deny_reason (optional, may be empty string)
 var luaDeny = redis.NewScript(`
 local data = redis.call('GET', KEYS[1])
 if not data then return redis.error_reply('not_found') end
@@ -158,6 +158,8 @@ if c.status ~= 'pending' then return redis.error_reply('already_resolved') end
 local now = tonumber(ARGV[1])
 if now > tonumber(c.expires_at_unix) then return redis.error_reply('expired') end
 c.status = 'denied'
+local reason = ARGV[2]
+if reason and reason ~= '' then c.deny_reason = reason end
 local ttl = redis.call('TTL', KEYS[1])
 if ttl < 1 then ttl = 60 end
 redis.call('SET', KEYS[1], cjson.encode(c), 'EX', ttl)
@@ -285,6 +287,7 @@ type redisChallenge struct {
 	Nonce                  string `json:"nonce,omitempty"`
 	Hostname               string `json:"hostname,omitempty"`
 	Reason                 string `json:"reason,omitempty"`
+	DenyReason             string `json:"deny_reason,omitempty"`
 	BreakglassRotateBefore string `json:"breakglass_rotate_before,omitempty"`
 	RequestedGraceSec      int64  `json:"requested_grace_sec,omitempty"`
 	RevokeTokensBefore     string `json:"revoke_tokens_before,omitempty"`
@@ -304,6 +307,7 @@ func challengeToRedis(c *Challenge) redisChallenge {
 		Nonce:                  c.Nonce,
 		Hostname:               c.Hostname,
 		Reason:                 c.Reason,
+		DenyReason:             c.DenyReason,
 		BreakglassRotateBefore: c.BreakglassRotateBefore,
 		RequestedGraceSec:      int64(c.RequestedGrace.Seconds()),
 		RevokeTokensBefore:     c.RevokeTokensBefore,
@@ -342,6 +346,7 @@ func redisToChallenge(rc redisChallenge) Challenge {
 		Nonce:                  rc.Nonce,
 		Hostname:               rc.Hostname,
 		Reason:                 rc.Reason,
+		DenyReason:             rc.DenyReason,
 		BreakglassRotateBefore: rc.BreakglassRotateBefore,
 		RequestedGrace:         time.Duration(rc.RequestedGraceSec) * time.Second,
 		RevokeTokensBefore:     rc.RevokeTokensBefore,
@@ -595,7 +600,7 @@ func (s *RedisStore) Approve(id string, approvedBy string) error {
 	return nil
 }
 
-func (s *RedisStore) Deny(id string) error {
+func (s *RedisStore) Deny(id, reason string) error {
 	c, ok := s.Get(id)
 	if !ok {
 		return fmt.Errorf("challenge not found")
@@ -607,6 +612,7 @@ func (s *RedisStore) Deny(id string) error {
 			s.pendingTotalKey(),
 		},
 		time.Now().Unix(),
+		reason,
 	).Err()
 	if err != nil {
 		switch err.Error() {

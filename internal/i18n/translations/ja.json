@@ -407,6 +407,7 @@
   "terminal_approved": "承認されました！",
   "terminal_code": "コード:",
   "terminal_denied": "拒否されました。",
+  "terminal_deny_reason": "理由：",
   "terminal_expired": "期限切れです。",
   "terminal_justification_choice": "選択 [%d]: ",
   "terminal_justification_enter_reason": "理由を入力: ",

@@ -691,6 +691,9 @@ const sharedCSS = `
     .pbar-exp { font-size: 0.8125rem; color: var(--text-2); }
     .pbar-actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
     .pbar-actions form { display: contents; }
+    .reject-inline { display: inline-flex; align-items: center; gap: 4px; }
+    .reject-inline-form, .reject-inline-row { display: inline-flex; align-items: center; gap: 4px; }
+    .reject-reason-input:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
     /* Push sidebar + main down when bar is visible */
     .has-pending .sidebar { padding-top: 44px; }
     .has-pending .main { padding-top: 74px; } /* 30px base + 44px bar */
@@ -759,13 +762,17 @@ const pendingBarHTML = `{{if .Pending}}
       <button type="submit" class="btn btn-success btn-sm">{{call $.T "approve"}}</button>
     </form>
     {{end}}
-    <form method="POST" action="/api/challenges/reject">
-      <input type="hidden" name="challenge_id" value="{{.ID}}">
-      <input type="hidden" name="username" value="{{$.Username}}">
-      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-      <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-      <button type="submit" class="btn btn-danger btn-sm saction-confirm" data-confirm="{{call $.T "confirm_reject_all"}}">{{call $.T "reject"}}</button>
-    </form>
+    <span class="reject-inline">
+      <button type="button" class="btn btn-danger btn-sm reject-toggle-btn">{{call $.T "reject"}}</button>
+      <form method="POST" action="/api/challenges/reject" class="reject-inline-form" style="display:none">
+        <input type="hidden" name="challenge_id" value="{{.ID}}">
+        <input type="hidden" name="username" value="{{$.Username}}">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+        <input type="text" name="deny_reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" class="reject-reason-input" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:160px">
+        <button type="submit" class="btn btn-danger btn-sm">{{call $.T "reject"}}</button>
+      </form>
+    </span>
   </div>
   {{end}}{{else}}
   <span class="pbar-main"><strong>{{len .Pending}}</strong> {{call .T "pending_requests"}}</span>
@@ -817,7 +824,13 @@ const pendingBarHTML = `{{if .Pending}}
           {{if or (not .AdminRequired) $.IsAdmin}}
           <button type="button" class="btn btn-success btn-sm pending-row-approve" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "approve"}}</button>
           {{end}}
-          <button type="button" class="btn btn-danger btn-sm pending-row-reject" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "reject"}}</button>
+          <span class="reject-inline">
+            <button type="button" class="btn btn-danger btn-sm reject-toggle-btn">{{call $.T "reject"}}</button>
+            <span class="reject-inline-row" style="display:none">
+              <input type="text" maxlength="500" placeholder="{{call $.T "reason_optional"}}" class="reject-reason-input" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:120px">
+              <button type="button" class="btn btn-danger btn-sm pending-row-reject" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "reject"}}</button>
+            </span>
+          </span>
         </div>
       </div>
       {{end}}
@@ -862,7 +875,25 @@ function closePendingModal(){
   var overlay=document.getElementById('pending-modal');
   if(overlay)overlay.addEventListener('click',function(e){if(e.target===overlay)closePendingModal();});
 })();
-document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('pending-modal');if(m&&m.classList.contains('open'))closePendingModal();}});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('pending-modal');if(m&&m.classList.contains('open'))closePendingModal();document.querySelectorAll('.reject-inline-form,.reject-inline-row').forEach(function(f){f.style.display='none';var tb=f.closest('.reject-inline').querySelector('.reject-toggle-btn');if(tb)tb.style.display='';});}});
+// Reject-with-reason inline toggle: clicking the reject button reveals an input + confirm button.
+(function(){
+  function closeAllRejectInlines(){
+    document.querySelectorAll('.reject-inline-form,.reject-inline-row').forEach(function(f){f.style.display='none';var tb=f.closest('.reject-inline').querySelector('.reject-toggle-btn');if(tb)tb.style.display='';});
+  }
+  document.querySelectorAll('.reject-toggle-btn').forEach(function(btn){
+    btn.addEventListener('click',function(e){
+      e.preventDefault();
+      closeAllRejectInlines();
+      var wrap=btn.closest('.reject-inline');
+      var form=wrap.querySelector('.reject-inline-form')||wrap.querySelector('.reject-inline-row');
+      if(form){btn.style.display='none';form.style.display='';var inp=form.querySelector('.reject-reason-input');if(inp)inp.focus();}
+    });
+  });
+  document.addEventListener('click',function(e){
+    if(!e.target.closest('.reject-inline'))closeAllRejectInlines();
+  });
+})();
 // Wire confirmation dialogs for ALL saction-confirm buttons (including single-challenge reject).
 document.querySelectorAll('.saction-confirm').forEach(function(btn){
   btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
@@ -929,11 +960,14 @@ document.querySelectorAll('.pending-row-approve,.pending-row-reject').forEach(fu
       err.textContent='Please select a justification.';
       return;
     }
+    var denyReason='';
+    if(action==='reject'){var ri=btn.closest('.reject-inline');if(ri){var inp=ri.querySelector('.reject-reason-input');if(inp)denyReason=inp.value.trim();}}
     var body='challenge_id='+encodeURIComponent(btn.dataset.id)
       +'&username='+encodeURIComponent(btn.dataset.username)
       +'&csrf_token='+encodeURIComponent(btn.dataset.csrf)
       +'&csrf_ts='+encodeURIComponent(btn.dataset.csrfTs)
-      +(reason?'&reason='+encodeURIComponent(reason):'');
+      +(reason?'&reason='+encodeURIComponent(reason):'')
+      +(denyReason?'&deny_reason='+encodeURIComponent(denyReason):'');
     fetch('/api/challenges/'+action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
       .then(function(){
         if(row)row.remove();
@@ -4043,13 +4077,17 @@ const accessPageHTML = `<!DOCTYPE html>
             <input type="text" name="reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:120px">
             <button type="submit" class="saction-btn saction-btn--approve">{{call $.T "approve"}}</button>
           </form>
-          <form method="POST" action="/api/challenges/reject" class="saction-form">
-            <input type="hidden" name="username" value="{{$.Username}}">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-            <input type="hidden" name="challenge_id" value="{{.ID}}">
-            <button type="submit" class="saction-btn saction-btn--deny access-saction-confirm" data-confirm="{{call $.T "confirm_reject_all"}}">{{call $.T "reject"}}</button>
-          </form>
+          <span class="reject-inline">
+            <button type="button" class="saction-btn saction-btn--deny reject-toggle-btn">{{call $.T "reject"}}</button>
+            <form method="POST" action="/api/challenges/reject" class="saction-form reject-inline-form" style="display:none;align-items:center;gap:4px">
+              <input type="hidden" name="username" value="{{$.Username}}">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+              <input type="hidden" name="challenge_id" value="{{.ID}}">
+              <input type="text" name="deny_reason" maxlength="500" placeholder="{{call $.T "reason_optional"}}" class="reject-reason-input" style="font-size:0.75rem;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:120px">
+              <button type="submit" class="saction-btn saction-btn--deny">{{call $.T "reject"}}</button>
+            </form>
+          </span>
         </div>
       </div>
       {{end}}

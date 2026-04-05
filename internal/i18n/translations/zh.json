@@ -407,6 +407,7 @@
   "terminal_approved": "已批准！",
   "terminal_code": "代码：",
   "terminal_denied": "已拒绝。",
+  "terminal_deny_reason": "原因：",
   "terminal_expired": "已过期。",
   "terminal_justification_choice": "选择 [%d]: ",
   "terminal_justification_enter_reason": "输入原因: ",

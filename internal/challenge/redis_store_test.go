@@ -90,7 +90,7 @@ func TestRedisStore_Deny(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := store.Deny(c.ID); err != nil {
+	if err := store.Deny(c.ID, "policy violation"); err != nil {
 		t.Fatalf("Deny: %v", err)
 	}
 
@@ -100,6 +100,9 @@ func TestRedisStore_Deny(t *testing.T) {
 	}
 	if got.Status != StatusDenied {
 		t.Fatalf("expected denied, got %s", got.Status)
+	}
+	if got.DenyReason != "policy violation" {
+		t.Fatalf("expected deny reason 'policy violation', got %q", got.DenyReason)
 	}
 }
 
@@ -267,7 +270,7 @@ func TestRedisStore_PendingCounterAccuracy(t *testing.T) {
 
 	// Approve one, deny one.
 	store.Approve(c1.ID, "alice")
-	store.Deny(c2.ID)
+	store.Deny(c2.ID, "")
 
 	// Should have 1 pending.
 	pending := store.PendingChallenges("alice")
@@ -360,7 +363,7 @@ func TestRedisStore_ConcurrentApproveDeny(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		denyErr = store.Deny(c.ID)
+		denyErr = store.Deny(c.ID, "")
 	}()
 	wg.Wait()
 

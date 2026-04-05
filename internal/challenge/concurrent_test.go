@@ -125,7 +125,7 @@ func TestConcurrentApproveDeny_Redis(t *testing.T) {
 					failures.Add(1)
 				}
 			} else {
-				err := store.Deny(c.ID)
+				err := store.Deny(c.ID, "")
 				if err == nil {
 					denyOK.Add(1)
 				} else if strings.Contains(err.Error(), "already_resolved") || strings.Contains(err.Error(), "already resolved") {
