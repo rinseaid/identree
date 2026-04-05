@@ -66,6 +66,19 @@ type ServerConfig struct {
 	ClientSecret           string // OIDC client secret
 	OIDCInsecureSkipVerify bool   // Skip TLS verification for OIDC discovery (test environments with self-signed certs only)
 
+	// ── Auth protocol ─────────────────────────────────────────────────────────
+	AuthProtocol string // "oidc" (default) or "saml"
+
+	// ── SAML ──────────────────────────────────────────────────────────────────
+	SAMLIdPMetadataURL  string // URL to fetch IdP metadata XML
+	SAMLIdPMetadata     string // raw XML metadata (alternative to URL)
+	SAMLEntityID        string // SP entity ID (default: ExternalURL)
+	SAMLCertFile        string // path to SP certificate PEM
+	SAMLKeyFile         string // path to SP private key PEM
+	SAMLGroupsAttr      string // assertion attribute for groups (default: "groups")
+	SAMLUsernameAttr    string // assertion attribute for username (default: "" = NameID)
+	SAMLDisplayNameAttr string // assertion attribute for display name (default: "displayName")
+
 	// ── PocketID API ──────────────────────────────────────────────────────────
 	// APIKey enables full mode (PocketID backend). When set, identree fetches
 	// users and groups from PocketID and serves a complete LDAP directory.
@@ -210,6 +223,18 @@ type ServerConfig struct {
 	// because legitimate users behind NAT/load balancers can have different IPs.
 	EnforceOIDCIPBinding bool
 
+	// ── mTLS client authentication ──────────────────────────────────────────
+	// MTLSMode controls mutual TLS client certificate authentication for PAM
+	// endpoints. When set, shared-secret auth is replaced by certificate auth.
+	//   "embedded" — identree generates a CA and issues client certs at provision time.
+	//   "external" — operator provides a CA cert; identree only verifies, does not issue.
+	//   ""         — disabled (use shared-secret auth).
+	MTLSMode     string        // "embedded" | "external" | "" (disabled)
+	MTLSCACert   string        // path to CA certificate PEM (embedded mode: may be auto-generated)
+	MTLSCAKey    string        // path to CA private key PEM (embedded mode only)
+	MTLSClientCA string        // path to client CA cert PEM (external mode: what to trust)
+	MTLSCertTTL  time.Duration // client cert validity (default 365 days)
+
 	// ── LDAP auto-provisioning ────────────────────────────────────────────────
 	// When LDAPProvisionEnabled is true, GET /api/client/provision returns LDAP
 	// configuration and per-host derived bind credentials so that `identree setup`
@@ -272,6 +297,12 @@ type ClientConfig struct {
 	SharedSecret string
 	PollInterval time.Duration // default 2s
 	Timeout      time.Duration // default 120s
+
+	// mTLS client certificate paths (set by `identree setup` in embedded mode,
+	// or manually in external mode).
+	ClientCert string // path to client certificate PEM
+	ClientKey  string // path to client private key PEM
+	CACert     string // path to CA certificate PEM (for verifying the server)
 
 	// Break-glass
 	BreakglassEnabled        bool
@@ -408,6 +439,17 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ClientID:               get("IDENTREE_OIDC_CLIENT_ID"),
 		ClientSecret:           get("IDENTREE_OIDC_CLIENT_SECRET"),
 		OIDCInsecureSkipVerify: getBool("IDENTREE_OIDC_INSECURE_SKIP_VERIFY", false),
+
+		AuthProtocol:        stringDefault(get("IDENTREE_AUTH_PROTOCOL"), "oidc"),
+		SAMLIdPMetadataURL:  get("IDENTREE_SAML_IDP_METADATA_URL"),
+		SAMLIdPMetadata:     get("IDENTREE_SAML_IDP_METADATA"),
+		SAMLEntityID:        get("IDENTREE_SAML_ENTITY_ID"),
+		SAMLCertFile:        get("IDENTREE_SAML_CERT_FILE"),
+		SAMLKeyFile:         get("IDENTREE_SAML_KEY_FILE"),
+		SAMLGroupsAttr:      stringDefault(get("IDENTREE_SAML_GROUPS_ATTR"), "groups"),
+		SAMLUsernameAttr:    get("IDENTREE_SAML_USERNAME_ATTR"),
+		SAMLDisplayNameAttr: stringDefault(get("IDENTREE_SAML_DISPLAY_NAME_ATTR"), "displayName"),
+
 		APIKey:       get("IDENTREE_POCKETID_API_KEY"),
 		APIURL:       get("IDENTREE_POCKETID_API_URL"),
 
@@ -477,6 +519,12 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ClientTimeout:                getDuration("IDENTREE_CLIENT_TIMEOUT", 0),
 		ClientBreakglassPasswordType: get("IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE"),
 		ClientBreakglassRotationDays: getInt("IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS", 0),
+
+		MTLSMode:     get("IDENTREE_MTLS_MODE"),
+		MTLSCACert:   get("IDENTREE_MTLS_CA_CERT"),
+		MTLSCAKey:    get("IDENTREE_MTLS_CA_KEY"),
+		MTLSClientCA: get("IDENTREE_MTLS_CLIENT_CA"),
+		MTLSCertTTL:  getDuration("IDENTREE_MTLS_CERT_TTL", 365*24*time.Hour),
 
 		WebhookSecret:        get("IDENTREE_WEBHOOK_SECRET"),
 		EnforceOIDCIPBinding: getBool("IDENTREE_OIDC_ENFORCE_IP_BINDING", false),
@@ -655,6 +703,43 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
+	// Validate AuthProtocol.
+	switch cfg.AuthProtocol {
+	case "", "oidc":
+		cfg.AuthProtocol = "oidc"
+	case "saml":
+		if cfg.SAMLIdPMetadataURL == "" && cfg.SAMLIdPMetadata == "" {
+			return nil, fmt.Errorf("IDENTREE_SAML_IDP_METADATA_URL or IDENTREE_SAML_IDP_METADATA must be set when IDENTREE_AUTH_PROTOCOL=saml")
+		}
+		if cfg.SAMLEntityID == "" {
+			cfg.SAMLEntityID = strings.TrimRight(cfg.ExternalURL, "/")
+		}
+	default:
+		return nil, fmt.Errorf("IDENTREE_AUTH_PROTOCOL must be \"oidc\" or \"saml\" (got %q)", cfg.AuthProtocol)
+	}
+
+	// Validate MTLSMode.
+	switch cfg.MTLSMode {
+	case "":
+		// Disabled — use shared-secret auth.
+	case "embedded":
+		if cfg.MTLSCACert == "" {
+			cfg.MTLSCACert = "/config/mtls-ca.crt"
+		}
+		if cfg.MTLSCAKey == "" {
+			cfg.MTLSCAKey = "/config/mtls-ca.key"
+		}
+		if cfg.MTLSCertTTL <= 0 {
+			cfg.MTLSCertTTL = 365 * 24 * time.Hour
+		}
+	case "external":
+		if cfg.MTLSClientCA == "" {
+			return nil, fmt.Errorf("IDENTREE_MTLS_CLIENT_CA is required when IDENTREE_MTLS_MODE=external")
+		}
+	default:
+		return nil, fmt.Errorf("IDENTREE_MTLS_MODE must be \"embedded\", \"external\", or empty (got %q)", cfg.MTLSMode)
+	}
+
 	// Validate StateBackend.
 	switch cfg.StateBackend {
 	case "", "local":
@@ -689,11 +774,14 @@ func LoadServerConfig() (*ServerConfig, error) {
 	if cfg.ClientSecret == "" && !cfg.DevLoginEnabled {
 		return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_SECRET is required")
 	}
-	if cfg.SharedSecret == "" {
-		return nil, fmt.Errorf("IDENTREE_SHARED_SECRET is required")
-	}
-	if len(cfg.SharedSecret) < 32 {
-		return nil, fmt.Errorf("IDENTREE_SHARED_SECRET must be at least 32 characters")
+	// SharedSecret is required unless mTLS is enabled (mTLS replaces shared-secret auth).
+	if cfg.MTLSMode == "" {
+		if cfg.SharedSecret == "" {
+			return nil, fmt.Errorf("IDENTREE_SHARED_SECRET is required (or set IDENTREE_MTLS_MODE to use mTLS instead)")
+		}
+		if len(cfg.SharedSecret) < 32 {
+			return nil, fmt.Errorf("IDENTREE_SHARED_SECRET must be at least 32 characters")
+		}
 	}
 	if cfg.WebhookSecret != "" && len(cfg.WebhookSecret) < 32 {
 		return nil, fmt.Errorf("IDENTREE_WEBHOOK_SECRET must be at least 32 characters when set")
@@ -915,6 +1003,10 @@ func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 		SharedSecret: get("IDENTREE_SHARED_SECRET", "PAM_POCKETID_SHARED_SECRET"),
 		PollInterval: getDuration(2*time.Second, "IDENTREE_POLL_INTERVAL", "PAM_POCKETID_POLL_INTERVAL"),
 		Timeout:      getDuration(120*time.Second, "IDENTREE_TIMEOUT", "PAM_POCKETID_TIMEOUT"),
+
+		ClientCert: get("IDENTREE_CLIENT_CERT"),
+		ClientKey:  get("IDENTREE_CLIENT_KEY"),
+		CACert:     get("IDENTREE_CA_CERT"),
 
 		BreakglassEnabled:       getBool(true, "IDENTREE_BREAKGLASS_ENABLED", "PAM_POCKETID_BREAKGLASS_ENABLED"),
 		BreakglassFile:          stringDefault(get("IDENTREE_BREAKGLASS_FILE", "PAM_POCKETID_BREAKGLASS_FILE"), "/etc/identree-breakglass"),

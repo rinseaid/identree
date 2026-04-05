@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/crewjam/saml"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/oauth2"
 
@@ -95,6 +96,11 @@ type Server struct {
 	notifyMu     sync.Mutex // guards notifyShutdown + notifyWg.Add to prevent TOCTOU
 
 	sessionNonces  map[string]sessionNonceData
+
+	// SAML SP state — only set when AuthProtocol == "saml".
+	samlSP          *saml.ServiceProvider
+	samlRelayStates map[string]samlRelayState
+	samlRelayMu     sync.Mutex
 
 	sseClients     map[string][]chan string
 	sseMu          sync.RWMutex
@@ -223,6 +229,10 @@ var validHostname = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,253}$`)
 func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error) {
 	var oidcConfig oauth2.Config
 	var verifier *oidc.IDTokenVerifier
+	var oidcHTTPClient *http.Client
+
+	// ── OIDC initialization (skipped when AuthProtocol == "saml") ────────────
+	if cfg.AuthProtocol != "saml" {
 
 	oidcTransport := http.DefaultTransport
 	if cfg.OIDCInsecureSkipVerify {
@@ -250,7 +260,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 			}
 		}
 	}
-	oidcHTTPClient := &http.Client{
+	oidcHTTPClient = &http.Client{
 		Timeout:   oidcExchangeTimeout,
 		Transport: oidcTransport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -328,6 +338,8 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	}
 
+	} // end if cfg.AuthProtocol != "saml"
+
 	// Create the store based on the configured state backend.
 	var challengeStore challenge.Store
 	var storeRedisClient redis.UniversalClient // non-nil when backend=redis; used for SSE and metrics
@@ -353,8 +365,9 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		oidcConfig:    oidcConfig,
 		verifier:      verifier,
 		mux:           http.NewServeMux(),
-		sessionNonces: make(map[string]sessionNonceData),
-		sseClients:    make(map[string][]chan string),
+		sessionNonces:   make(map[string]sessionNonceData),
+		samlRelayStates: make(map[string]samlRelayState),
+		sseClients:      make(map[string][]chan string),
 		deployJobs:    make(map[string]*deployJob),
 		deployRL:      newDeployRateLimiter(),
 		loginRL:       newLoginRateLimiter(),
@@ -378,6 +391,13 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 				return http.ErrUseLastResponse
 			},
 		},
+	}
+
+	// ── SAML SP initialization ──────────────────────────────────────────────
+	if cfg.AuthProtocol == "saml" {
+		if err := s.initSAML(); err != nil {
+			return nil, fmt.Errorf("SAML init: %w", err)
+		}
 	}
 
 	// ── Challenge expiry audit callback ─────────────────────────────────────
@@ -561,6 +581,11 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 					return true
 				})
 
+				// Prune stale SAML relay states.
+				if s.samlSP != nil {
+					s.pruneSAMLRelayStates()
+				}
+
 			case <-s.stopCh:
 				return
 			}
@@ -697,12 +722,24 @@ func (s *Server) registerRoutes() {
 	// Access page
 	s.mux.HandleFunc("/access", s.handleAccess)
 
-	// OIDC flow
+	// Auth flow — OIDC or SAML
 	s.mux.HandleFunc("/approve/", s.handleApprovalPage)
-	s.mux.HandleFunc("/callback", s.handleOIDCCallback)
-	s.mux.HandleFunc("/sessions", s.handleSessionsRedirect)
-	s.mux.HandleFunc("/sessions/login", s.handleSessionsLogin)
 	s.mux.HandleFunc("/api/onetap/", s.handleOneTap)
+	if s.cfg.AuthProtocol == "saml" {
+		// SAML routes
+		s.mux.HandleFunc("/saml/metadata", s.handleSAMLMetadata)
+		s.mux.HandleFunc("/saml/acs", s.handleSAMLACS)
+		s.mux.HandleFunc("/saml/login", s.handleSAMLLogin)
+		// /sessions/login redirects to /saml/login for SAML mode.
+		s.mux.HandleFunc("/sessions/login", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, s.baseURL+"/saml/login", http.StatusSeeOther)
+		})
+	} else {
+		// OIDC routes (default)
+		s.mux.HandleFunc("/callback", s.handleOIDCCallback)
+		s.mux.HandleFunc("/sessions/login", s.handleSessionsLogin)
+	}
+	s.mux.HandleFunc("/sessions", s.handleSessionsRedirect)
 
 	// Admin UI
 	s.mux.HandleFunc("/history", s.handleHistoryPage)

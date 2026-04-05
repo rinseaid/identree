@@ -26,6 +26,7 @@ import (
 	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/escrow"
+	"github.com/rinseaid/identree/internal/mtls"
 	"github.com/rinseaid/identree/internal/notify"
 )
 
@@ -131,6 +132,24 @@ func (a *authFailTracker) recentCount(ip string) int {
 	return count
 }
 
+// mtlsEnabled returns true when mTLS client certificate authentication is active.
+func (s *Server) mtlsEnabled() bool {
+	return s.cfg.MTLSMode == "embedded" || s.cfg.MTLSMode == "external"
+}
+
+// verifyMTLSClient extracts and verifies the client certificate from the TLS
+// connection. Returns the verified hostname from the certificate, or an error.
+// When mTLS is not enabled, returns ("", nil) to signal fallback to shared-secret.
+func (s *Server) verifyMTLSClient(r *http.Request) (hostname string, err error) {
+	if !s.mtlsEnabled() || s.mtlsCACert == nil {
+		return "", nil
+	}
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return "", fmt.Errorf("no client certificate presented")
+	}
+	return mtls.VerifyClientCert(s.mtlsCACert, r.TLS.PeerCertificates)
+}
+
 // verifySharedSecret checks the X-Shared-Secret header using constant-time comparison
 // to prevent timing attacks that could leak the secret byte-by-byte.
 func (s *Server) verifySharedSecret(r *http.Request) bool {
@@ -149,10 +168,16 @@ func (s *Server) verifySharedSecret(r *http.Request) bool {
 	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
 }
 
-// verifyAPISecret checks the X-Shared-Secret header against both the global shared
-// secret and any registered host secret. Used for API endpoints (poll, grace-status,
-// escrow) where the hostname isn't known at auth time.
+// verifyAPISecret checks client authentication for API endpoints (poll, grace-status,
+// escrow) where the hostname isn't known at request time.
+// When mTLS is enabled, verifies the client certificate.
+// Otherwise falls back to shared-secret or per-host registry auth.
 func (s *Server) verifyAPISecret(r *http.Request) bool {
+	// mTLS takes precedence when enabled.
+	if s.mtlsEnabled() {
+		_, err := s.verifyMTLSClient(r)
+		return err == nil
+	}
 	if s.verifySharedSecret(r) {
 		return true
 	}
@@ -192,10 +217,26 @@ func (s *Server) verifyAPIKey(r *http.Request) bool {
 }
 
 // authenticateChallenge checks whether a challenge creation request is authorized.
-// Tries the global shared secret first, then per-host secrets from the registry.
-// Returns (authorized bool, errorMsg string). When authorized is false, errorMsg
-// describes why.
+// When mTLS is enabled, the hostname is extracted from the client certificate.
+// Otherwise tries the global shared secret first, then per-host secrets from the registry.
+// Returns (authorized bool, certHostname string, errorMsg string).
+// certHostname is non-empty only when authentication succeeded via mTLS.
 func (s *Server) authenticateChallenge(r *http.Request, hostname, username string) (bool, string) {
+	// mTLS takes precedence when enabled.
+	if s.mtlsEnabled() {
+		certHostname, err := s.verifyMTLSClient(r)
+		if err != nil {
+			return false, "mTLS: " + err.Error()
+		}
+		// Use cert hostname as the authoritative hostname for registry checks.
+		if s.hostRegistry.IsEnabled() {
+			if !s.hostRegistry.IsUserAuthorized(certHostname, username) {
+				return false, "user not authorized on this host"
+			}
+		}
+		return true, ""
+	}
+
 	// Try global shared secret first
 	if s.verifySharedSecret(r) {
 		// When the host registry is enabled, require a hostname and check
@@ -222,6 +263,19 @@ func (s *Server) authenticateChallenge(r *http.Request, hostname, username strin
 		}
 	}
 	return false, "unauthorized"
+}
+
+// mtlsHostname extracts the verified hostname from the mTLS client certificate.
+// Returns "" if mTLS is not enabled or no cert is present.
+func (s *Server) mtlsHostname(r *http.Request) string {
+	if !s.mtlsEnabled() {
+		return ""
+	}
+	hostname, err := s.verifyMTLSClient(r)
+	if err != nil {
+		return ""
+	}
+	return hostname
 }
 
 // remoteAddr extracts the client IP from a request for logging.
@@ -325,7 +379,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authenticate: try global shared secret, then per-host secret from registry.
+	// Authenticate: mTLS (when enabled), then shared secret, then per-host registry.
 	// We parse the body first so we have the hostname for per-host auth.
 	authorized, errMsg := s.authenticateChallenge(r, req.Hostname, req.Username)
 	if !authorized {
@@ -334,6 +388,12 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("AUTH_FAILURE", "reason", errMsg, "remote_addr", remoteAddr(r), "host", req.Hostname, "user", req.Username)
 		apiError(w, http.StatusUnauthorized, "unauthorized")
 		return
+	}
+	// When mTLS is active, the cert hostname is authoritative — override any
+	// hostname from the request body to prevent a client from claiming a
+	// different hostname than the one in its certificate.
+	if certHost := s.mtlsHostname(r); certHost != "" {
+		req.Hostname = certHost
 	}
 
 	// Snapshot the rotation signal under cfgMu before creating the challenge
@@ -502,8 +562,12 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read hostname from the request query string so we can verify it matches
-	// the challenge's origin host (Fix C1).
+	// the challenge's origin host (Fix C1). When mTLS is active, use the
+	// cert hostname instead — it is cryptographically bound to the client.
 	reqHostname := strings.ToLower(strings.TrimSuffix(r.URL.Query().Get("hostname"), "."))
+	if certHost := s.mtlsHostname(r); certHost != "" {
+		reqHostname = certHost
+	}
 
 	challenge, ok := s.store.Get(id)
 	if !ok {
@@ -525,10 +589,10 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// When using per-host credentials, ensure the caller's secret matches the
-	// challenge's origin host. This prevents a compromised host B from polling
-	// host A's challenge and receiving host A's user OIDC ID token.
-	if s.hostRegistry.IsEnabled() && !s.verifySharedSecret(r) {
+	// When using per-host credentials (non-mTLS), ensure the caller's secret
+	// matches the challenge's origin host. With mTLS this is already enforced
+	// by the certificate hostname above.
+	if !s.mtlsEnabled() && s.hostRegistry.IsEnabled() && !s.verifySharedSecret(r) {
 		provided := r.Header.Get("X-Shared-Secret")
 		if !s.hostRegistry.ValidateHost(challenge.Hostname, provided) {
 			slog.Warn("AUTH_FAILURE poll credential does not match challenge hostname", "host", challenge.Hostname, "remote_addr", remoteAddr(r))

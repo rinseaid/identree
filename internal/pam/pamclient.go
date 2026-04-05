@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	cryptotls "crypto/tls"
+	"crypto/x509"
 	"errors"
 	"encoding/hex"
 	"encoding/json"
@@ -67,22 +69,56 @@ func NewPAMClient(cfg *config.ClientConfig, tokenCache *TokenCache, hostname str
 		return nil, fmt.Errorf("identree: ServerURL must use https://, not http:// (shared secret would be sent in cleartext)")
 	}
 
+	// Build TLS config, optionally loading mTLS client certificate.
+	tlsCfg := &cryptotls.Config{}
+	hasMTLS := false
+	if cfg.ClientCert != "" && cfg.ClientKey != "" {
+		cert, err := cryptotls.LoadX509KeyPair(cfg.ClientCert, cfg.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("identree: loading mTLS client cert: %w", err)
+		}
+		tlsCfg.Certificates = []cryptotls.Certificate{cert}
+		hasMTLS = true
+	}
+	if cfg.CACert != "" {
+		caCert, err := os.ReadFile(cfg.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("identree: reading CA cert: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("identree: CA cert %s contains no valid certificates", cfg.CACert)
+		}
+		tlsCfg.RootCAs = pool
+	}
+	// Only set TLSClientConfig if we actually configured something.
+	var transport *http.Transport
+	if hasMTLS || cfg.CACert != "" {
+		transport = &http.Transport{
+			Proxy:           nil,
+			DialContext:     (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+			TLSClientConfig: tlsCfg,
+		}
+	} else {
+		transport = &http.Transport{
+			// Never use proxy env vars — prevents an attacker from routing
+			// requests through a malicious proxy via HTTP_PROXY/HTTPS_PROXY.
+			Proxy: nil,
+			// Explicit dial timeout (shorter than client Timeout) ensures that
+			// connection-phase failures (SYN dropped by firewall) always produce
+			// net.OpError{Op:"dial"} rather than racing with the client-level
+			// timeout. This makes isServerUnreachable detection reliable.
+			DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		}
+	}
+
 	return &PAMClient{
 		cfg:        cfg,
 		tokenCache: tokenCache,
 		hostname:   hostname,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				// Never use proxy env vars — prevents an attacker from routing
-				// requests through a malicious proxy via HTTP_PROXY/HTTPS_PROXY.
-				Proxy: nil,
-				// Explicit dial timeout (shorter than client Timeout) ensures that
-				// connection-phase failures (SYN dropped by firewall) always produce
-				// net.OpError{Op:"dial"} rather than racing with the client-level
-				// timeout. This makes isServerUnreachable detection reliable.
-				DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-			},
+			Timeout:   10 * time.Second,
+			Transport: transport,
 			// Do not follow redirects. The PAM client talks to a known API server;
 			// following redirects could enable SSRF if the server URL is misconfigured
 			// or if a MITM redirects to internal services.
@@ -468,12 +504,17 @@ func (p *PAMClient) queryGraceStatus(username string) (graceStatusResult, error)
 	}
 	// Short timeout — revocation check is critical but must not block sudo indefinitely.
 	// Hardened like the main client: no proxy, no redirect following.
+	// When mTLS is configured, reuse the main client's TLS config.
+	graceTransport := &http.Transport{
+		Proxy:       nil,
+		DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+	}
+	if mainTransport, ok := p.client.Transport.(*http.Transport); ok && mainTransport.TLSClientConfig != nil {
+		graceTransport.TLSClientConfig = mainTransport.TLSClientConfig
+	}
 	client := &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: &http.Transport{
-			Proxy:       nil,
-			DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-		},
+		Timeout:   2 * time.Second,
+		Transport: graceTransport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

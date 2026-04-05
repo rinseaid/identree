@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rinseaid/identree/internal/config"
+	"github.com/rinseaid/identree/internal/mtls"
 )
 
 // provisionResponse is the JSON payload returned by GET /api/client/provision.
@@ -18,11 +20,19 @@ type provisionResponse struct {
 	BindDN       string `json:"bind_dn"`
 	BindPassword string `json:"bind_password"`
 	TLSCACert    string `json:"tls_ca_cert,omitempty"`
+
+	// mTLS fields — only populated in embedded CA mode.
+	ClientCert string `json:"client_cert,omitempty"` // PEM-encoded client certificate
+	ClientKey  string `json:"client_key,omitempty"`  // PEM-encoded client private key
+	CACert     string `json:"ca_cert,omitempty"`     // PEM-encoded CA certificate
 }
 
 // handleClientProvision returns LDAP configuration and per-host derived bind
 // credentials so that `identree setup --sssd` can auto-configure SSSD without
 // requiring manual admin intervention on each host.
+//
+// In embedded mTLS mode, the endpoint also issues and returns a client
+// certificate signed by the embedded CA.
 //
 // Authentication: X-Shared-Secret (global or per-host registry) + X-Hostname.
 // The endpoint is only active when IDENTREE_LDAP_PROVISION_ENABLED=true.
@@ -72,7 +82,7 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if s.cfg.SharedSecret == "" {
+	if s.cfg.SharedSecret == "" && !s.mtlsEnabled() {
 		slog.Error("provision: IDENTREE_SHARED_SECRET is not set — cannot derive per-host bind password")
 		http.Error(w, "server misconfigured", http.StatusInternalServerError)
 		return
@@ -91,7 +101,10 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bindDN := fmt.Sprintf("uid=%s,ou=identree-hosts,%s", hostname, s.cfg.LDAPBaseDN)
-	bindPassword := config.DeriveLDAPBindPassword(s.cfg.SharedSecret, hostname)
+	bindPassword := ""
+	if s.cfg.SharedSecret != "" {
+		bindPassword = config.DeriveLDAPBindPassword(s.cfg.SharedSecret, hostname)
+	}
 
 	resp := provisionResponse{
 		LDAPUrl:      ldapURL,
@@ -99,6 +112,26 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 		BindDN:       bindDN,
 		BindPassword: bindPassword,
 		TLSCACert:    s.cfg.LDAPTLSCACert,
+	}
+
+	// In embedded mTLS mode, issue a client certificate for this host.
+	if s.cfg.MTLSMode == "embedded" && s.mtlsCA != nil {
+		certPEM, keyPEM, err := mtls.IssueCert(*s.mtlsCA, hostname, s.cfg.MTLSCertTTL)
+		if err != nil {
+			slog.Error("provision: failed to issue mTLS client cert", "hostname", hostname, "err", err)
+			http.Error(w, "failed to issue client certificate", http.StatusInternalServerError)
+			return
+		}
+		resp.ClientCert = string(certPEM)
+		resp.ClientKey = string(keyPEM)
+		// Include the CA cert so the client can verify the server (or be
+		// configured to trust it).
+		caCertPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: s.mtlsCA.Certificate[0],
+		})
+		resp.CACert = string(caCertPEM)
+		slog.Info("PROVISION mTLS cert issued", "hostname", hostname, "ttl", s.cfg.MTLSCertTTL, "remote_addr", remoteAddr(r))
 	}
 
 	slog.Info("PROVISION", "hostname", hostname, "remote_addr", remoteAddr(r))

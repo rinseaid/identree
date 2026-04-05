@@ -39,6 +39,11 @@ type provisionResponse struct {
 	BindDN       string `json:"bind_dn"`
 	BindPassword string `json:"bind_password"`
 	TLSCACert    string `json:"tls_ca_cert,omitempty"`
+
+	// mTLS fields — populated in embedded CA mode.
+	ClientCert string `json:"client_cert,omitempty"`
+	ClientKey  string `json:"client_key,omitempty"`
+	CACert     string `json:"ca_cert,omitempty"`
 }
 
 // Run executes the setup subcommand. It returns an error on failure.
@@ -80,6 +85,12 @@ func Run(cfg Config) error {
 		if prov.TLSCACert != "" {
 			if err := writeTLSCACert(prov.TLSCACert, cfg.DryRun); err != nil {
 				return fmt.Errorf("tls_ca_cert: %w", err)
+			}
+		}
+		// Save mTLS client certificate if the server issued one (embedded mode).
+		if prov.ClientCert != "" && prov.ClientKey != "" {
+			if err := writeMTLSCerts(prov, cfg.DryRun); err != nil {
+				return fmt.Errorf("mtls: %w", err)
 			}
 		}
 	}
@@ -399,6 +410,106 @@ func writeTLSCACert(pemCert string, dryRun bool) error {
 	if !wrote {
 		fmt.Printf("TLS: CA cert directory not found — write manually:\n%s\n", pemCert)
 	}
+	return nil
+}
+
+// ── mTLS client certificate ────────────────────────────────────────────────
+
+const (
+	mtlsClientCertPath = "/etc/identree/client.crt"
+	mtlsClientKeyPath  = "/etc/identree/client.key"
+	mtlsCACertPath     = "/etc/identree/ca.crt"
+)
+
+// writeMTLSCerts writes the mTLS client certificate, key, and CA cert from
+// the provision response to /etc/identree/ and appends the paths to the
+// client config file so the PAM client loads them automatically.
+func writeMTLSCerts(prov *provisionResponse, dryRun bool) error {
+	if dryRun {
+		fmt.Printf("[dry-run] would write mTLS client cert to %s\n", mtlsClientCertPath)
+		fmt.Printf("[dry-run] would write mTLS client key to %s\n", mtlsClientKeyPath)
+		if prov.CACert != "" {
+			fmt.Printf("[dry-run] would write mTLS CA cert to %s\n", mtlsCACertPath)
+		}
+		return nil
+	}
+
+	// Ensure /etc/identree exists.
+	if err := os.MkdirAll("/etc/identree", 0755); err != nil {
+		return fmt.Errorf("mkdir /etc/identree: %w", err)
+	}
+
+	if err := atomicWrite(mtlsClientCertPath, []byte(prov.ClientCert), 0644); err != nil {
+		return fmt.Errorf("write client cert: %w", err)
+	}
+	fmt.Printf("mTLS: wrote client certificate to %s\n", mtlsClientCertPath)
+
+	if err := atomicWrite(mtlsClientKeyPath, []byte(prov.ClientKey), 0600); err != nil {
+		return fmt.Errorf("write client key: %w", err)
+	}
+	fmt.Printf("mTLS: wrote client private key to %s\n", mtlsClientKeyPath)
+
+	if prov.CACert != "" {
+		if err := atomicWrite(mtlsCACertPath, []byte(prov.CACert), 0644); err != nil {
+			return fmt.Errorf("write CA cert: %w", err)
+		}
+		fmt.Printf("mTLS: wrote CA certificate to %s\n", mtlsCACertPath)
+	}
+
+	// Append mTLS config lines to the client config file if not already present.
+	if err := appendMTLSConfig(); err != nil {
+		return fmt.Errorf("update client config: %w", err)
+	}
+
+	return nil
+}
+
+// appendMTLSConfig appends IDENTREE_CLIENT_CERT, IDENTREE_CLIENT_KEY, and
+// IDENTREE_CA_CERT lines to the client config file, skipping any that already exist.
+func appendMTLSConfig() error {
+	const confPath = "/etc/identree/client.conf"
+	existing, err := os.ReadFile(confPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	content := string(existing)
+
+	lines := []struct{ key, value string }{
+		{"IDENTREE_CLIENT_CERT", mtlsClientCertPath},
+		{"IDENTREE_CLIENT_KEY", mtlsClientKeyPath},
+		{"IDENTREE_CA_CERT", mtlsCACertPath},
+	}
+
+	var toAppend []string
+	for _, l := range lines {
+		if strings.Contains(content, l.key+"=") {
+			continue
+		}
+		toAppend = append(toAppend, l.key+"="+l.value)
+	}
+
+	if len(toAppend) == 0 {
+		return nil
+	}
+
+	f, err := os.OpenFile(confPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Ensure we start on a new line.
+	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
+		if _, err := f.WriteString("\n"); err != nil {
+			return err
+		}
+	}
+	for _, line := range toAppend {
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("mTLS: updated %s with certificate paths\n", confPath)
 	return nil
 }
 
