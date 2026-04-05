@@ -406,6 +406,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/challenge/{id}:
     get:
@@ -514,6 +520,12 @@ paths:
           description: CSRF failure or admin approval required.
         "404":
           description: Challenge not found or already resolved.
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/challenges/approve-all:
     post:
@@ -743,6 +755,12 @@ paths:
       responses:
         "303":
           description: Redirect with flash message.
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/sessions/revoke-all:
     post:
@@ -953,6 +971,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/breakglass/reveal:
     post:
@@ -1016,6 +1040,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "501":
           description: No escrow backend configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -1141,6 +1171,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           description: Too many concurrent deploys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:

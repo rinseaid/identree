@@ -1,0 +1,13 @@
+{{- if eq .Values.stateBackend "local" }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "identree.fullname" . }}
+  labels:
+    {{- include "identree.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "identree.selectorLabels" . | nindent 6 }}
+{{- end }}
