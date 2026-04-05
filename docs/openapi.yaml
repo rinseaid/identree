@@ -271,6 +271,38 @@ components:
         options:
           type: string
 
+    Channel:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Unique channel name.
+        backend:
+          type: string
+          description: "Notification backend type (e.g. slack, discord, generic)."
+        url:
+          type: string
+          description: Webhook URL for the channel.
+        timeout:
+          type: string
+          description: "HTTP timeout duration (e.g. \"5s\")."
+
+    Route:
+      type: object
+      properties:
+        channels:
+          type: string
+          description: Comma-separated list of channel names.
+        events:
+          type: string
+          description: Comma-separated list of event types to match.
+        hosts:
+          type: string
+          description: Comma-separated host patterns to match.
+        users:
+          type: string
+          description: Comma-separated usernames to match.
+
     Error:
       type: object
       properties:
@@ -299,6 +331,8 @@ tags:
     description: Binary downloads, install scripts, and systemd units.
   - name: Webhooks
     description: Incoming webhook receivers.
+  - name: Notifications
+    description: Notification channel and routing rule management.
   - name: SudoRules
     description: Sudo rule management (bridge mode only).
   - name: Dashboard
@@ -1841,6 +1875,250 @@ paths:
           description: Not admin.
         "404":
           description: Rule not found or bridge mode not active.
+
+  # ── Notifications ──────────────────────────────────────────────────────
+
+  /api/notification/channels:
+    get:
+      operationId: listNotificationChannels
+      summary: List notification channels
+      tags: [Notifications]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Array of configured notification channels (tokens/commands stripped).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Channel"
+        "401":
+          description: Unauthorized.
+        "403":
+          description: Not admin.
+
+  /api/notification/channels/add:
+    post:
+      operationId: addNotificationChannel
+      summary: Add a notification channel
+      tags: [Notifications]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, name, backend, url]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                name:
+                  type: string
+                  description: Unique channel name.
+                backend:
+                  type: string
+                  description: "Notification backend type (e.g. slack, discord, generic)."
+                url:
+                  type: string
+                  description: Webhook URL for the channel.
+      responses:
+        "303":
+          description: Redirect to /admin/notifications.
+        "400":
+          description: Invalid input.
+        "403":
+          description: Not admin.
+        "409":
+          description: Channel with this name already exists.
+
+  /api/notification/channels/delete:
+    post:
+      operationId: deleteNotificationChannel
+      summary: Delete a notification channel
+      tags: [Notifications]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, name]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                name:
+                  type: string
+                  description: Name of the channel to delete.
+      responses:
+        "303":
+          description: Redirect to /admin/notifications.
+        "403":
+          description: Not admin.
+        "404":
+          description: Channel not found.
+
+  /api/notification/routes/add:
+    post:
+      operationId: addNotificationRoute
+      summary: Add a notification routing rule
+      tags: [Notifications]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                channels:
+                  type: string
+                  description: Comma-separated list of channel names.
+                events:
+                  type: string
+                  description: Comma-separated list of event types.
+                hosts:
+                  type: string
+                  description: Comma-separated host patterns.
+                users:
+                  type: string
+                  description: Comma-separated usernames.
+      responses:
+        "303":
+          description: Redirect to /admin/notifications.
+        "400":
+          description: Invalid input.
+        "403":
+          description: Not admin.
+
+  /api/notification/routes/delete:
+    post:
+      operationId: deleteNotificationRoute
+      summary: Delete a notification routing rule
+      tags: [Notifications]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, index]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                index:
+                  type: string
+                  description: Zero-based index of the routing rule to delete.
+      responses:
+        "303":
+          description: Redirect to /admin/notifications.
+        "400":
+          description: Invalid input.
+        "403":
+          description: Not admin.
+
+  /api/admin/notification-preferences:
+    post:
+      operationId: saveNotificationPreferences
+      summary: Save admin notification preferences
+      tags: [Notifications]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                channels:
+                  type: string
+                  description: Comma-separated list of channel names.
+                events:
+                  type: string
+                  description: Comma-separated list of event types.
+                hosts:
+                  type: string
+                  description: Comma-separated host patterns.
+                enabled:
+                  type: string
+                  description: "Whether notifications are enabled (e.g. \"on\")."
+                action:
+                  type: string
+                  description: Form action identifier.
+      responses:
+        "303":
+          description: Redirect to /admin/notifications.
+        "400":
+          description: Invalid input.
+        "403":
+          description: Not admin.
+
+  /api/admin/test-channel:
+    post:
+      operationId: testNotificationChannel
+      summary: Test a specific notification channel
+      tags: [Notifications]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, channel]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                channel:
+                  type: string
+                  description: Name of the channel to test.
+      responses:
+        "303":
+          description: Redirect to /admin/notifications with flash message.
+        "400":
+          description: Invalid input.
+        "403":
+          description: Not admin.
 
   # ── History ────���────────────────────────────────────────────────────────
 

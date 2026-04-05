@@ -107,7 +107,10 @@ func (s *Server) deliverToChannel(ch notify.Channel, d notify.WebhookData, defau
 			return
 		}
 
-		if err := notify.Deliver(ch, d, defaultTimeout); err != nil {
+		start := time.Now()
+		err := notify.Deliver(ch, d, defaultTimeout)
+		notify.NotificationDeliveryDuration.WithLabelValues(ch.Name).Observe(time.Since(start).Seconds())
+		if err != nil {
 			notify.NotificationsTotal.WithLabelValues("failed", ch.Name).Inc()
 			slog.Error("NOTIFY failed", "channel", ch.Name, "event", d.Event, "err", err)
 			return

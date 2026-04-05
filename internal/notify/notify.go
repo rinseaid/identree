@@ -17,6 +17,14 @@ var NotificationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help:      "Total push notification attempts.",
 }, []string{"status", "channel"}) // status: sent|failed|skipped, channel: channel name
 
+// NotificationDeliveryDuration tracks how long each notification delivery takes.
+var NotificationDeliveryDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: "identree",
+	Name:      "notification_delivery_duration_seconds",
+	Help:      "Time spent delivering a single notification.",
+	Buckets:   []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30},
+}, []string{"channel"})
+
 // WebhookData holds all the fields available to webhook formatters.
 type WebhookData struct {
 	Event       string // e.g. "challenge_created", "challenge_approved", "challenge_rejected", "auto_approved"
