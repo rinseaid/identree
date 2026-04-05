@@ -50,7 +50,7 @@ func init() {
 
 // version and commit are set at build time:
 //
-//	-ldflags "-X main.version=v0.1.0 -X main.commit=abc12345"
+//	-ldflags "-X github.com/rinseaid/identree/internal/server.version=v0.1.0 -X github.com/rinseaid/identree/internal/server.commit=abc12345"
 var version = "dev"
 var commit = ""
 

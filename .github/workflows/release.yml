@@ -41,7 +41,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           go mod tidy
-          go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME} -X main.commit=${GITHUB_SHA}" -o identree-${{ matrix.suffix }} ./cmd/identree/
+          go build -trimpath -ldflags="-s -w -X github.com/rinseaid/identree/internal/server.version=${GITHUB_REF_NAME} -X github.com/rinseaid/identree/internal/server.commit=${GITHUB_SHA}" -o identree-${{ matrix.suffix }} ./cmd/identree/
 
       - uses: actions/upload-artifact@v4
         with:
