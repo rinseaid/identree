@@ -392,5 +392,13 @@
   "enter_reason": "Enter reason...",
   "cfg_require_justification": "Require Justification",
   "cfg_justification_choices": "Justification Choices",
-  "reason": "理由"
+  "reason": "理由",
+  "terminal_justification_required": "理由の入力が必要です。理由を選択してください:",
+  "terminal_justification_other": "その他（理由を入力）",
+  "terminal_justification_choice": "選択 [%d]: ",
+  "terminal_justification_enter_reason": "理由を入力: "
+  ,
+    "rate_limited": "Rate limited"
+  ,
+    "too_many_requests": "リクエストが多すぎます。しばらくしてからもう一度お試しください。"
 }

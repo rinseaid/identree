@@ -392,5 +392,13 @@
   "enter_reason": "Enter reason...",
   "cfg_require_justification": "Require Justification",
   "cfg_justification_choices": "Justification Choices",
-  "reason": "原因"
+  "reason": "原因",
+  "terminal_justification_required": "需要提供理由。请选择一个原因:",
+  "terminal_justification_other": "其他（输入自定义原因）",
+  "terminal_justification_choice": "选择 [%d]: ",
+  "terminal_justification_enter_reason": "输入原因: "
+  ,
+    "rate_limited": "Rate limited"
+  ,
+    "too_many_requests": "请求过多，请稍候再试。"
 }

@@ -28,6 +28,60 @@ const (
 	loginRateMax    = 10 // max initiations per IP per window
 )
 
+// mutationRateWindow / mutationRateMax control per-user rate limiting on
+// authenticated mutation endpoints (approve/reject/revoke/extend) to prevent abuse.
+const (
+	mutationRateWindow = 60 * time.Second
+	mutationRateMax    = 30 // max mutations per user per window
+)
+
+// mutationRateLimiter is a sliding-window per-user rate limiter for mutation endpoints.
+type mutationRateLimiter struct {
+	mu   sync.Mutex
+	seen map[string][]time.Time // username → timestamps of recent requests
+}
+
+func newMutationRateLimiter() *mutationRateLimiter {
+	return &mutationRateLimiter{seen: make(map[string][]time.Time)}
+}
+
+// allow returns true if the given user has not exceeded mutationRateMax requests
+// in the past mutationRateWindow, and records the attempt.
+func (m *mutationRateLimiter) allow(username string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-mutationRateWindow)
+	// Prune old timestamps for this user
+	times := m.seen[username]
+	j := 0
+	for _, t := range times {
+		if t.After(cutoff) {
+			times[j] = t
+			j++
+		}
+	}
+	times = times[:j]
+	if len(times) >= mutationRateMax {
+		m.seen[username] = times
+		// Prune stale users even on reject to prevent unbounded map growth.
+		for k, ts := range m.seen {
+			if k != username && (len(ts) == 0 || ts[len(ts)-1].Before(cutoff)) {
+				delete(m.seen, k)
+			}
+		}
+		return false
+	}
+	m.seen[username] = append(times, now)
+	// Prune users not seen in the last window to prevent unbounded map growth.
+	for k, ts := range m.seen {
+		if k != username && (len(ts) == 0 || ts[len(ts)-1].Before(cutoff)) {
+			delete(m.seen, k)
+		}
+	}
+	return true
+}
+
 // loginRateLimiter is a sliding-window per-IP rate limiter for the login endpoint.
 type loginRateLimiter struct {
 	mu    sync.Mutex

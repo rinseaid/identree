@@ -106,10 +106,22 @@ All Redis settings are configured via environment variables:
 | `IDENTREE_REDIS_SENTINEL_MASTER` | -- | Sentinel master name (enables Sentinel mode) |
 | `IDENTREE_REDIS_SENTINEL_ADDRS` | -- | Comma-separated Sentinel addresses (`sentinel1:26379,sentinel2:26379`) |
 | `IDENTREE_REDIS_CLUSTER_ADDRS` | -- | Comma-separated Cluster node addresses (`node1:6379,node2:6379,node3:6379`) |
-| `IDENTREE_REDIS_POOL_SIZE` | `10` | Connection pool size |
+| `IDENTREE_REDIS_POOL_SIZE` | `50` | Connection pool size (see [Pool sizing](#pool-sizing) below) |
 | `IDENTREE_REDIS_DIAL_TIMEOUT` | `5s` | TCP connection timeout |
 | `IDENTREE_REDIS_READ_TIMEOUT` | `3s` | Read timeout per command |
 | `IDENTREE_REDIS_WRITE_TIMEOUT` | `3s` | Write timeout per command |
+
+### Pool sizing
+
+The default pool size of 50 connections is suitable for most deployments handling up to several hundred concurrent users. Each identree instance maintains its own pool, so a 3-instance cluster uses up to 150 total connections.
+
+**Sizing guidance:**
+
+- **Small deployments (< 50 hosts):** The default of 50 is more than sufficient. You can lower it to 20 if Redis memory is constrained.
+- **Medium deployments (50-500 hosts):** The default of 50 works well. Monitor `identree_redis_pool_active` -- if it regularly exceeds 80% of pool size, increase to 100.
+- **Large deployments (500+ hosts):** Set to 100-200. At this scale, also consider Redis Cluster or Sentinel for high availability.
+
+The pool is shared across all Redis operations (challenges, grace sessions, rate limiters, action logs, SSE pub/sub). Under-provisioning causes goroutines to block waiting for a connection, increasing request latency. Over-provisioning wastes Redis server memory (each connection uses ~10 KB on the server side).
 
 ---
 

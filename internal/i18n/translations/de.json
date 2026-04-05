@@ -392,5 +392,13 @@
   "enter_reason": "Enter reason...",
   "cfg_require_justification": "Require Justification",
   "cfg_justification_choices": "Justification Choices",
-  "reason": "Grund"
+  "reason": "Grund",
+  "terminal_justification_required": "Begründung erforderlich. Wählen Sie einen Grund:",
+  "terminal_justification_other": "Sonstiges (eigenen Grund eingeben)",
+  "terminal_justification_choice": "Auswahl [%d]: ",
+  "terminal_justification_enter_reason": "Grund eingeben: "
+  ,
+    "rate_limited": "Rate limited"
+  ,
+    "too_many_requests": "Sie stellen zu viele Anfragen. Bitte warten Sie einen Moment und versuchen Sie es erneut."
 }

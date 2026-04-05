@@ -1427,8 +1427,6 @@ func filterAttrs(attrs map[string][]string, requested []string) map[string][]str
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-type memberRef struct{ ID string }
-
 func buildMemberUids(members []struct{ ID string `json:"id"` }, dir *pocketid.UserDirectory) []string {
 	var out []string
 	for _, m := range members {

@@ -43,6 +43,9 @@ func (b *redisBroadcaster) Broadcast(username, event string) {
 
 func (b *redisBroadcaster) Close() {
 	b.cancel()
+	if b.client != nil {
+		b.client.Close()
+	}
 }
 
 // subscribe listens for SSE events from Redis pub/sub and delivers them

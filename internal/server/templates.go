@@ -774,9 +774,9 @@ const pendingBarHTML = `{{if .Pending}}
   {{end}}
 </div>
 {{if gt (len .Pending) 1}}
-<div class="modal-overlay" id="pending-modal">
+<div class="modal-overlay" id="pending-modal" role="dialog" aria-modal="true" aria-labelledby="pending-modal-title">
   <div class="modal-box pending-modal-box">
-    <h3>{{call .T "pending_requests"}}</h3>
+    <h3 id="pending-modal-title">{{call .T "pending_requests"}}</h3>
     <div class="pending-table{{if .IsAdmin}} pending-table--admin{{end}}" role="table" aria-label="{{call .T "pending_requests"}}">
       <div class="pending-table-header" role="row">
         {{if .IsAdmin}}<div class="gtcol" role="columnheader"><span class="col-sort-link">{{call .T "user"}}</span></div>{{end}}
@@ -1912,6 +1912,7 @@ const adminPageHTML = `<!DOCTYPE html>
           }).catch(function(){scriptContent.textContent='(failed to load)';});
         }
       });
+      scriptToggle.addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();scriptToggle.click();}});
     }
     if(scriptCopyBtn){
       scriptCopyBtn.addEventListener('click',function(e){
@@ -2210,6 +2211,7 @@ const adminPageHTML = `<!DOCTYPE html>
         <input type="text" id="config-filter-input" placeholder="Search settings…" autocomplete="off">
         <button type="button" class="filter-clear-btn" id="config-filter-clear">{{call .T "clear_filter"}}</button>
       </div>
+    <!-- TODO: i18n — config help descriptions below are English-only. -->
     {{/* OIDC */}}
       <div class="config-section-row" data-section="oidc"><span class="config-section-title">{{call .T "cfg_oidc"}}</span><button type="submit" class="saction-btn saction-primary config-save-btn">{{call .T "save"}}</button></div>
       {{$v:=index .ConfigValues "IDENTREE_OIDC_ISSUER_URL"}}{{$lk:=index .ConfigLocked "IDENTREE_OIDC_ISSUER_URL"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="oidc" data-search="IDENTREE_OIDC_ISSUER_URL Internal URL identree uses to reach Pocket ID (not browser-visible)."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_issuer_url"}}</div><div class="config-label-env">IDENTREE_OIDC_ISSUER_URL</div><div class="config-label-desc">Internal URL identree uses to reach Pocket ID (not browser-visible).</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_OIDC_ISSUER_URL" value="{{$v}}" class="config-input" placeholder="https://pocketid.example.com">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
@@ -3211,7 +3213,7 @@ const adminPageHTML = `<!DOCTYPE html>
         <div class="deploy-warning-text">{{call .T "remove_warning"}}</div>
       </div>
       <div class="script-preview" id="remove-script-preview" style="margin-bottom:16px">
-        <div class="script-preview-header" id="remove-script-toggle">
+        <div class="script-preview-header" id="remove-script-toggle" role="button" tabindex="0">
           <span class="script-preview-label"><span class="script-expand-chevron">&#9654;</span>{{call .T "uninstall_script"}}</span>
           <button type="button" class="btn btn-sm" id="remove-script-copy-btn"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>{{call .T "copy"}}</button>
         </div>
@@ -3327,6 +3329,7 @@ const adminPageHTML = `<!DOCTYPE html>
       removeScriptPreview.classList.toggle('open');
       if(removeScriptPreview.classList.contains('open')) fetchRemoveScript();
     });
+    removeScriptToggle.addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();removeScriptToggle.click();}});
   }
   if(removeScriptCopyBtn){
     removeScriptCopyBtn.addEventListener('click',function(e){
@@ -3500,7 +3503,7 @@ const adminPageHTML = `<!DOCTYPE html>
         </div>
       </div>
       <div class="script-preview" id="deploy-script-preview">
-        <div class="script-preview-header" id="deploy-script-toggle">
+        <div class="script-preview-header" id="deploy-script-toggle" role="button" tabindex="0">
           <span class="script-preview-label"><span class="script-expand-chevron">&#9654;</span>{{call .T "install_script"}}</span>
           <button type="button" class="btn btn-sm" id="deploy-script-copy-btn" data-cmd="curl -fsSL {{.InstallURL}}/install.sh | sudo bash"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>
         </div>

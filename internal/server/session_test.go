@@ -22,6 +22,7 @@ func newTestServer(sharedSecret string) *Server {
 		cfg: &config.ServerConfig{
 			SharedSecret: sharedSecret,
 		},
+		mutationRL: newMutationRateLimiter(),
 	}
 }
 

@@ -1614,15 +1614,26 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/csv")
 			w.Header().Set("Content-Disposition", "attachment; filename=identree-history.csv")
 			cw := csv.NewWriter(w)
-			cw.Write([]string{"username", "timestamp", "action", "hostname", "code", "actor", "reason"})
+			if err := cw.Write([]string{"username", "timestamp", "action", "hostname", "code", "actor", "reason"}); err != nil {
+				slog.Error("CSV export write error", "err", err)
+				return
+			}
 			for _, e := range allHistory {
-				cw.Write([]string{e.Username, e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor, e.Reason})
+				if err := cw.Write([]string{e.Username, e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor, e.Reason}); err != nil {
+					slog.Error("CSV export write error", "err", err)
+					return
+				}
 			}
 			cw.Flush()
+			if err := cw.Error(); err != nil {
+				slog.Error("CSV export flush error", "err", err)
+			}
 		case "json":
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Content-Disposition", "attachment; filename=identree-history.json")
-			json.NewEncoder(w).Encode(allHistory)
+			if err := json.NewEncoder(w).Encode(allHistory); err != nil {
+				slog.Error("encoding JSON response", "err", err)
+			}
 		default:
 			http.Error(w, "format must be csv or json", http.StatusBadRequest)
 		}
@@ -1636,15 +1647,26 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
 		w.Header().Set("Content-Disposition", "attachment; filename=identree-history.csv")
 		cw := csv.NewWriter(w)
-		cw.Write([]string{"timestamp", "action", "hostname", "code", "actor", "reason"})
+		if err := cw.Write([]string{"timestamp", "action", "hostname", "code", "actor", "reason"}); err != nil {
+			slog.Error("CSV export write error", "err", err)
+			return
+		}
 		for _, e := range history {
-			cw.Write([]string{e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor, e.Reason})
+			if err := cw.Write([]string{e.Timestamp.Format(time.RFC3339), string(e.Action), e.Hostname, e.Code, e.Actor, e.Reason}); err != nil {
+				slog.Error("CSV export write error", "err", err)
+				return
+			}
 		}
 		cw.Flush()
+		if err := cw.Error(); err != nil {
+			slog.Error("CSV export flush error", "err", err)
+		}
 	case "json":
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition", "attachment; filename=identree-history.json")
-		json.NewEncoder(w).Encode(history)
+		if err := json.NewEncoder(w).Encode(history); err != nil {
+			slog.Error("encoding JSON response", "err", err)
+		}
 	default:
 		http.Error(w, "format must be csv or json", http.StatusBadRequest)
 	}

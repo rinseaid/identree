@@ -725,12 +725,12 @@ func (p *PAMClient) promptJustification(t func(string) string, choices []string)
 	}
 
 	// Print choices to the terminal (stdout is piped to PAM conversation).
-	fmt.Fprintln(MessageWriter, "  Justification required. Select a reason:")
+	fmt.Fprintln(MessageWriter, "  "+t("terminal_justification_required"))
 	for i, c := range choices {
 		fmt.Fprintf(MessageWriter, "    [%d] %s\n", i+1, c)
 	}
-	fmt.Fprintf(MessageWriter, "    [%d] Other (enter custom reason)\n", len(choices)+1)
-	fmt.Fprintf(MessageWriter, "  Choice [%d]: ", len(choices)+1)
+	fmt.Fprintf(MessageWriter, "    [%d] %s\n", len(choices)+1, t("terminal_justification_other"))
+	fmt.Fprintf(MessageWriter, "  "+t("terminal_justification_choice"), len(choices)+1)
 
 	// Try to read from stdin. pam_exec.so inherits the terminal's stdin,
 	// so this works when sudo is run interactively.
@@ -743,7 +743,7 @@ func (p *PAMClient) promptJustification(t func(string) string, choices []string)
 
 	if line == "" {
 		// Default to custom reason (Other option).
-		fmt.Fprint(MessageWriter, "  Enter reason: ")
+		fmt.Fprint(MessageWriter, "  "+t("terminal_justification_enter_reason"))
 		custom, custErr := reader.ReadString('\n')
 		if custErr != nil {
 			return "", fmt.Errorf("could not read custom reason: %w", custErr)
@@ -763,7 +763,7 @@ func (p *PAMClient) promptJustification(t func(string) string, choices []string)
 		}
 		if idx == len(choices)+1 {
 			// Custom
-			fmt.Fprint(MessageWriter, "  Enter reason: ")
+			fmt.Fprint(MessageWriter, "  "+t("terminal_justification_enter_reason"))
 			custom, custErr := reader.ReadString('\n')
 			if custErr != nil {
 				return "", fmt.Errorf("could not read custom reason: %w", custErr)

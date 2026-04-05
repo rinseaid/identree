@@ -318,6 +318,12 @@ func (s *Server) verifyFormAuth(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 
+	// Per-user mutation rate limit: reject if user exceeds mutationRateMax/minute.
+	if !s.mutationRL.allow(username) {
+		revokeErrorPage(w, r, http.StatusTooManyRequests, "rate_limited", "too_many_requests")
+		return ""
+	}
+
 	// Refresh session cookie
 	s.setSessionCookie(w, username, s.getSessionRole(r))
 

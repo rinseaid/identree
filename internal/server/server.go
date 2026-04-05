@@ -123,7 +123,8 @@ type Server struct {
 	loginRL    *loginRateLimiter
 	approveRL  *loginRateLimiter  // per-IP limit on /approve/{code}
 	callbackRL *loginRateLimiter  // per-IP limit on /callback (OIDC callback)
-	authFailRL *authFailTracker   // per-IP auth-failure backoff on /api/challenge
+	authFailRL  *authFailTracker      // per-IP auth-failure backoff on /api/challenge
+	mutationRL  *mutationRateLimiter // per-user rate limit on mutation endpoints
 
 	// healthz and ldap error state are in embedded structs for field-count reduction.
 	serverHealthzState
@@ -324,6 +325,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		approveRL:     newLoginRateLimiter(),
 		callbackRL:    newLoginRateLimiter(),
 		authFailRL:    newAuthFailTracker(),
+		mutationRL:    newMutationRateLimiter(),
 		removedUsers:       make(map[string]time.Time),
 		revokedNonces:      make(map[string]time.Time),
 		prevAdminUsernames: make(map[string]bool),

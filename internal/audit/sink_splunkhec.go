@@ -3,7 +3,6 @@ package audit
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -136,17 +135,4 @@ func (s *SplunkHECSink) flush() {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		slog.Error("AUDIT splunk_hec: HTTP error", "status", resp.StatusCode, "body", string(respBody), "events", len(batch))
 	}
-}
-
-// formatSplunkPayload is exported for testing.
-func formatSplunkPayload(events []splunkEvent) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	for _, e := range events {
-		if err := enc.Encode(e); err != nil {
-			return nil, fmt.Errorf("encode splunk event: %w", err)
-		}
-	}
-	return buf.Bytes(), nil
 }

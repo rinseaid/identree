@@ -230,6 +230,21 @@ end
 return cjson.encode(c)
 `)
 
+// luaSetRequestedGrace atomically checks status=pending before updating requested_grace_sec.
+// KEYS[1]=challenge:{id}
+// ARGV[1]=requested_grace_sec
+var luaSetRequestedGrace = redis.NewScript(`
+local data = redis.call('GET', KEYS[1])
+if not data then return redis.error_reply('not_found') end
+local c = cjson.decode(data)
+if c.status ~= 'pending' then return 0 end
+c.requested_grace_sec = tonumber(ARGV[1])
+local ttl = redis.call('TTL', KEYS[1])
+if ttl < 1 then ttl = 60 end
+redis.call('SET', KEYS[1], cjson.encode(c), 'EX', ttl)
+return 1
+`)
+
 // luaAutoApproveGrace atomically checks grace + challenge pending, approves.
 // KEYS[1]=grace:{key} KEYS[2]=challenge:{id} KEYS[3]=pending:{user} KEYS[4]=pending:total
 // ARGV[1]=now_unix
@@ -499,21 +514,18 @@ func (s *RedisStore) SetNonce(id string, nonce string) error {
 }
 
 func (s *RedisStore) SetRequestedGrace(id string, d time.Duration) {
-	data, err := s.client.Get(s.ctx(), s.challengeKey(id)).Result()
+	graceSec := int64(d.Seconds())
+	err := luaSetRequestedGrace.Run(s.ctx(), s.client,
+		[]string{s.challengeKey(id)},
+		graceSec,
+	).Err()
 	if err != nil {
-		return
+		// not_found is expected when the challenge expired between PAM request
+		// and grace negotiation; only log unexpected errors.
+		if !strings.Contains(err.Error(), "not_found") {
+			slog.Error("redis: SetRequestedGrace", "id", id, "err", err)
+		}
 	}
-	var rc redisChallenge
-	if json.Unmarshal([]byte(data), &rc) != nil {
-		return
-	}
-	rc.RequestedGraceSec = int64(d.Seconds())
-	updated, _ := json.Marshal(rc)
-	ttl := s.client.TTL(s.ctx(), s.challengeKey(id)).Val()
-	if ttl < time.Second {
-		ttl = 60 * time.Second
-	}
-	s.client.Set(s.ctx(), s.challengeKey(id), string(updated), ttl)
 }
 
 func (s *RedisStore) Approve(id string, approvedBy string) error {
@@ -1363,11 +1375,13 @@ func (s *RedisStore) LoadRevokedAdminSessions() map[string]time.Time {
 
 // ── Escrow token replay prevention ──────────────────────────────────────────
 
+// CheckAndRecordEscrowToken returns true if tokenKey was already seen (replay).
+// On Redis errors the method fails closed (returns true) to prevent replay.
 func (s *RedisStore) CheckAndRecordEscrowToken(tokenKey string) (alreadySeen bool) {
 	set, err := s.client.SetNX(s.ctx(), s.escrowTokenKey(tokenKey), "1", 10*time.Minute).Result()
 	if err != nil {
-		slog.Error("redis: CheckAndRecordEscrowToken", "err", err)
-		return false
+		slog.Error("redis: CheckAndRecordEscrowToken (failing closed)", "err", err)
+		return true
 	}
 	return !set // SetNX returns false if key already existed
 }

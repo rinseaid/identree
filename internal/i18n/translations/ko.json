@@ -392,5 +392,13 @@
   "enter_reason": "Enter reason...",
   "cfg_require_justification": "Require Justification",
   "cfg_justification_choices": "Justification Choices",
-  "reason": "이유"
+  "reason": "이유",
+  "terminal_justification_required": "사유 입력이 필요합니다. 사유를 선택하세요:",
+  "terminal_justification_other": "기타 (직접 입력)",
+  "terminal_justification_choice": "선택 [%d]: ",
+  "terminal_justification_enter_reason": "사유를 입력하세요: "
+  ,
+    "rate_limited": "Rate limited"
+  ,
+    "too_many_requests": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."
 }

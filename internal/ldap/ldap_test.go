@@ -556,9 +556,6 @@ func TestBuildMemberUids(t *testing.T) {
 	_ = json.Unmarshal([]byte(`[{"id":"u1","username":"alice"},{"id":"u2","username":"bob"}]`), &users)
 	dir := pocketid.NewUserDirectory(users, nil)
 
-	type member struct {
-		ID string `json:"id"`
-	}
 	members := []struct{ ID string `json:"id"` }{{"u1"}, {"u2"}, {"u99"}}
 	got := buildMemberUids(members, dir)
 	if len(got) != 2 || got[0] != "alice" || got[1] != "bob" {

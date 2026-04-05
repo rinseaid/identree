@@ -330,11 +330,16 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		// zero the signer (best-effort, GC will handle the rest)
 		signer = nil
 		// Schedule job cleanup after TTL to prevent unbounded map growth.
+		// Select on stopCh so the goroutine exits promptly on server shutdown.
 		go func() {
-			time.Sleep(deployJobTTL)
-			s.deployMu.Lock()
-			delete(s.deployJobs, jobID)
-			s.deployMu.Unlock()
+			select {
+			case <-time.After(deployJobTTL):
+				s.deployMu.Lock()
+				delete(s.deployJobs, jobID)
+				s.deployMu.Unlock()
+			case <-s.stopCh:
+				return
+			}
 		}()
 	}()
 
@@ -595,11 +600,16 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 			s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
 		}
 		// Schedule job cleanup after TTL to prevent unbounded map growth.
+		// Select on stopCh so the goroutine exits promptly on server shutdown.
 		go func() {
-			time.Sleep(deployJobTTL)
-			s.deployMu.Lock()
-			delete(s.deployJobs, jobID)
-			s.deployMu.Unlock()
+			select {
+			case <-time.After(deployJobTTL):
+				s.deployMu.Lock()
+				delete(s.deployJobs, jobID)
+				s.deployMu.Unlock()
+			case <-s.stopCh:
+				return
+			}
 		}()
 	}()
 

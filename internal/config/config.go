@@ -236,7 +236,7 @@ type ServerConfig struct {
 	RedisSentinelMaster string
 	RedisSentinelAddrs  []string
 	RedisClusterAddrs   []string
-	RedisPoolSize       int           // default 10
+	RedisPoolSize       int           // default 50
 	RedisDialTimeout    time.Duration // default 5s
 	RedisReadTimeout    time.Duration // default 3s
 	RedisWriteTimeout   time.Duration // default 3s
@@ -495,7 +495,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		RedisSentinelMaster: get("IDENTREE_REDIS_SENTINEL_MASTER"),
 		RedisSentinelAddrs:  getSlice("IDENTREE_REDIS_SENTINEL_ADDRS"),
 		RedisClusterAddrs:   getSlice("IDENTREE_REDIS_CLUSTER_ADDRS"),
-		RedisPoolSize:       getInt("IDENTREE_REDIS_POOL_SIZE", 10),
+		RedisPoolSize:       getInt("IDENTREE_REDIS_POOL_SIZE", 50),
 		RedisDialTimeout:    getDuration("IDENTREE_REDIS_DIAL_TIMEOUT", 5*time.Second),
 		RedisReadTimeout:    getDuration("IDENTREE_REDIS_READ_TIMEOUT", 3*time.Second),
 		RedisWriteTimeout:   getDuration("IDENTREE_REDIS_WRITE_TIMEOUT", 3*time.Second),

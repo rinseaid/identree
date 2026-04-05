@@ -106,6 +106,15 @@ func (a *authFailTracker) record(ip string) {
 			delete(a.seen, k)
 		}
 	}
+	// Safety valve: if the map still exceeds 50k entries (e.g. distributed
+	// attack from many IPs), force-prune all entries older than the window.
+	if len(a.seen) > 50000 {
+		for k, ts := range a.seen {
+			if len(ts) == 0 || ts[len(ts)-1].Before(cutoff) {
+				delete(a.seen, k)
+			}
+		}
+	}
 }
 
 // recentCount returns the number of failures from ip in the current window.

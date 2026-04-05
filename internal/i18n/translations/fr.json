@@ -392,5 +392,13 @@
   "enter_reason": "Enter reason...",
   "cfg_require_justification": "Require Justification",
   "cfg_justification_choices": "Justification Choices",
-  "reason": "Motif"
+  "reason": "Motif",
+  "terminal_justification_required": "Justification requise. Sélectionnez un motif :",
+  "terminal_justification_other": "Autre (saisir un motif personnalisé)",
+  "terminal_justification_choice": "Choix [%d] : ",
+  "terminal_justification_enter_reason": "Saisissez le motif : "
+  ,
+    "rate_limited": "Rate limited"
+  ,
+    "too_many_requests": "Vous effectuez trop de requêtes. Veuillez patienter un instant et réessayer."
 }

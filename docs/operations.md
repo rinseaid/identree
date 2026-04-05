@@ -345,3 +345,9 @@ Review this list before going to production.
 
 - [ ] **`IDENTREE_OIDC_CLIENT_SECRET` is kept out of version control**
   Use environment variables or a secrets manager. Never commit OIDC credentials to a repository.
+
+---
+
+## Known Limitations
+
+- Admin configuration panel help descriptions are English-only. All other user-facing strings are translated.

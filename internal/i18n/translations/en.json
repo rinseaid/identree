@@ -392,5 +392,13 @@
   "enter_reason": "Enter reason...",
   "cfg_require_justification": "Require Justification",
   "cfg_justification_choices": "Justification Choices",
-  "reason": "Reason"
+  "reason": "Reason",
+  "terminal_justification_required": "Justification required. Select a reason:",
+  "terminal_justification_other": "Other (enter custom reason)",
+  "terminal_justification_choice": "Choice [%d]: ",
+  "terminal_justification_enter_reason": "Enter reason: "
+  ,
+    "rate_limited": "Rate limited"
+  ,
+    "too_many_requests": "You are making too many requests. Please wait a moment and try again."
 }
