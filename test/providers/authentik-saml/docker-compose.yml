@@ -1,0 +1,162 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: identree-authentik-saml-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: authentik-test-pass
+      POSTGRES_DB: authentik
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: identree-authentik-saml-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2024.10.5
+    container_name: identree-authentik-saml-server
+    restart: unless-stopped
+    command: server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik-test-pass
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_SECRET_KEY: "authentik-saml-test-secret-32chars!!"
+      AUTHENTIK_BOOTSTRAP_PASSWORD: "AuthentikAdmin123!"
+      AUTHENTIK_BOOTSTRAP_TOKEN: "identree-authentik-saml-test-token"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      AUTHENTIK_AVATARS: "none"
+    volumes:
+      - authentik-media:/media
+      - authentik-templates:/templates
+    ports:
+      - "127.0.0.1:9010:9000"
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2024.10.5
+    container_name: identree-authentik-saml-worker
+    restart: unless-stopped
+    command: worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik-test-pass
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_SECRET_KEY: "authentik-saml-test-secret-32chars!!"
+      AUTHENTIK_BOOTSTRAP_PASSWORD: "AuthentikAdmin123!"
+      AUTHENTIK_BOOTSTRAP_TOKEN: "identree-authentik-saml-test-token"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+    volumes:
+      - authentik-media:/media
+      - authentik-templates:/templates
+
+  identree:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        COMMIT: ${COMMIT:-dev}
+        VERSION: ${VERSION:-dev}
+    container_name: identree-authentik-saml-app
+    restart: unless-stopped
+    depends_on:
+      authentik-server:
+        condition: service_started
+    environment:
+      # SAML — Authentik
+      IDENTREE_AUTH_PROTOCOL: "saml"
+      IDENTREE_SAML_IDP_METADATA_URL: "http://authentik-server:9000/api/v3/providers/saml/1/metadata/?download"
+      IDENTREE_SAML_ENTITY_ID: "http://localhost:8100"
+      IDENTREE_SAML_GROUPS_ATTR: "http://schemas.xmlsoap.org/claims/Group"
+      IDENTREE_SAML_USERNAME_ATTR: "http://schemas.goauthentik.io/2021/02/saml/username"
+
+      IDENTREE_EXTERNAL_URL: "http://localhost:8100"
+      IDENTREE_INSTALL_URL: "http://identree:8090"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-authentik-saml-1234"
+
+      IDENTREE_LDAP_ENABLED: "false"
+      IDENTREE_ADMIN_GROUPS: "admins"
+      IDENTREE_DEV_LOGIN: "false"
+
+      IDENTREE_CHALLENGE_TTL: "120s"
+      IDENTREE_GRACE_PERIOD: "24h"
+
+      IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
+      IDENTREE_ESCROW_BACKEND: "local"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "d37eb3f9a4d82e1b5f0c6a7d893e4f2b1a0d5c8e7b6a9f3d2c4e8b1a7f0d5c3e"
+      IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+    volumes:
+      - identree-data:/data
+    ports:
+      - "127.0.0.1:8100:8090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  testclient:
+    build:
+      context: ../../..
+      dockerfile: test/testclient/Dockerfile
+    container_name: identree-authentik-saml-client
+    hostname: authentik-saml-test-host
+    restart: unless-stopped
+    depends_on:
+      identree:
+        condition: service_started
+    environment:
+      # No LDAP for SAML test — SSSD not configured
+      SSSD_SUDO_PROVIDER: "none"
+      STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
+
+      IDENTREE_SERVER_URL: "http://identree:8090"
+      IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-authentik-saml-1234"
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+
+volumes:
+  postgres-data:
+  authentik-media:
+  authentik-templates:
+  identree-data:
