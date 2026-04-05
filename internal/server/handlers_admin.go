@@ -1083,6 +1083,7 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 	// Reload the channel/route config from disk when the path changes
 	// (or on any settings save as a convenience).
 	s.reloadNotificationConfig()
+	s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
 	if !config.IsEnvSourced("IDENTREE_NOTIFY_TIMEOUT") {
 		if d, err := time.ParseDuration(values["IDENTREE_NOTIFY_TIMEOUT"]); err == nil && d > 0 {
 			s.cfg.NotifyTimeout = d

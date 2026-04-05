@@ -238,6 +238,7 @@ func (s *Server) handleNotifyChannelAdd(w http.ResponseWriter, r *http.Request) 
 
 	// Reload to pick up env-injected secrets.
 	s.reloadNotificationConfig()
+	s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
 
 	slog.Info("NOTIFY_CHANNEL_ADDED", "admin", adminUser, "channel", ch.Name, "backend", ch.Backend)
 	s.dispatchNotification(notify.WebhookData{
@@ -298,6 +299,8 @@ func (s *Server) handleNotifyChannelDelete(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
 	}
+
+	s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
 
 	slog.Info("NOTIFY_CHANNEL_DELETED", "admin", adminUser, "channel", name)
 	s.dispatchNotification(notify.WebhookData{
@@ -363,6 +366,8 @@ func (s *Server) handleNotifyRouteAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
+
 	slog.Info("NOTIFY_ROUTE_ADDED", "admin", adminUser, "channels", route.Channels, "events", route.Events)
 	s.dispatchNotification(notify.WebhookData{
 		Event:     "notification_route_added",
@@ -414,6 +419,8 @@ func (s *Server) handleNotifyRouteDelete(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
 	}
+
+	s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
 
 	slog.Info("NOTIFY_ROUTE_DELETED", "admin", adminUser, "index", idx)
 	s.dispatchNotification(notify.WebhookData{

@@ -87,6 +87,7 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 					s.revokedNonces[nonce] = now
 					s.revokedNoncesMu.Unlock()
 					s.store.PersistRevokedNonce(nonce, now)
+					s.publishClusterMessage(clusterMessage{Type: "revoke_nonce", Nonce: nonce})
 				}
 			}
 

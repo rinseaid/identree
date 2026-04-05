@@ -187,6 +187,15 @@ type Server struct {
 	// AdminGroups-matching group as of the last successful directory refresh or
 	// live config update.  Protected by cfgMu.
 	prevAdminUsernames map[string]bool
+
+	// clusterRedis is the dedicated Redis client for the cluster control channel.
+	// nil when StateBackend != "redis".
+	clusterRedis  redis.UniversalClient
+	clusterPrefix string
+
+	// clusterLastNotifyReload deduplicates reload_notify_config messages.
+	// Stores the Unix millisecond timestamp of the last reload.
+	clusterLastNotifyReload atomic.Int64
 }
 
 var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
@@ -371,6 +380,15 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		s.sseBroadcaster = newRedisBroadcaster(s, sseRedisClient, cfg.RedisKeyPrefix)
 		// Start Redis pool metrics collection using the store's client.
 		startRedisMetrics(storeRedisClient, s.stopCh)
+
+		// ── Cluster control channel ────────────────────────────────────
+		clusterRedisClient, err := newRedisClient(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("redis cluster control client: %w", err)
+		}
+		s.clusterRedis = clusterRedisClient
+		s.clusterPrefix = cfg.RedisKeyPrefix
+		go s.startClusterSubscriber(clusterRedisClient, cfg.RedisKeyPrefix, s.stopCh)
 	} else {
 		s.sseBroadcaster = &localBroadcaster{server: s}
 	}
@@ -524,6 +542,7 @@ func (s *Server) updateAdminRevocations(newAdminUsernames map[string]bool) {
 		if !newAdminUsernames[username] {
 			s.revokedAdminSessions.Store(username, now)
 			s.store.PersistRevokedAdminSession(username, now)
+			s.publishClusterMessage(clusterMessage{Type: "revoke_admin", Username: username})
 			slog.Info("admin role revoked for user removed from admin groups", "user", username)
 		}
 	}
@@ -778,6 +797,9 @@ func (s *Server) Stop() {
 	close(s.stopCh)
 	if s.sseBroadcaster != nil {
 		s.sseBroadcaster.Close()
+	}
+	if s.clusterRedis != nil {
+		s.clusterRedis.Close()
 	}
 	s.store.Stop()
 	if s.audit != nil {
