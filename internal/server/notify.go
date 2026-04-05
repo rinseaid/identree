@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rinseaid/identree/internal/audit"
 	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/sanitize"
@@ -42,6 +43,15 @@ type NotifyData struct {
 	Actor       string
 }
 
+// emitAuditEvent sends a structured event to all configured audit sinks.
+// It is a no-op when no audit streamer is configured.
+func (s *Server) emitAuditEvent(event, username, hostname, code, actor, reason string) {
+	if s.audit == nil {
+		return
+	}
+	s.audit.Emit(audit.NewEvent(event, username, hostname, code, actor, reason, version))
+}
+
 // sendNotification fires the configured notification backend asynchronously.
 // It is a no-op when no backend is configured.
 func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapURL string) {
@@ -53,6 +63,9 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 	notifyURL := s.cfg.NotifyURL
 	challengeTTL := s.cfg.ChallengeTTL
 	s.cfgMu.RUnlock()
+
+	// Always emit to audit sinks, even when notification backend is disabled.
+	s.emitAuditEvent("challenge_created", ch.Username, ch.Hostname, ch.UserCode, "", ch.Reason)
 
 	if backend == "" {
 		return
@@ -119,6 +132,9 @@ func (s *Server) sendNotification(ch *challenge.Challenge, approvalURL, oneTapUR
 // sendEventNotification fires a notification for non-challenge-creation events
 // (approved, rejected, auto_approved, revealed_breakglass). No-op if no backend configured.
 func (s *Server) sendEventNotification(d notify.WebhookData) {
+	// Always emit to audit sinks, even when notification backend is disabled.
+	s.emitAuditEvent(d.Event, d.Username, d.Hostname, d.UserCode, d.Actor, d.Reason)
+
 	s.cfgMu.RLock()
 	backend := s.cfg.NotifyBackend
 	timeout := s.cfg.NotifyTimeout

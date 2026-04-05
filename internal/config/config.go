@@ -146,6 +146,15 @@ type ServerConfig struct {
 	NotifyCommand string        // path to executable (custom backend only)
 	NotifyTimeout time.Duration // timeout for both HTTP and command (default 15s)
 
+	// ── Audit streaming ──────────────────────────────────────────────────────
+	AuditLog          string // "stdout" | "file:/path/to/audit.jsonl" | "" (disabled)
+	AuditSyslogURL    string // "udp://host:514" or "tcp://host:601"
+	AuditSplunkHECURL string // Splunk HEC endpoint URL
+	AuditSplunkToken  string // Splunk HEC token
+	AuditLokiURL      string // Loki base URL (e.g. "http://loki:3100")
+	AuditLokiToken    string // optional Loki bearer token
+	AuditBufferSize   int    // channel buffer size (default 4096)
+
 	// ── Break-glass escrow ────────────────────────────────────────────────────
 	EscrowCommand          string
 	EscrowEnvPassthrough   []string
@@ -383,6 +392,14 @@ func LoadServerConfig() (*ServerConfig, error) {
 		NotifyToken:   get("IDENTREE_NOTIFY_TOKEN"),
 		NotifyCommand: get("IDENTREE_NOTIFY_COMMAND"),
 		NotifyTimeout: getDuration("IDENTREE_NOTIFY_TIMEOUT", 15*time.Second),
+
+		AuditLog:          get("IDENTREE_AUDIT_LOG"),
+		AuditSyslogURL:    get("IDENTREE_AUDIT_SYSLOG_URL"),
+		AuditSplunkHECURL: get("IDENTREE_AUDIT_SPLUNK_HEC_URL"),
+		AuditSplunkToken:  get("IDENTREE_AUDIT_SPLUNK_TOKEN"),
+		AuditLokiURL:      get("IDENTREE_AUDIT_LOKI_URL"),
+		AuditLokiToken:    get("IDENTREE_AUDIT_LOKI_TOKEN"),
+		AuditBufferSize:   getInt("IDENTREE_AUDIT_BUFFER_SIZE", 4096),
 
 		EscrowCommand:        get("IDENTREE_ESCROW_COMMAND"),
 		EscrowEnvPassthrough: getSlice("IDENTREE_ESCROW_COMMAND_ENV"),

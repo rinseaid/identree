@@ -23,6 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/oauth2"
 
+	"github.com/rinseaid/identree/internal/audit"
 	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/escrow"
@@ -134,6 +135,9 @@ type Server struct {
 	// notifyMu while checking this flag and calling notifyWg.Add(1) to prevent
 	// a TOCTOU panic from Add-after-Wait.
 	notifyShutdown atomic.Bool
+
+	// audit is the SIEM/log aggregator streamer. nil when no audit sinks are configured.
+	audit *audit.Streamer
 
 	// stopCh is closed by Stop() to cancel background goroutines.
 	stopCh chan struct{}
@@ -316,6 +320,14 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 				return http.ErrUseLastResponse
 			},
 		},
+	}
+
+	// ── Audit streamer ──────────────────────────────────────────────────────
+	if sinks, err := initAuditSinks(cfg); err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	} else if len(sinks) > 0 {
+		s.audit = audit.NewStreamer(sinks, cfg.AuditBufferSize)
+		slog.Info("AUDIT streaming enabled", "sinks", len(sinks))
 	}
 
 	// Pre-hash API keys and the metrics token at startup.
@@ -696,6 +708,48 @@ func (s *Server) buildDisabledMap() map[string]bool {
 func (s *Server) Stop() {
 	close(s.stopCh)
 	s.store.Stop()
+	if s.audit != nil {
+		s.audit.Close()
+	}
+}
+
+// initAuditSinks builds the audit sink list from config.
+func initAuditSinks(cfg *config.ServerConfig) ([]audit.Sink, error) {
+	var sinks []audit.Sink
+
+	if cfg.AuditLog != "" {
+		dest := cfg.AuditLog
+		if strings.HasPrefix(dest, "file:") {
+			dest = strings.TrimPrefix(dest, "file:")
+		}
+		sink, err := audit.NewJSONLogSink(dest)
+		if err != nil {
+			return nil, err
+		}
+		sinks = append(sinks, sink)
+		slog.Info("AUDIT sink: jsonlog", "dest", dest)
+	}
+
+	if cfg.AuditSyslogURL != "" {
+		sink, err := audit.NewSyslogSink(cfg.AuditSyslogURL)
+		if err != nil {
+			return nil, err
+		}
+		sinks = append(sinks, sink)
+		slog.Info("AUDIT sink: syslog", "url", cfg.AuditSyslogURL)
+	}
+
+	if cfg.AuditSplunkHECURL != "" {
+		sinks = append(sinks, audit.NewSplunkHECSink(cfg.AuditSplunkHECURL, cfg.AuditSplunkToken))
+		slog.Info("AUDIT sink: splunk_hec", "url", cfg.AuditSplunkHECURL)
+	}
+
+	if cfg.AuditLokiURL != "" {
+		sinks = append(sinks, audit.NewLokiSink(cfg.AuditLokiURL, cfg.AuditLokiToken))
+		slog.Info("AUDIT sink: loki", "url", cfg.AuditLokiURL)
+	}
+
+	return sinks, nil
 }
 
 // ServeHTTP implements http.Handler with security headers and panic recovery.
