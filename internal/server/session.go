@@ -9,8 +9,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strconv"
+
+	"github.com/rinseaid/identree/internal/policy"
 	"strings"
 	"time"
 
@@ -146,26 +147,33 @@ func (s *Server) getSessionRole(r *http.Request) string {
 	return data.Role
 }
 
-// requiresAdminApproval checks if a hostname matches the admin approval policy.
-// Patterns use filepath.Match glob syntax (e.g., "*.prod", "bastion-*").
-func (s *Server) requiresAdminApproval(hostname string) bool {
-	// Snapshot under cfgMu to avoid a data race with applyLiveConfigUpdates.
+// evaluatePolicy evaluates the approval policy engine for the given hostname.
+// Returns the policy evaluation result. Thread-safe.
+func (s *Server) evaluatePolicy(username, hostname string) policy.EvalResult {
+	// Look up host group from registry.
+	_, hostGroup, _, _ := s.hostRegistry.GetHost(hostname)
+	s.policyCfgMu.RLock()
+	engine := s.policyEngine
+	s.policyCfgMu.RUnlock()
+	return engine.Evaluate(username, hostname, hostGroup)
+}
+
+// reloadPolicies reloads the approval policies from disk.
+func (s *Server) reloadPolicies() {
 	s.cfgMu.RLock()
-	patterns := s.cfg.AdminApprovalHosts
+	path := s.cfg.ApprovalPoliciesFile
 	s.cfgMu.RUnlock()
-	for _, pattern := range patterns {
-		matched, err := filepath.Match(pattern, hostname)
-		if err != nil {
-			// A malformed glob pattern would never match, silently bypassing
-			// the intended admin-approval requirement. Log a warning instead.
-			slog.Warn("requiresAdminApproval: invalid glob pattern", "pattern", pattern, "err", err)
-			continue
-		}
-		if matched {
-			return true
-		}
+
+	policies, err := policy.LoadPolicies(path)
+	if err != nil {
+		slog.Error("policy: failed to reload", "path", path, "err", err)
+		return
 	}
-	return false
+
+	s.policyCfgMu.Lock()
+	s.policyEngine = policy.NewEngine(policies)
+	s.policyCfgMu.Unlock()
+	slog.Info("policy: config reloaded", "policies", len(policies))
 }
 
 // justificationChoices returns the server-configured justification choices,

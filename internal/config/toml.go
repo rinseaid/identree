@@ -78,7 +78,7 @@ var TOMLSections = []TOMLSection{
 	}},
 	{Name: "admin", Fields: []TOMLField{
 		{Key: "groups", EnvKey: "IDENTREE_ADMIN_GROUPS", IsList: true},
-		{Key: "approval_hosts", EnvKey: "IDENTREE_ADMIN_APPROVAL_HOSTS", IsList: true},
+		{Key: "approval_policies_file", EnvKey: "IDENTREE_APPROVAL_POLICIES_FILE"},
 	}},
 	{Name: "notifications", Fields: []TOMLField{
 		{Key: "config_file", EnvKey: "IDENTREE_NOTIFICATION_CONFIG_FILE"},

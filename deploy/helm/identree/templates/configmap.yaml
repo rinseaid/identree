@@ -45,8 +45,8 @@ data:
   {{- if .Values.config.admin.groups }}
   IDENTREE_ADMIN_GROUPS: {{ .Values.config.admin.groups | quote }}
   {{- end }}
-  {{- if .Values.config.admin.approvalHosts }}
-  IDENTREE_ADMIN_APPROVAL_HOSTS: {{ .Values.config.admin.approvalHosts | quote }}
+  {{- if .Values.config.admin.approvalPoliciesFile }}
+  IDENTREE_APPROVAL_POLICIES_FILE: {{ .Values.config.admin.approvalPoliciesFile | quote }}
   {{- end }}
 
   # ── LDAP server ───────────────────────────────────────────────────────────

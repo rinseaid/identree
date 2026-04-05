@@ -288,6 +288,9 @@ type redisChallenge struct {
 	Hostname               string `json:"hostname,omitempty"`
 	Reason                 string `json:"reason,omitempty"`
 	DenyReason             string `json:"deny_reason,omitempty"`
+	PolicyName             string `json:"policy_name,omitempty"`
+	RequiredApprovals      int    `json:"required_approvals,omitempty"`
+	RequireAdmin           bool   `json:"require_admin,omitempty"`
 	BreakglassRotateBefore string `json:"breakglass_rotate_before,omitempty"`
 	RequestedGraceSec      int64  `json:"requested_grace_sec,omitempty"`
 	RevokeTokensBefore     string `json:"revoke_tokens_before,omitempty"`
@@ -308,6 +311,9 @@ func challengeToRedis(c *Challenge) redisChallenge {
 		Hostname:               c.Hostname,
 		Reason:                 c.Reason,
 		DenyReason:             c.DenyReason,
+		PolicyName:             c.PolicyName,
+		RequiredApprovals:      c.RequiredApprovals,
+		RequireAdmin:           c.RequireAdmin,
 		BreakglassRotateBefore: c.BreakglassRotateBefore,
 		RequestedGraceSec:      int64(c.RequestedGrace.Seconds()),
 		RevokeTokensBefore:     c.RevokeTokensBefore,
@@ -347,6 +353,9 @@ func redisToChallenge(rc redisChallenge) Challenge {
 		Hostname:               rc.Hostname,
 		Reason:                 rc.Reason,
 		DenyReason:             rc.DenyReason,
+		PolicyName:             rc.PolicyName,
+		RequiredApprovals:      rc.RequiredApprovals,
+		RequireAdmin:           rc.RequireAdmin,
 		BreakglassRotateBefore: rc.BreakglassRotateBefore,
 		RequestedGrace:         time.Duration(rc.RequestedGraceSec) * time.Second,
 		RevokeTokensBefore:     rc.RevokeTokensBefore,

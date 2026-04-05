@@ -39,7 +39,7 @@ var liveUpdateKeys = map[string]bool{
 	"IDENTREE_GRACE_PERIOD":                    true,
 	"IDENTREE_ONE_TAP_MAX_AGE":                 true,
 	"IDENTREE_ADMIN_GROUPS":                    true,
-	"IDENTREE_ADMIN_APPROVAL_HOSTS":            true,
+	"IDENTREE_APPROVAL_POLICIES_FILE":          true,
 	"IDENTREE_NOTIFICATION_CONFIG_FILE":        true,
 	"IDENTREE_ADMIN_NOTIFY_FILE":               true,
 	"IDENTREE_NOTIFY_TIMEOUT":                  true,
@@ -726,7 +726,7 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_LDAP_EXTERNAL_URL":               cfg.LDAPExternalURL,
 		"IDENTREE_LDAP_TLS_CA_CERT":                cfg.LDAPTLSCACert,
 		"IDENTREE_ADMIN_GROUPS":                    strings.Join(cfg.AdminGroups, ", "),
-		"IDENTREE_ADMIN_APPROVAL_HOSTS":            strings.Join(cfg.AdminApprovalHosts, ", "),
+		"IDENTREE_APPROVAL_POLICIES_FILE":          cfg.ApprovalPoliciesFile,
 		"IDENTREE_NOTIFICATION_CONFIG_FILE":        cfg.NotificationConfigFile,
 		"IDENTREE_ADMIN_NOTIFY_FILE":               cfg.AdminNotifyFile,
 		"IDENTREE_NOTIFY_TIMEOUT":                  formatDuration(nil, cfg.NotifyTimeout),
@@ -959,7 +959,7 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 
 // applyLiveConfigUpdates applies the subset of config changes that are safe without a restart.
 // Holds s.cfgMu write lock for the entire mutation so concurrent handlers that snapshot
-// slice fields (AdminGroups, AdminApprovalHosts) under the read lock see consistent values.
+// slice fields (AdminGroups, etc.) under the read lock see consistent values.
 // actor is the authenticated admin username making the change, used for audit logging.
 func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) {
 	s.cfgMu.Lock()
@@ -1066,14 +1066,16 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 			s.cfg.AdminGroups = newGroups
 		}
 	}
-	if !config.IsEnvSourced("IDENTREE_ADMIN_APPROVAL_HOSTS") {
-		newHosts := parseSlice("IDENTREE_ADMIN_APPROVAL_HOSTS")
-		if fmt.Sprintf("%v", newHosts) != fmt.Sprintf("%v", s.cfg.AdminApprovalHosts) {
-			slog.Info("ADMIN_APPROVAL_HOSTS_CHANGED", "actor", actor,
-				"old", s.cfg.AdminApprovalHosts, "new", newHosts)
+	if !config.IsEnvSourced("IDENTREE_APPROVAL_POLICIES_FILE") {
+		newPath := values["IDENTREE_APPROVAL_POLICIES_FILE"]
+		if newPath != s.cfg.ApprovalPoliciesFile {
+			slog.Info("APPROVAL_POLICIES_FILE_CHANGED", "actor", actor,
+				"old", s.cfg.ApprovalPoliciesFile, "new", newPath)
+			s.cfg.ApprovalPoliciesFile = newPath
 		}
-		s.cfg.AdminApprovalHosts = newHosts
 	}
+	// Reload the approval policies from disk on any settings save.
+	s.reloadPolicies()
 	// Notification config file paths: update before reload so the new path is used.
 	if !config.IsEnvSourced("IDENTREE_NOTIFICATION_CONFIG_FILE") {
 		s.cfg.NotificationConfigFile = values["IDENTREE_NOTIFICATION_CONFIG_FILE"]

@@ -136,6 +136,6 @@ The following features are on the roadmap but not yet implemented. Do not rely o
 | SAML 2.0 identity provider support | Not implemented |
 | mTLS client certificate authentication | Not implemented |
 | Per-admin notification preferences (granular routing) | Implemented — configure via **Admin > Notifications** (`/admin/notifications`) |
-| Approval policies (time windows, host-specific rules, step-up auth) | Not implemented |
+| Approval policies (time windows, host-specific rules, step-up auth) | Implemented — configure via **Admin > Policies** (`/admin/policies`) |
 
 Check the [GitHub issues](https://github.com/rinseaid/identree/issues) for the latest status and to add your vote or comments.

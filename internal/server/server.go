@@ -32,6 +32,7 @@ import (
 	"github.com/rinseaid/identree/internal/escrow"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/pocketid"
+	"github.com/rinseaid/identree/internal/policy"
 	"github.com/rinseaid/identree/internal/randutil"
 	"github.com/rinseaid/identree/internal/sudorules"
 )
@@ -144,6 +145,11 @@ type Server struct {
 	// Protected by notifyCfgMu for concurrent reads during dispatch.
 	notifyCfg   *notify.NotificationConfig
 	notifyCfgMu sync.RWMutex
+
+	// policyEngine evaluates approval policies for incoming challenges.
+	// Protected by policyCfgMu for concurrent reads during evaluation.
+	policyEngine *policy.Engine
+	policyCfgMu  sync.RWMutex
 
 	// adminNotifyStore manages per-admin notification preferences.
 	adminNotifyStore *adminnotify.Store
@@ -413,6 +419,17 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		slog.Info("NOTIFY enabled", "channels", len(notifyCfg.Channels), "routes", len(notifyCfg.Routes))
 	}
 
+	// ── Approval policies ───────────────────────────────────────────────────
+	policies, err := policy.LoadPolicies(cfg.ApprovalPoliciesFile)
+	if err != nil {
+		slog.Warn("policy: failed to load config, using empty policy set", "path", cfg.ApprovalPoliciesFile, "err", err)
+		policies = nil
+	}
+	s.policyEngine = policy.NewEngine(policies)
+	if len(policies) > 0 {
+		slog.Info("POLICY engine loaded", "policies", len(policies))
+	}
+
 	adminNotifyStore, err := adminnotify.NewStore(cfg.AdminNotifyFile)
 	if err != nil {
 		slog.Warn("notify: failed to load admin preferences", "path", cfg.AdminNotifyFile, "err", err)
@@ -664,6 +681,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/notification/routes/delete", s.handleNotifyRouteDelete)
 	s.mux.HandleFunc("/api/admin/notification-preferences", s.handleAdminNotifyPrefSave)
 	s.mux.HandleFunc("/api/admin/test-channel", s.handleAdminTestNotifyChannel)
+
+	// Approval policies
+	s.mux.HandleFunc("/admin/policies", s.handleAdminPolicies)
+	s.mux.HandleFunc("/api/policies/add", s.handlePolicyAdd)
+	s.mux.HandleFunc("/api/policies/delete", s.handlePolicyDelete)
 
 	// Host management
 	s.mux.HandleFunc("/api/hosts/elevate", s.handleElevate)

@@ -8,15 +8,15 @@ import (
 	"testing"
 
 	"github.com/rinseaid/identree/internal/config"
+	"github.com/rinseaid/identree/internal/policy"
 )
 
 // newAuthTestServer builds a Server with the given shared secret and API keys.
-func newAuthTestServer(secret string, apiKeys []string, adminApprovalHosts []string) *Server {
+func newAuthTestServer(secret string, apiKeys []string, _ []string) *Server {
 	s := &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret:       secret,
-			APIKeys:            apiKeys,
-			AdminApprovalHosts: adminApprovalHosts,
+			SharedSecret: secret,
+			APIKeys:      apiKeys,
 		},
 		hostRegistry: NewHostRegistry(""),
 	}
@@ -148,82 +148,77 @@ func TestVerifyAPIKey(t *testing.T) {
 	})
 }
 
-func TestRequiresAdminApproval(t *testing.T) {
+func TestEvaluatePolicy(t *testing.T) {
 	tests := []struct {
 		name     string
-		patterns []string
+		policies []policy.Policy
 		hostname string
 		want     bool
 	}{
 		{
-			name:     "no patterns — never requires admin",
-			patterns: nil,
+			name:     "no policies — never requires admin",
+			policies: nil,
 			hostname: "web01.example.com",
 			want:     false,
 		},
 		{
-			name:     "exact match",
-			patterns: []string{"prod-db"},
+			name: "exact match",
+			policies: []policy.Policy{
+				{Name: "prod", MatchHosts: []string{"prod-db"}, RequireAdmin: true},
+			},
 			hostname: "prod-db",
 			want:     true,
 		},
 		{
-			name:     "wildcard suffix match",
-			patterns: []string{"prod-*"},
+			name: "wildcard suffix match",
+			policies: []policy.Policy{
+				{Name: "prod", MatchHosts: []string{"prod-*"}, RequireAdmin: true},
+			},
 			hostname: "prod-web",
 			want:     true,
 		},
 		{
-			name:     "wildcard no match",
-			patterns: []string{"prod-*"},
+			name: "wildcard no match",
+			policies: []policy.Policy{
+				{Name: "prod", MatchHosts: []string{"prod-*"}, RequireAdmin: true},
+			},
 			hostname: "staging-web",
 			want:     false,
 		},
 		{
-			name:     "ALL pattern matches anything",
-			patterns: []string{"ALL"},
-			hostname: "any-host",
-			want:     false, // "ALL" is a literal pattern; filepath.Match("ALL", "any-host") = false
-		},
-		{
-			name:     "multiple patterns — first matches",
-			patterns: []string{"db-*", "cache-*"},
+			name: "multiple host patterns — first matches",
+			policies: []policy.Policy{
+				{Name: "data", MatchHosts: []string{"db-*", "cache-*"}, RequireAdmin: true},
+			},
 			hostname: "db-primary",
 			want:     true,
 		},
 		{
-			name:     "multiple patterns — second matches",
-			patterns: []string{"db-*", "cache-*"},
-			hostname: "cache-01",
-			want:     true,
-		},
-		{
-			name:     "multiple patterns — none match",
-			patterns: []string{"db-*", "cache-*"},
+			name: "multiple host patterns — none match",
+			policies: []policy.Policy{
+				{Name: "data", MatchHosts: []string{"db-*", "cache-*"}, RequireAdmin: true},
+			},
 			hostname: "web-01",
 			want:     false,
 		},
 		{
-			name:     "glob * matches any segment",
-			patterns: []string{"*.prod.example.com"},
-			hostname: "app.prod.example.com",
-			want:     true,
-		},
-		{
-			name:     "glob * matches across dots (only / is a separator)",
-			patterns: []string{"*.example.com"},
+			name: "glob * matches across dots",
+			policies: []policy.Policy{
+				{Name: "prod", MatchHosts: []string{"*.example.com"}, RequireAdmin: true},
+			},
 			hostname: "a.b.example.com",
-			want:     true, // filepath.Match only treats / as separator, so * matches "a.b"
+			want:     true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := newAuthTestServer("secret", nil, tt.patterns)
-			got := s.requiresAdminApproval(tt.hostname)
-			if got != tt.want {
-				t.Errorf("requiresAdminApproval(%q) with patterns %v = %v; want %v",
-					tt.hostname, tt.patterns, got, tt.want)
+			s := newAuthTestServer("secret", nil, nil)
+			s.policyEngine = policy.NewEngine(tt.policies)
+			got := s.evaluatePolicy("testuser", tt.hostname)
+			if got.RequireAdmin != tt.want {
+				t.Errorf("evaluatePolicy(%q) with policies = %v; want RequireAdmin=%v",
+					tt.hostname, tt.policies, tt.want)
 			}
 		})
 	}

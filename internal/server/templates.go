@@ -1058,6 +1058,7 @@ const sidebarNavHTML = `
         <a href="/admin/hosts" class="sub-item{{if eq .AdminTab "hosts"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>{{call .T "hosts"}}</a>
         {{if .BridgeMode}}<a href="/admin/sudo-rules" class="sub-item{{if eq .AdminTab "sudo-rules"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>{{call .T "sudo_rules"}}</a>{{end}}
         <a href="/admin/notifications" class="sub-item{{if eq .AdminTab "notifications"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>{{call .T "notify_tab"}}</a>
+        <a href="/admin/policies" class="sub-item{{if eq .AdminTab "policies"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>{{call .T "policies_tab"}}</a>
         <a href="/admin/config" class="sub-item{{if eq .AdminTab "config"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>{{call .T "config"}}</a>
         <a href="/admin/info" class="sub-item{{if eq .AdminTab "info"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>{{call .T "info"}}</a>
       </div>{{end}}`
@@ -2297,7 +2298,7 @@ const adminPageHTML = `<!DOCTYPE html>
     {{/* Admin Access */}}
       <div class="config-section-row" data-section="admin"><span class="config-section-title">{{call .T "cfg_admin_access"}}</span><button type="submit" class="saction-btn saction-primary config-save-btn">{{call .T "save"}}</button></div>
       {{$v:=index .ConfigValues "IDENTREE_ADMIN_GROUPS"}}{{$lk:=index .ConfigLocked "IDENTREE_ADMIN_GROUPS"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="admin" data-search="IDENTREE_ADMIN_GROUPS Comma-separated Pocket ID group names whose members have admin access to this UI."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_admin_groups"}}</div><div class="config-label-env">IDENTREE_ADMIN_GROUPS</div><div class="config-label-desc">Comma-separated Pocket ID group names whose members have admin access to this UI.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_ADMIN_GROUPS" value="{{$v}}" class="config-input" placeholder="admins, sudo-admins">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
-      {{$v:=index .ConfigValues "IDENTREE_ADMIN_APPROVAL_HOSTS"}}{{$lk:=index .ConfigLocked "IDENTREE_ADMIN_APPROVAL_HOSTS"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="admin" data-search="IDENTREE_ADMIN_APPROVAL_HOSTS Glob patterns for hosts that require admin approval before a user is granted access."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_admin_approval_hosts"}}</div><div class="config-label-env">IDENTREE_ADMIN_APPROVAL_HOSTS</div><div class="config-label-desc">Glob patterns for hosts that require admin approval before a user is granted access.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_ADMIN_APPROVAL_HOSTS" value="{{$v}}" class="config-input" placeholder="prod-*, sensitive-host">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
+      {{$v:=index .ConfigValues "IDENTREE_APPROVAL_POLICIES_FILE"}}{{$lk:=index .ConfigLocked "IDENTREE_APPROVAL_POLICIES_FILE"}}<div class="config-table-row{{if $lk}} config-locked{{end}}" data-section="admin" data-search="IDENTREE_APPROVAL_POLICIES_FILE Path to the JSON file defining approval policies (per-host/per-user rules)."><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_approval_policies_file"}}</div><div class="config-label-env">IDENTREE_APPROVAL_POLICIES_FILE</div><div class="config-label-desc">Path to the JSON file defining approval policies. Manage via Admin &gt; Policies.</div></div><div class="config-row-control">{{if $lk}}<input type="text" value="{{$v}}" disabled class="config-input">{{else}}<input type="text" name="IDENTREE_APPROVAL_POLICIES_FILE" value="{{$v}}" class="config-input" placeholder="/config/approval-policies.json">{{end}}{{if $lk}}<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</div></div>
       <div class="config-table-row config-locked" data-section="admin" data-search="IDENTREE_API_KEYS bearer tokens management api"><div class="config-row-label"><div class="config-label-text">{{call .T "cfg_api_keys"}}</div><div class="config-label-env">IDENTREE_API_KEYS</div><div class="config-label-desc">Bearer tokens for calling identree's management API. Set via environment variable only.</div></div><div class="config-row-control"><span style="font-size:0.875rem;color:var(--text-2)">{{.APIKeyCount}}</span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-3);flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span style="font-size:0.75rem;color:var(--text-3)">env only</span></div></div>
     {{/* Notifications */}}
       <div class="config-section-row" data-section="notifications"><span class="config-section-title">{{call .T "cfg_notifications"}}</span><button type="submit" class="saction-btn saction-primary config-save-btn">{{call .T "save"}}</button></div>
@@ -3419,6 +3420,118 @@ const adminPageHTML = `<!DOCTYPE html>
         <div class="modal-actions" style="margin-top:12px">
           {{if .MyNotifyPref}}<button type="submit" name="action" value="delete" class="btn btn-danger confirm-submit" data-confirm="Remove your notification subscription?" style="margin-right:auto">{{call .T "notify_remove_pref"}}</button>{{end}}
           <button type="submit" class="btn btn-primary">{{call .T "notify_save_pref"}}</button>
+        </div>
+      </form>
+    </div>
+
+    <script nonce="{{.CSPNonce}}">
+    document.querySelectorAll('.confirm-submit').forEach(function(btn){
+      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+    });
+    document.querySelectorAll('.banner-success').forEach(function(el){
+      setTimeout(function(){el.style.transition='opacity 0.4s';el.style.opacity='0';setTimeout(function(){el.remove()},500)},5000);
+    });
+    </script>
+
+    {{else if eq .AdminTab "policies"}}
+    {{range .FlashErrors}}<div class="banner banner-error" role="alert">{{.}}</div>{{end}}
+
+    <!-- ── Approval Policies ──────────────────────────────────────── -->
+    <h3 style="margin-bottom:12px">{{call .T "policies_title"}}</h3>
+    <p style="font-size:0.875rem;color:var(--text-3);margin-bottom:16px">{{call .T "policies_description"}}</p>
+
+    {{if .Policies}}
+    <div class="info-table-wrap">
+      <table class="info-table" style="width:100%;font-size:0.8125rem">
+        <thead>
+          <tr>
+            <th>{{call .T "policy_name"}}</th>
+            <th>{{call .T "policy_match_hosts"}}</th>
+            <th>{{call .T "policy_match_groups"}}</th>
+            <th>{{call .T "policy_match_users"}}</th>
+            <th>{{call .T "policy_require_admin"}}</th>
+            <th>{{call .T "policy_grace"}}</th>
+            <th>{{call .T "policy_time_window"}}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Policies}}
+          <tr>
+            <td><strong>{{.Name}}</strong></td>
+            <td>{{if .MatchHosts}}{{range $i, $h := .MatchHosts}}{{if $i}}, {{end}}<code>{{$h}}</code>{{end}}{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
+            <td>{{if .MatchHostGroups}}{{range $i, $g := .MatchHostGroups}}{{if $i}}, {{end}}{{$g}}{{end}}{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
+            <td>{{if .MatchUsers}}{{range $i, $u := .MatchUsers}}{{if $i}}, {{end}}<code>{{$u}}</code>{{end}}{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
+            <td>{{if .RequireAdmin}}<span style="color:var(--danger)">Yes</span>{{else}}No{{end}}</td>
+            <td>{{if .AutoApproveGrace}}<span style="color:var(--success)">Yes</span>{{else}}No{{end}}</td>
+            <td>{{if or .AllowedHours .AllowedDays}}{{.AllowedHours}} {{.AllowedDays}}{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
+            <td>
+              <form method="POST" action="/api/policies/delete" style="display:inline">
+                <input type="hidden" name="username" value="{{$.Username}}">
+                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+                <input type="hidden" name="name" value="{{.Name}}">
+                <button type="submit" class="btn btn-danger btn-sm confirm-submit" data-confirm="Delete policy '{{.Name}}'?">{{call $.T "delete"}}</button>
+              </form>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <p style="color:var(--text-3);font-style:italic;margin:12px 0">{{call .T "policies_none"}}</p>
+    {{end}}
+
+    <!-- ── Add Policy Form ──────────────────────────────────────── -->
+    <div class="info-section" style="margin-top:24px">
+      <h4 style="margin-bottom:12px">{{call .T "policy_add_title"}}</h4>
+      <form method="POST" action="/api/policies/add">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+        <table class="info-table" style="width:100%;font-size:0.8125rem">
+          <tr>
+            <td class="info-label"><label for="policy-name">{{call .T "policy_name"}}</label></td>
+            <td><input type="text" id="policy-name" name="name" class="text-input" placeholder="e.g., production" required pattern="[a-z0-9][a-z0-9._-]*"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="policy-match-hosts">{{call .T "policy_match_hosts"}}</label></td>
+            <td><input type="text" id="policy-match-hosts" name="match_hosts" class="text-input" placeholder="*.prod, bastion-*"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="policy-match-groups">{{call .T "policy_match_groups"}}</label></td>
+            <td><input type="text" id="policy-match-groups" name="match_host_groups" class="text-input" placeholder="production, staging">
+            {{if .HostGroups}}<p style="font-size:0.75rem;color:var(--text-3);margin:2px 0">Available: {{range $i, $g := .HostGroups}}{{if $i}}, {{end}}{{$g}}{{end}}</p>{{end}}</td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="policy-match-users">{{call .T "policy_match_users"}}</label></td>
+            <td><input type="text" id="policy-match-users" name="match_users" class="text-input" placeholder="contractor-*, intern-*"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="policy-require-admin">{{call .T "policy_require_admin"}}</label></td>
+            <td><input type="checkbox" id="policy-require-admin" name="require_admin" value="on"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="policy-grace">{{call .T "policy_grace"}}</label></td>
+            <td><input type="checkbox" id="policy-grace" name="auto_approve_grace" value="on" checked></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="policy-hours">{{call .T "policy_allowed_hours"}}</label></td>
+            <td><input type="text" id="policy-hours" name="allowed_hours" class="text-input" placeholder="09:00-17:00 (UTC, optional)"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="policy-days">{{call .T "policy_allowed_days"}}</label></td>
+            <td><input type="text" id="policy-days" name="allowed_days" class="text-input" placeholder="Mon-Fri (optional)"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="policy-notify">{{call .T "policy_notify_channels"}}</label></td>
+            <td><input type="text" id="policy-notify" name="notify_channels" class="text-input" placeholder="slack-ops, pagerduty">
+            {{if .ChannelNames}}<p style="font-size:0.75rem;color:var(--text-3);margin:2px 0">Available: {{range $i, $n := .ChannelNames}}{{if $i}}, {{end}}{{$n}}{{end}}</p>{{end}}</td>
+          </tr>
+        </table>
+        <div class="modal-actions" style="margin-top:12px">
+          <button type="submit" class="btn btn-primary">{{call .T "policy_add_btn"}}</button>
         </div>
       </form>
     </div>

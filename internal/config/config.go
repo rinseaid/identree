@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -135,9 +134,9 @@ type ServerConfig struct {
 	LDAPDefaultHome string
 
 	// ── Admin access ──────────────────────────────────────────────────────────
-	AdminGroups        []string // OIDC groups granting admin dashboard access
-	AdminApprovalHosts []string // hostnames requiring admin approval (glob patterns)
-	APIKeys            []string // API bearer tokens for programmatic access
+	AdminGroups          []string // OIDC groups granting admin dashboard access
+	ApprovalPoliciesFile string   // path to approval policies JSON file
+	APIKeys              []string // API bearer tokens for programmatic access
 
 	// ── Notifications ─────────────────────────────────────────────────────────
 	// NotificationConfigFile is the path to the JSON file defining notification
@@ -440,9 +439,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPDefaultShell:       get("IDENTREE_LDAP_DEFAULT_SHELL"),
 		LDAPDefaultHome:        get("IDENTREE_LDAP_DEFAULT_HOME"),
 
-		AdminGroups:        getSlice("IDENTREE_ADMIN_GROUPS"),
-		AdminApprovalHosts: getSlice("IDENTREE_ADMIN_APPROVAL_HOSTS"),
-		APIKeys:            getSlice("IDENTREE_API_KEYS"),
+		AdminGroups:          getSlice("IDENTREE_ADMIN_GROUPS"),
+		ApprovalPoliciesFile: stringDefault(get("IDENTREE_APPROVAL_POLICIES_FILE"), "/config/approval-policies.json"),
+		APIKeys:              getSlice("IDENTREE_API_KEYS"),
 
 		NotificationConfigFile: stringDefault(get("IDENTREE_NOTIFICATION_CONFIG_FILE"), "/config/notification-channels.json"),
 		AdminNotifyFile:        stringDefault(get("IDENTREE_ADMIN_NOTIFY_FILE"), "/config/admin-notifications.json"),
@@ -677,13 +676,6 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 		if data, err := os.ReadFile(cfg.RedisPasswordFile); err == nil {
 			cfg.RedisPassword = strings.TrimSpace(string(data))
-		}
-	}
-
-	// Validate AdminApprovalHosts glob patterns.
-	for _, pattern := range cfg.AdminApprovalHosts {
-		if _, err := filepath.Match(pattern, ""); err != nil {
-			return nil, fmt.Errorf("IDENTREE_ADMIN_APPROVAL_HOSTS: invalid glob pattern %q: %w", pattern, err)
 		}
 	}
 

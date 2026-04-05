@@ -253,15 +253,6 @@ func runServer() {
 		slog.Warn("IDENTREE_DEV_LOGIN is enabled but ExternalURL uses HTTPS — DevLogin bypasses OIDC and should NEVER be used in production")
 	}
 
-	// Validate AdminApprovalHosts glob patterns at startup. A malformed pattern
-	// would silently skip matching, auto-approving hosts that require admin approval.
-	for _, pattern := range cfg.AdminApprovalHosts {
-		if _, err := filepath.Match(pattern, ""); err != nil {
-			slog.Error("invalid IDENTREE_ADMIN_APPROVAL_HOSTS glob pattern — fix configuration", "pattern", pattern, "err", err)
-			os.Exit(1)
-		}
-	}
-
 	// Validate IssuerPublicURL is a well-formed http/https URL if set.
 	if cfg.IssuerPublicURL != "" {
 		if u, err := url.Parse(cfg.IssuerPublicURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {

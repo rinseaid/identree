@@ -222,7 +222,7 @@ func (s *Server) buildPendingViews(username, lang string) []pendingView {
 			Hostname:      hostname,
 			Code:          c.UserCode,
 			ExpiresIn:     formatDuration(t, time.Until(c.ExpiresAt)),
-			AdminRequired: s.requiresAdminApproval(c.Hostname),
+			AdminRequired: c.RequireAdmin,
 			Reason:        c.Reason,
 		})
 	}
@@ -253,7 +253,7 @@ func (s *Server) buildAllPendingViews(lang string) []pendingView {
 			Hostname:      hostname,
 			Code:          c.UserCode,
 			ExpiresIn:     formatDuration(t, time.Until(c.ExpiresAt)),
-			AdminRequired: s.requiresAdminApproval(c.Hostname),
+			AdminRequired: c.RequireAdmin,
 			Reason:        c.Reason,
 		})
 	}

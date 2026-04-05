@@ -87,8 +87,8 @@ config:
   admin:
     # -- Comma-separated OIDC group names with admin access.
     groups: ""
-    # -- Comma-separated hostname glob patterns requiring admin approval.
-    approvalHosts: ""
+    # -- Path to the approval policies JSON file (per-host/per-user rules).
+    approvalPoliciesFile: "/config/approval-policies.json"
 
   # -- LDAP server
   ldap:

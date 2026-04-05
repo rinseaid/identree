@@ -360,9 +360,16 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Evaluate approval policy for this challenge.
+	policyResult := s.evaluatePolicy(req.Username, req.Hostname)
+	challenge.PolicyName = policyResult.PolicyName
+	challenge.RequiredApprovals = policyResult.MinApprovals
+	challenge.RequireAdmin = policyResult.RequireAdmin
+	challenge.GraceEligible = policyResult.GraceEligible
+
 	challengesCreated.Inc()
 	challpkg.ActiveChallenges.Inc()
-	slog.Info("CHALLENGE created", "challenge", challenge.ID[:8], "user", req.Username, "remote_addr", remoteAddr(r), "host", req.Hostname)
+	slog.Info("CHALLENGE created", "challenge", challenge.ID[:8], "user", req.Username, "remote_addr", remoteAddr(r), "host", req.Hostname, "policy", policyResult.PolicyName)
 	s.sseBroadcaster.Broadcast(req.Username, "challenge_created")
 
 	// Build client_config if any server-side client overrides are set
@@ -373,13 +380,11 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	challengeTTL := s.cfg.ChallengeTTL
 	s.cfgMu.RUnlock()
 
-	// Auto-approve if within grace period, but only for hosts that don't require admin approval.
-	// AutoApproveIfWithinGracePeriod performs the check and approval atomically,
-	// eliminating the TOCTOU race between a separate WithinGracePeriod + AutoApprove pair.
+	// Auto-approve if within grace period, but only for grace-eligible policies.
 	// AutoApproveIfWithinGracePeriod performs the grace-period check and approval
 	// atomically under a single write lock, eliminating the TOCTOU race between
 	// a separate WithinGracePeriod check and AutoApprove call.
-	if !s.requiresAdminApproval(req.Hostname) && s.store.AutoApproveIfWithinGracePeriod(req.Username, req.Hostname, challenge.ID) {
+	if policyResult.GraceEligible && s.store.AutoApproveIfWithinGracePeriod(req.Username, req.Hostname, challenge.ID) {
 		challengesAutoApproved.Inc()
 		challpkg.ActiveChallenges.Dec()
 		challengeDuration.Observe(0)

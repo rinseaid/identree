@@ -81,7 +81,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce admin-approval policy: only admins may approve policy-protected hosts.
-	if s.requiresAdminApproval(challenge.Hostname) && s.getSessionRole(r) != "admin" {
+	if challenge.RequireAdmin && s.getSessionRole(r) != "admin" {
 		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "admin_approval_required")
 		return
 	}
@@ -223,7 +223,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 
 	// Admin-approval-required hosts cannot be approved via one-tap — there is no
 	// session to verify admin role. The user must approve through the dashboard.
-	if s.requiresAdminApproval(challenge.Hostname) {
+	if challenge.RequireAdmin {
 		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "admin_approval_required")
 		return
 	}
@@ -567,7 +567,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 	count := 0
 	for _, c := range pending {
 		// Skip admin-approval-required challenges if the approver is not an admin.
-		if s.requiresAdminApproval(c.Hostname) && !isAdmin {
+		if c.RequireAdmin && !isAdmin {
 			continue
 		}
 		if disabledMap[c.Username] {

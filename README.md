@@ -235,7 +235,7 @@ See [docs/justification.md](docs/justification.md) for full details including th
 | Variable | Default | Description |
 |---|---|---|
 | `IDENTREE_ADMIN_GROUPS` | — | Comma-separated OIDC groups with admin UI access |
-| `IDENTREE_ADMIN_APPROVAL_HOSTS` | — | Hostnames requiring manual admin approval (glob patterns) |
+| `IDENTREE_APPROVAL_POLICIES_FILE` | `/config/approval-policies.json` | Path to the approval policies JSON file (per-host/per-user rules) |
 
 #### LDAP server
 

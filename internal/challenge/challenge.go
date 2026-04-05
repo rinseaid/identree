@@ -140,6 +140,12 @@ type Challenge struct {
 	// between challenge creation and poll-time approval.
 	RevokeTokensBefore string `json:"-"`
 
+	// Policy fields — set at challenge creation from the policy engine evaluation.
+	PolicyName        string `json:"policy_name,omitempty"`
+	RequiredApprovals int    `json:"required_approvals,omitempty"`
+	RequireAdmin      bool   `json:"require_admin,omitempty"`
+	GraceEligible     bool   `json:"-"` // evaluated at creation, not persisted
+
 	// DenyReason is an optional explanation provided by the admin when rejecting.
 	DenyReason string `json:"deny_reason,omitempty"`
 
