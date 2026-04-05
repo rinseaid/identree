@@ -83,23 +83,23 @@ func (s *Server) handleAdminNotifications(w http.ResponseWriter, r *http.Request
 			}
 			switch parts[0] {
 			case "channel_added":
-				flashes = append(flashes, "Channel added: "+parts[1])
+				flashes = append(flashes, t("notify_channel_added")+": "+parts[1])
 			case "channel_updated":
-				flashes = append(flashes, "Channel updated: "+parts[1])
+				flashes = append(flashes, t("notify_channel_updated")+": "+parts[1])
 			case "channel_deleted":
-				flashes = append(flashes, "Channel deleted: "+parts[1])
+				flashes = append(flashes, t("notify_channel_deleted")+": "+parts[1])
 			case "route_added":
-				flashes = append(flashes, "Route added")
+				flashes = append(flashes, t("notify_route_added"))
 			case "route_deleted":
-				flashes = append(flashes, "Route deleted")
+				flashes = append(flashes, t("notify_route_deleted"))
 			case "pref_saved":
-				flashes = append(flashes, "Notification preferences saved")
+				flashes = append(flashes, t("notify_pref_saved"))
 			case "pref_deleted":
-				flashes = append(flashes, "Notification preferences removed")
+				flashes = append(flashes, t("notify_pref_removed"))
 			case "test_sent":
-				flashes = append(flashes, "Test notification sent to: "+parts[1])
+				flashes = append(flashes, t("notify_test_sent")+": "+parts[1])
 			case "test_failed":
-				flashErrors = append(flashErrors, "Test notification failed: "+parts[1])
+				flashErrors = append(flashErrors, t("notify_test_failed")+": "+parts[1])
 			}
 		}
 	}
