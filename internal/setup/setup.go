@@ -193,7 +193,7 @@ func isAuthLine(line string) bool {
 
 // ── nsswitch.conf ─────────────────────────────────────────────────────────────
 
-// configureNsswitch ensures provider is present in passwd and group lines.
+// configureNsswitch ensures provider is present in passwd, group, and sudoers lines.
 func configureNsswitch(dryRun, force bool, provider string) error {
 	const nssFile = "/etc/nsswitch.conf"
 	data, err := os.ReadFile(nssFile)
@@ -207,8 +207,27 @@ func configureNsswitch(dryRun, force bool, provider string) error {
 
 	lines := splitLines(string(data))
 	changed := false
+	hasSudoers := false
 	for i, l := range lines {
-		for _, db := range []string{"passwd", "group"} {
+		for _, db := range []string{"passwd", "group", "sudoers"} {
+			if strings.HasPrefix(strings.TrimSpace(l), db+":") {
+				if db == "sudoers" {
+					hasSudoers = true
+				}
+			}
+		}
+		_ = i // used below
+	}
+
+	// If there's no sudoers line at all, append one.
+	if !hasSudoers {
+		lines = append(lines, "sudoers: files "+provider)
+		changed = true
+		fmt.Printf("nsswitch: added sudoers line with %s\n", provider)
+	}
+
+	for i, l := range lines {
+		for _, db := range []string{"passwd", "group", "sudoers"} {
 			if !strings.HasPrefix(strings.TrimSpace(l), db+":") {
 				continue
 			}
@@ -244,33 +263,54 @@ func configureNsswitch(dryRun, force bool, provider string) error {
 const sssdConfigDir = "/etc/sssd"
 const sssdConfigPath = "/etc/sssd/sssd.conf"
 
-// sssdConfigTmpl is the sssd.conf template. Callers substitute:
-// [0] ldap_uri, [1] ldap_search_base, [2] ldap_default_bind_dn,
-// [3] ldap_default_authtok, [4] ldap_tls_reqcert, [5] optional extra
-// lines (e.g. "ldap_tls_cacert = /path\n") appended to the domain section.
+// sssdConfigTmpl is the sssd.conf template. Arguments (1-indexed for explicit
+// fmt.Sprintf verbs): [1] ldap_uri, [2] base_dn, [3] bind_dn,
+// [4] bind_password, [5] ldap_tls_reqcert, [6] optional extra lines.
+// The base_dn argument [2] is reused for user/group/sudo search bases.
 const sssdConfigTmpl = `[sssd]
-services = nss, pam
+services = nss, pam, sudo
 config_file_version = 2
 domains = identree
 
 [domain/identree]
-id_provider = ldap
-auth_provider = none
-ldap_uri = %s
-ldap_search_base = %s
-ldap_default_bind_dn = %s
-ldap_default_authtok = %s
+id_provider       = ldap
+auth_provider     = none
+access_provider   = ldap
+sudo_provider     = ldap
+ldap_access_order = expire
+
+ldap_uri               = %[1]s
+ldap_search_base       = %[2]s
+ldap_user_search_base  = ou=people,%[2]s
+ldap_group_search_base = ou=groups,%[2]s
+ldap_sudo_search_base  = ou=sudoers,%[2]s
+
+ldap_default_bind_dn      = %[3]s
+ldap_default_authtok      = %[4]s
 ldap_default_authtok_type = password
+
 ldap_id_use_start_tls = false
-ldap_tls_reqcert = %s
-%sldap_schema = rfc2307
-enumerate = true
-cache_credentials = true
+ldap_tls_reqcert      = %[5]s
+%[6]sldap_schema = rfc2307
+enumerate   = false
+
+cache_credentials           = false
+entry_cache_timeout         = 60
+entry_cache_user_timeout    = 60
+entry_cache_group_timeout   = 60
+entry_cache_sudo_timeout    = 60
+refresh_expired_interval    = 30
+ldap_enumeration_refresh_timeout  = 60
+ldap_sudo_smart_refresh_interval  = 30
+ldap_sudo_full_refresh_interval   = 60
 
 [nss]
 homedir_substring = /home
 
 [pam]
+
+[sudo]
+sudo_timed = false
 `
 
 // sssdCACertPath is the path where the LDAP TLS CA cert is stored within
