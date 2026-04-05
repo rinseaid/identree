@@ -408,18 +408,18 @@ jobs:
           echo "==> Waiting for Loki to ingest events..."
           sleep 8  # Loki batches on a 5s timer; give extra headroom
           START=$(date -u -d '10 minutes ago' +%s 2>/dev/null || date -u -v-10M +%s)
-          RESP=$(curl -sf "http://localhost:3161/loki/api/v1/query_range" \
+          curl -sf "http://localhost:3161/loki/api/v1/query_range" \
             --data-urlencode 'query={app="identree"}' \
             --data-urlencode 'limit=50' \
-            --data-urlencode "start=${START}000000000" || echo '{}')
-          python3 << PYEOF
-          import json, sys
-          d = json.loads('''$RESP''')
+            --data-urlencode "start=${START}000000000" \
+            -o /tmp/loki-resp.json || echo '{}' > /tmp/loki-resp.json
+          python3 << 'PYEOF'
+          import json
+          d = json.load(open('/tmp/loki-resp.json'))
           results = d.get('data', {}).get('result', [])
           total = sum(len(s.get('values', [])) for s in results)
           print(f"  Loki: {total} audit log entries")
           assert total >= 1, "FAIL: no audit events found in Loki"
-          # Check first entry is valid JSON with expected fields
           first_line = results[0]['values'][0][1]
           evt = json.loads(first_line)
           assert evt.get('source') == 'identree', f"bad source: {evt.get('source')}"
@@ -583,28 +583,26 @@ jobs:
         run: |
           echo "==> Waiting for Splunk HEC batch flush..."
           sleep 8  # Splunk HEC batches on a 5s timer
-          HEC_LOG=$(docker exec integ-vault-splunk-hec cat /var/log/hec.log 2>/dev/null || echo "")
-          EVENTS=$(echo "$HEC_LOG" | grep -c 'identree:audit' || true)
+          docker exec integ-vault-splunk-hec cat /var/log/hec.log > /tmp/hec.log 2>/dev/null || true
+          EVENTS=$(grep -c 'identree:audit' /tmp/hec.log || true)
           echo "  Splunk HEC: ${EVENTS} batches received"
           [ "$EVENTS" -ge 1 ] || { echo "FAIL: no audit events in Splunk HEC"; exit 1; }
-          # Verify the payload structure
-          python3 << PYEOF
+          python3 << 'PYEOF'
           import json
-          log = '''$HEC_LOG'''
-          # Each line may contain multiple concatenated JSON objects
+          with open('/tmp/hec.log') as f:
+              log = f.read()
           for line in log.strip().split('\n'):
-            if not line.strip():
-              continue
-            # Decode the first JSON object from the line
-            decoder = json.JSONDecoder()
-            obj, _ = decoder.raw_decode(line)
-            assert obj.get('sourcetype') == 'identree:audit', f"bad sourcetype: {obj.get('sourcetype')}"
-            assert obj.get('source') == 'identree', f"bad source: {obj.get('source')}"
-            evt = obj.get('event', {})
-            assert evt.get('event'), "missing event field in payload"
-            assert evt.get('username'), "missing username field in payload"
-            print(f"  Splunk HEC structure: OK (event={evt['event']} user={evt['username']})")
-            break
+              if not line.strip():
+                  continue
+              decoder = json.JSONDecoder()
+              obj, _ = decoder.raw_decode(line)
+              assert obj.get('sourcetype') == 'identree:audit', f"bad sourcetype: {obj.get('sourcetype')}"
+              assert obj.get('source') == 'identree', f"bad source: {obj.get('source')}"
+              evt = obj.get('event', {})
+              assert evt.get('event'), "missing event field in payload"
+              assert evt.get('username'), "missing username field in payload"
+              print(f"  Splunk HEC structure: OK (event={evt['event']} user={evt['username']})")
+              break
           PYEOF
 
       - name: Capture logs on failure
