@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -16,6 +17,7 @@ type redisBroadcaster struct {
 	client redis.UniversalClient
 	prefix string
 	cancel context.CancelFunc
+	done   chan struct{} // closed when subscribe goroutine exits
 }
 
 func newRedisBroadcaster(server *Server, client redis.UniversalClient, prefix string) *redisBroadcaster {
@@ -25,8 +27,12 @@ func newRedisBroadcaster(server *Server, client redis.UniversalClient, prefix st
 		client: client,
 		prefix: prefix,
 		cancel: cancel,
+		done:   make(chan struct{}),
 	}
-	go b.subscribe(ctx)
+	go func() {
+		defer close(b.done)
+		b.subscribe(ctx)
+	}()
 	return b
 }
 
@@ -43,14 +49,47 @@ func (b *redisBroadcaster) Broadcast(username, event string) {
 
 func (b *redisBroadcaster) Close() {
 	b.cancel()
+	// Wait for the subscriber goroutine to exit before closing the client,
+	// preventing it from accessing a closed Redis connection.
+	<-b.done
 	if b.client != nil {
 		b.client.Close()
 	}
 }
 
 // subscribe listens for SSE events from Redis pub/sub and delivers them
-// to the local SSE channels.
+// to the local SSE channels. Reconnects with exponential backoff on failure.
 func (b *redisBroadcaster) subscribe(ctx context.Context) {
+	backoff := time.Second
+	const maxBackoff = 30 * time.Second
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		b.subscribeOnce(ctx)
+
+		// If context was cancelled, exit cleanly.
+		if ctx.Err() != nil {
+			return
+		}
+
+		slog.Warn("redis SSE subscriber disconnected, reconnecting", "backoff", backoff)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff = min(backoff*2, maxBackoff)
+	}
+}
+
+// subscribeOnce runs a single subscription session until the channel closes
+// or the context is cancelled.
+func (b *redisBroadcaster) subscribeOnce(ctx context.Context) {
 	pubsub := b.client.Subscribe(ctx, b.prefix+"sse")
 	defer pubsub.Close()
 
@@ -61,7 +100,7 @@ func (b *redisBroadcaster) subscribe(ctx context.Context) {
 			return
 		case msg, ok := <-ch:
 			if !ok {
-				return
+				return // channel closed — trigger reconnect
 			}
 			// Parse "username|event" payload.
 			parts := strings.SplitN(msg.Payload, "|", 2)
