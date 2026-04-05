@@ -1,124 +1,246 @@
 # Notifications
 
-identree can send notifications when sudo challenges are created or resolved. Set `IDENTREE_NOTIFY_BACKEND` to enable.
+identree delivers push notifications through named **channels** routed by configurable **rules**. Each admin can also subscribe to personal notification preferences.
 
 ---
 
-## Webhook backends
+## Architecture
 
-All webhook backends POST to a URL. The payload format is tailored to each service.
-
-```sh
-IDENTREE_NOTIFY_BACKEND=ntfy          # ntfy | slack | discord | apprise | webhook
-IDENTREE_NOTIFY_URL=https://...       # destination URL
-IDENTREE_NOTIFY_TOKEN=your-token      # optional — sent as Authorization: Bearer <token>
-IDENTREE_NOTIFY_TIMEOUT=15s           # optional — default 15s
+```
+Event (challenge_created, approved, etc.)
+  │
+  ├─ Routing Rules (org-level, config-driven)
+  │    match event × hostname × username → channels
+  │
+  └─ Admin Preferences (per-admin, UI-driven)
+       match event × hostname → channels
+  │
+  └─ Deduplicate → Fan-out delivery to matched channels
 ```
 
-Webhook backends fire for all events: `challenge_created`, `challenge_approved`, `challenge_rejected`, and `auto_approved`.
+---
 
-### ntfy
+## Notification channels
 
-```sh
-IDENTREE_NOTIFY_BACKEND=ntfy
-IDENTREE_NOTIFY_URL=https://ntfy.sh/your-topic
-IDENTREE_NOTIFY_TOKEN=your-ntfy-token     # if your topic requires auth
-```
+Channels are named destinations defined in `/config/notification-channels.json` (configurable via `IDENTREE_NOTIFICATION_CONFIG_FILE`). Manage them via the admin UI at **Admin > Notifications** or edit the JSON file directly.
 
-The ntfy payload includes a title, message, and action button linking directly to the approval page.
+### Supported backends
 
-### Slack
+| Backend | Format | Use case |
+|---------|--------|----------|
+| `ntfy` | ntfy.sh JSON with action buttons | Self-hosted push notifications |
+| `slack` | Incoming webhook payload | Slack channels |
+| `discord` | Webhook embed format | Discord channels |
+| `apprise` | Apprise API JSON | Multi-service router (80+ services) |
+| `webhook` | Generic JSON | Any HTTP endpoint |
+| `custom` | Shell command with env vars | Telegram, PagerDuty, custom scripts |
 
-```sh
-IDENTREE_NOTIFY_BACKEND=slack
-IDENTREE_NOTIFY_URL=https://hooks.slack.com/services/T.../B.../...
-```
-
-Uses Slack's incoming webhook format with a formatted attachment block.
-
-### Discord
-
-```sh
-IDENTREE_NOTIFY_BACKEND=discord
-IDENTREE_NOTIFY_URL=https://discord.com/api/webhooks/.../.../
-```
-
-Uses Discord's webhook embed format.
-
-### Apprise
-
-```sh
-IDENTREE_NOTIFY_BACKEND=apprise
-IDENTREE_NOTIFY_URL=https://apprise.example.com/notify/your-tag
-```
-
-Uses the [Apprise API](https://github.com/caronc/apprise-api) JSON format. Apprise acts as a notification router and supports 80+ services.
-
-### Raw webhook (generic JSON)
-
-```sh
-IDENTREE_NOTIFY_BACKEND=webhook
-IDENTREE_NOTIFY_URL=https://your-service.example.com/webhook
-IDENTREE_NOTIFY_TOKEN=your-token    # optional
-```
-
-Sends a plain JSON payload:
+### Example configuration
 
 ```json
 {
-  "event": "challenge_created",
-  "username": "alice",
-  "hostname": "server1",
-  "user_code": "ABC123",
-  "approval_url": "https://identree.example.com/approve/...",
-  "one_tap_url": "https://identree.example.com/api/onetap/...",
-  "expires_in": 120,
-  "timestamp": "2025-01-15T10:30:00Z"
+  "channels": [
+    {
+      "name": "ops-slack",
+      "backend": "slack",
+      "url": "https://hooks.slack.com/services/T.../B.../..."
+    },
+    {
+      "name": "oncall-ntfy",
+      "backend": "ntfy",
+      "url": "https://ntfy.sh/oncall-alerts"
+    },
+    {
+      "name": "security-discord",
+      "backend": "discord",
+      "url": "https://discord.com/api/webhooks/.../"
+    },
+    {
+      "name": "custom-pager",
+      "backend": "custom"
+    }
+  ],
+  "routes": [
+    {
+      "channels": ["ops-slack", "oncall-ntfy"],
+      "events": ["challenge_created", "challenge_approved", "challenge_rejected"],
+      "hosts": ["*.prod", "bastion-*"]
+    },
+    {
+      "channels": ["security-discord"],
+      "events": ["revealed_breakglass", "breakglass_escrowed", "config_changed"]
+    },
+    {
+      "channels": ["ops-slack"],
+      "events": ["*"],
+      "hosts": ["*.staging"]
+    }
+  ]
+}
+```
+
+### Channel secrets
+
+Tokens and custom commands are injected via environment variables (never stored in JSON):
+
+```sh
+# For a channel named "ops-slack":
+IDENTREE_NOTIFY_CHANNEL_OPS_SLACK_TOKEN=xoxb-...
+
+# For a channel named "custom-pager":
+IDENTREE_NOTIFY_CHANNEL_CUSTOM_PAGER_COMMAND=/usr/local/bin/page.sh
+```
+
+The naming convention is: `IDENTREE_NOTIFY_CHANNEL_<NAME>_TOKEN` or `_COMMAND`, where `<NAME>` is the channel name uppercased with hyphens replaced by underscores.
+
+---
+
+## Routing rules
+
+Routes determine which events are delivered to which channels. Each route specifies:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `channels` | string array | required | Channel names to deliver to |
+| `events` | string array | required | Event type globs (`*` = all events) |
+| `hosts` | string array | all | Hostname globs (empty = all hosts) |
+| `users` | string array | all | Requesting-user globs (empty = all users) |
+
+All filters use `filepath.Match` glob syntax. Routes are evaluated in order; all matching routes contribute their channels (not first-match-wins).
+
+### Examples
+
+**All challenge events on production hosts to ops channels:**
+```json
+{
+  "channels": ["ops-slack", "oncall-ntfy"],
+  "events": ["challenge_created", "challenge_approved", "challenge_rejected"],
+  "hosts": ["*.prod", "bastion-*"]
+}
+```
+
+**Security events (all hosts) to security team:**
+```json
+{
+  "channels": ["security-discord"],
+  "events": ["revealed_breakglass", "breakglass_escrowed", "config_changed"]
+}
+```
+
+**Everything on staging to Slack:**
+```json
+{
+  "channels": ["ops-slack"],
+  "events": ["*"],
+  "hosts": ["*.staging"]
 }
 ```
 
 ---
 
-## Custom script
+## Per-admin notification preferences
 
-```sh
-IDENTREE_NOTIFY_BACKEND=custom
-IDENTREE_NOTIFY_COMMAND=/usr/local/bin/my-notify.sh   # executed via sh -c
-IDENTREE_NOTIFY_TIMEOUT=15s
-```
+Each admin can subscribe to notifications independently via **Admin > Notifications > My Notification Preferences**. This enables:
 
-The command is run via `sh -c` with the following environment variables:
+- **"Notify me about everything"**: set events to `*` and leave hosts empty
+- **Targeted subscriptions**: e.g., only `challenge_created` events on `*.prod` hosts
+- **Enable/disable toggle**: pause without deleting the subscription
+
+Preferences are stored in `/config/admin-notifications.json` (configurable via `IDENTREE_ADMIN_NOTIFY_FILE`).
+
+Admin preferences are evaluated alongside org-level routes. If both match, the channel is deduplicated (no duplicate delivery).
+
+---
+
+## Custom script backend
+
+Custom commands receive event data via environment variables:
 
 | Variable | Description |
-|---|---|
+|----------|-------------|
+| `NOTIFY_CHANNEL` | Channel name |
+| `NOTIFY_EVENT` | Event type (e.g. `challenge_created`) |
 | `NOTIFY_USERNAME` | Unix username who ran sudo |
 | `NOTIFY_HOSTNAME` | Hostname of the managed machine |
 | `NOTIFY_USER_CODE` | Short code displayed at the terminal |
-| `NOTIFY_APPROVAL_URL` | Approval page URL (or one-tap URL if available) |
-| `NOTIFY_ONETAP_URL` | Direct one-tap approval URL (empty if not available) |
+| `NOTIFY_APPROVAL_URL` | Best approval URL (one-tap if available) |
+| `NOTIFY_ONETAP_URL` | Direct one-tap approval URL (may be empty) |
 | `NOTIFY_EXPIRES_IN` | Seconds until the challenge expires |
-| `NOTIFY_TIMESTAMP` | ISO 8601 timestamp of when the challenge was created |
+| `NOTIFY_TIMESTAMP` | ISO 8601 timestamp |
+| `NOTIFY_REASON` | Justification text (may be empty) |
+| `NOTIFY_ACTOR` | Who performed the action (may be empty) |
 
-The custom backend fires only for `challenge_created` events. `PATH` and `HOME` from the server process are passed through; no other environment is inherited.
+`PATH` and `HOME` from the server process are passed through; no other environment is inherited.
 
-### Example: send a Telegram message
+### Example: Telegram
 
 ```sh
 #!/bin/sh
 curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
   -d chat_id="${TG_CHAT_ID}" \
-  -d text="Sudo request from ${NOTIFY_USERNAME} on ${NOTIFY_HOSTNAME} — ${NOTIFY_APPROVAL_URL}"
+  -d text="[${NOTIFY_EVENT}] ${NOTIFY_USERNAME}@${NOTIFY_HOSTNAME} — ${NOTIFY_APPROVAL_URL}"
 ```
-
-Store the token and chat ID in a wrapper script or use a secrets manager to inject them at runtime.
 
 ---
 
 ## Events reference
 
-| Event | When | Webhook | Custom script |
-|---|---|---|---|
-| `challenge_created` | User runs `sudo` and a challenge is issued | Yes | Yes |
-| `challenge_approved` | User approves in the browser/app | Yes | No |
-| `challenge_rejected` | User or admin rejects | Yes | No |
-| `auto_approved` | Grace period or one-tap auto-approval | Yes | No |
+| Event | When |
+|-------|------|
+| `challenge_created` | User runs `sudo` and a challenge is issued |
+| `challenge_approved` | Admin approves in the browser |
+| `challenge_rejected` | Admin rejects the challenge |
+| `auto_approved` | Grace period auto-approval |
+| `session_revoked` | Grace session revoked |
+| `sessions_revoked_bulk` | Bulk session revocation |
+| `grace_elevated` | Admin elevates a grace session |
+| `revealed_breakglass` | Break-glass password revealed |
+| `breakglass_escrowed` | Break-glass password escrowed to vault |
+| `breakglass_rotation_requested` | Break-glass rotation requested |
+| `host_removed` | Host removed from registry |
+| `deployed` | Host deployment completed |
+| `config_changed` | Server configuration changed |
+| `server_restarted` | Server restart requested |
+| `sudo_rule_modified` | Sudo rule added/updated/deleted |
+| `user_removed` | User removed |
+| `claims_updated` | User or group claims updated |
+| `test` | Test notification |
+
+---
+
+## Configuration reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IDENTREE_NOTIFICATION_CONFIG_FILE` | `/config/notification-channels.json` | Path to channels/routes JSON |
+| `IDENTREE_ADMIN_NOTIFY_FILE` | `/config/admin-notifications.json` | Path to admin preferences JSON |
+| `IDENTREE_NOTIFY_TIMEOUT` | `15s` | Default delivery timeout (channels can override) |
+| `IDENTREE_NOTIFY_CHANNEL_<NAME>_TOKEN` | — | Bearer token for a named channel |
+| `IDENTREE_NOTIFY_CHANNEL_<NAME>_COMMAND` | — | Custom command for a named channel |
+
+---
+
+## Testing
+
+Use the **Test** button next to each channel on the admin notifications page, or call the API:
+
+```sh
+# Test a specific channel
+curl -X POST https://identree.example.com/api/admin/test-notification?channel=ops-slack \
+  -H "Authorization: Bearer $API_KEY"
+
+# Test all channels
+curl -X POST https://identree.example.com/api/admin/test-notification \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+---
+
+## Delivery behavior
+
+- Notifications are dispatched asynchronously (non-blocking)
+- Up to 50 concurrent deliveries (semaphore-gated)
+- Webhook retries: 3 attempts with exponential backoff (1s, 2s)
+- 4xx responses are treated as permanent failures (no retry)
+- Prometheus metrics: `identree_notifications_total{status="sent|failed|skipped",channel="..."}`
+- Graceful shutdown waits for in-flight notifications (configurable timeout)
