@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -30,6 +31,7 @@ import (
 	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/escrow"
+	"github.com/rinseaid/identree/internal/mtls"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/pocketid"
 	"github.com/rinseaid/identree/internal/policy"
@@ -152,7 +154,10 @@ type Server struct {
 	policyCfgMu  sync.RWMutex
 
 	// adminNotifyStore manages per-admin notification preferences.
-	adminNotifyStore *adminnotify.Store
+	adminNotifyStore adminnotify.PrefStore
+
+	// notifyStore abstracts notification config persistence (file or Redis).
+	notifyStore notify.ConfigStore
 
 	// audit is the SIEM/log aggregator streamer. nil when no audit sinks are configured.
 	audit *audit.Streamer
@@ -202,6 +207,14 @@ type Server struct {
 	// clusterLastNotifyReload deduplicates reload_notify_config messages.
 	// Stores the Unix millisecond timestamp of the last reload.
 	clusterLastNotifyReload atomic.Int64
+
+	// mtlsCA is the CA certificate+key used for mTLS client authentication
+	// (embedded mode). nil when mTLS is disabled or in external mode.
+	mtlsCA *tls.Certificate
+
+	// mtlsCACert is the parsed CA certificate for verifying client certs.
+	// Set in both embedded and external modes.
+	mtlsCACert *x509.Certificate
 }
 
 var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
@@ -408,9 +421,15 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 
 	// ── Notification channels and routing ──────────────────────────────────
-	notifyCfg, err := notify.LoadNotificationConfig(cfg.NotificationConfigFile)
+	if cfg.StateBackend == "redis" && storeRedisClient != nil {
+		s.notifyStore = notify.NewRedisConfigStore(storeRedisClient, cfg.RedisKeyPrefix)
+	} else {
+		s.notifyStore = &notify.FileConfigStore{Path: cfg.NotificationConfigFile}
+	}
+
+	notifyCfg, err := s.notifyStore.Load()
 	if err != nil {
-		slog.Warn("notify: failed to load config, notifications disabled", "path", cfg.NotificationConfigFile, "err", err)
+		slog.Warn("notify: failed to load config, notifications disabled", "err", err)
 		notifyCfg = &notify.NotificationConfig{}
 	}
 	notify.InjectChannelSecrets(notifyCfg.Channels)
@@ -430,12 +449,21 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		slog.Info("POLICY engine loaded", "policies", len(policies))
 	}
 
-	adminNotifyStore, err := adminnotify.NewStore(cfg.AdminNotifyFile)
-	if err != nil {
-		slog.Warn("notify: failed to load admin preferences", "path", cfg.AdminNotifyFile, "err", err)
-		adminNotifyStore, _ = adminnotify.NewStore("/dev/null") // fallback empty
+	if cfg.StateBackend == "redis" && storeRedisClient != nil {
+		redisAdminStore, err := adminnotify.NewRedisStore(storeRedisClient, cfg.RedisKeyPrefix)
+		if err != nil {
+			slog.Warn("notify: failed to load admin preferences from Redis", "err", err)
+			redisAdminStore, _ = adminnotify.NewRedisStore(storeRedisClient, cfg.RedisKeyPrefix+"fallback:")
+		}
+		s.adminNotifyStore = redisAdminStore
+	} else {
+		adminNotifyStore, err := adminnotify.NewStore(cfg.AdminNotifyFile)
+		if err != nil {
+			slog.Warn("notify: failed to load admin preferences", "path", cfg.AdminNotifyFile, "err", err)
+			adminNotifyStore, _ = adminnotify.NewStore("/dev/null") // fallback empty
+		}
+		s.adminNotifyStore = adminNotifyStore
 	}
-	s.adminNotifyStore = adminNotifyStore
 
 	// Pre-hash API keys and the metrics token at startup.
 	for _, key := range cfg.APIKeys {
@@ -445,6 +473,32 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 	if cfg.MetricsToken != "" {
 		s.hashedMetricsToken = sha256.Sum256([]byte(cfg.MetricsToken))
+	}
+
+	// ── mTLS client certificate authentication ─────────────────────────────
+	switch cfg.MTLSMode {
+	case "embedded":
+		ca, err := mtls.LoadOrGenerateCA(cfg.MTLSCACert, cfg.MTLSCAKey)
+		if err != nil {
+			return nil, fmt.Errorf("mTLS embedded CA: %w", err)
+		}
+		s.mtlsCA = &ca
+		caCert := ca.Leaf
+		if caCert == nil {
+			caCert, err = x509.ParseCertificate(ca.Certificate[0])
+			if err != nil {
+				return nil, fmt.Errorf("parse mTLS CA leaf: %w", err)
+			}
+		}
+		s.mtlsCACert = caCert
+		slog.Info("mTLS embedded CA loaded", "subject", caCert.Subject.CommonName, "not_after", caCert.NotAfter.Format(time.RFC3339))
+	case "external":
+		caCert, err := mtls.LoadCACert(cfg.MTLSClientCA)
+		if err != nil {
+			return nil, fmt.Errorf("mTLS external CA: %w", err)
+		}
+		s.mtlsCACert = caCert
+		slog.Info("mTLS external CA loaded", "subject", caCert.Subject.CommonName, "not_after", caCert.NotAfter.Format(time.RFC3339))
 	}
 
 	if cfg.EscrowBackend == config.EscrowBackendLocal {

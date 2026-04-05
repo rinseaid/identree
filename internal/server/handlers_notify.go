@@ -226,11 +226,7 @@ func (s *Server) handleNotifyChannelAdd(w http.ResponseWriter, r *http.Request) 
 	s.notifyCfgMu.Unlock()
 
 	saveCfg := s.notifyCfgForSave()
-	s.cfgMu.RLock()
-	path := s.cfg.NotificationConfigFile
-	s.cfgMu.RUnlock()
-
-	if err := notify.SaveNotificationConfig(path, saveCfg); err != nil {
+	if err := s.notifyStore.Save(saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
@@ -291,11 +287,7 @@ func (s *Server) handleNotifyChannelDelete(w http.ResponseWriter, r *http.Reques
 	}
 
 	saveCfg := s.notifyCfgForSave()
-	s.cfgMu.RLock()
-	path := s.cfg.NotificationConfigFile
-	s.cfgMu.RUnlock()
-
-	if err := notify.SaveNotificationConfig(path, saveCfg); err != nil {
+	if err := s.notifyStore.Save(saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
@@ -358,11 +350,7 @@ func (s *Server) handleNotifyRouteAdd(w http.ResponseWriter, r *http.Request) {
 	s.notifyCfgMu.Unlock()
 
 	saveCfg := s.notifyCfgForSave()
-	s.cfgMu.RLock()
-	path := s.cfg.NotificationConfigFile
-	s.cfgMu.RUnlock()
-
-	if err := notify.SaveNotificationConfig(path, saveCfg); err != nil {
+	if err := s.notifyStore.Save(saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
@@ -413,11 +401,7 @@ func (s *Server) handleNotifyRouteDelete(w http.ResponseWriter, r *http.Request)
 	s.notifyCfgMu.Unlock()
 
 	saveCfg := s.notifyCfgForSave()
-	s.cfgMu.RLock()
-	path := s.cfg.NotificationConfigFile
-	s.cfgMu.RUnlock()
-
-	if err := notify.SaveNotificationConfig(path, saveCfg); err != nil {
+	if err := s.notifyStore.Save(saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
@@ -457,6 +441,7 @@ func (s *Server) handleAdminNotifyPrefSave(w http.ResponseWriter, r *http.Reques
 		if err := s.adminNotifyStore.Delete(adminUser); err != nil {
 			slog.Error("failed to delete admin notify pref", "user", adminUser, "err", err)
 		}
+		s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
 		s.setFlashCookie(w, "pref_deleted:")
 		http.Redirect(w, r, s.baseURL+"/admin/notifications", http.StatusSeeOther)
 		return
@@ -481,6 +466,7 @@ func (s *Server) handleAdminNotifyPrefSave(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
 	slog.Info("ADMIN_NOTIFY_PREF_SAVED", "user", adminUser, "channels", pref.Channels, "events", pref.Events)
 	s.setFlashCookie(w, "pref_saved:")
 	http.Redirect(w, r, s.baseURL+"/admin/notifications", http.StatusSeeOther)

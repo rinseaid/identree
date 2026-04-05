@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/rinseaid/identree/internal/adminnotify"
 	"github.com/rinseaid/identree/internal/audit"
 	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/notify"
@@ -151,15 +152,12 @@ func (s *Server) notifyDefaultTimeout() time.Duration {
 	return notifyTimeout
 }
 
-// reloadNotificationConfig reloads the notification channels and routes from disk.
+// reloadNotificationConfig reloads the notification channels and routes from
+// the configured store (file or Redis).
 func (s *Server) reloadNotificationConfig() {
-	s.cfgMu.RLock()
-	path := s.cfg.NotificationConfigFile
-	s.cfgMu.RUnlock()
-
-	cfg, err := notify.LoadNotificationConfig(path)
+	cfg, err := s.notifyStore.Load()
 	if err != nil {
-		slog.Error("notify: failed to reload config", "path", path, "err", err)
+		slog.Error("notify: failed to reload config", "err", err)
 		return
 	}
 	notify.InjectChannelSecrets(cfg.Channels)
@@ -167,6 +165,14 @@ func (s *Server) reloadNotificationConfig() {
 	s.notifyCfgMu.Lock()
 	s.notifyCfg = cfg
 	s.notifyCfgMu.Unlock()
+
+	// Also reload admin preferences if backed by Redis.
+	if rs, ok := s.adminNotifyStore.(*adminnotify.RedisStore); ok {
+		if err := rs.Reload(); err != nil {
+			slog.Error("notify: failed to reload admin preferences from Redis", "err", err)
+		}
+	}
+
 	slog.Info("notify: config reloaded", "channels", len(cfg.Channels), "routes", len(cfg.Routes))
 }
 

@@ -1079,11 +1079,15 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 	// Notification config file paths: update before reload so the new path is used.
 	if !config.IsEnvSourced("IDENTREE_NOTIFICATION_CONFIG_FILE") {
 		s.cfg.NotificationConfigFile = values["IDENTREE_NOTIFICATION_CONFIG_FILE"]
+		// Update the file-based store path if applicable.
+		if fs, ok := s.notifyStore.(*notify.FileConfigStore); ok {
+			fs.Path = s.cfg.NotificationConfigFile
+		}
 	}
 	if !config.IsEnvSourced("IDENTREE_ADMIN_NOTIFY_FILE") {
 		s.cfg.AdminNotifyFile = values["IDENTREE_ADMIN_NOTIFY_FILE"]
 	}
-	// Reload the channel/route config from disk when the path changes
+	// Reload the channel/route config from the store when the path changes
 	// (or on any settings save as a convenience).
 	s.reloadNotificationConfig()
 	s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
