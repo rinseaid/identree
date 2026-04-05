@@ -1022,6 +1022,7 @@ const sidebarNavHTML = `
         <a href="/admin/groups" class="sub-item{{if eq .AdminTab "groups"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{{call .T "groups"}}</a>
         <a href="/admin/hosts" class="sub-item{{if eq .AdminTab "hosts"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>{{call .T "hosts"}}</a>
         {{if .BridgeMode}}<a href="/admin/sudo-rules" class="sub-item{{if eq .AdminTab "sudo-rules"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>{{call .T "sudo_rules"}}</a>{{end}}
+        <a href="/admin/notifications" class="sub-item{{if eq .AdminTab "notifications"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Notifications</a>
         <a href="/admin/config" class="sub-item{{if eq .AdminTab "config"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>{{call .T "config"}}</a>
         <a href="/admin/info" class="sub-item{{if eq .AdminTab "info"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>{{call .T "info"}}</a>
       </div>{{end}}`
@@ -3199,6 +3200,192 @@ const adminPageHTML = `<!DOCTYPE html>
     }
     document.querySelectorAll('.confirm-submit').forEach(function(btn){
       btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+    });
+    </script>
+
+    {{else if eq .AdminTab "notifications"}}
+
+    <!-- ── Notification Channels ──────────────────────────────────────── -->
+    <h3 style="margin-bottom:12px">Channels</h3>
+    {{if .NotifyChannels}}
+    <div class="list" role="list">
+      {{range .NotifyChannels}}
+      <div class="row" role="listitem">
+        <div class="host-row-header">
+          <div class="host-row-header-info">
+            <span class="user-name">{{.Name}}</span>
+            <span class="pill">{{.Backend}}</span>
+            {{if .URL}}<span class="pill" style="font-size:0.75rem;color:var(--text-3)">{{.URL}}</span>{{end}}
+          </div>
+          <div class="host-row-header-actions">
+            <form method="POST" action="/api/admin/test-channel" style="display:inline">
+              <input type="hidden" name="channel" value="{{.Name}}">
+              <input type="hidden" name="username" value="{{$.Username}}">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+              <button type="submit" class="btn btn-sm">Test</button>
+            </form>
+            <form method="POST" action="/api/notification/channels/delete" style="display:inline">
+              <input type="hidden" name="name" value="{{.Name}}">
+              <input type="hidden" name="username" value="{{$.Username}}">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+              <button type="submit" class="btn btn-danger btn-sm confirm-submit" data-confirm="Delete channel {{.Name}}?">Delete</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <p class="empty-state">No notification channels configured.</p>
+    {{end}}
+
+    <div id="channel-form-card" style="display:none;margin-top:16px" class="info-section">
+      <h3>Add Channel</h3>
+      <form method="POST" action="/api/notification/channels/add">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+        <table class="info-table" style="width:100%;max-width:640px">
+          <tr>
+            <td class="info-label"><label for="ch-name">Name</label></td>
+            <td><input type="text" id="ch-name" name="name" required pattern="[a-z0-9][a-z0-9._-]*" maxlength="64" class="text-input" placeholder="e.g. ops-slack"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="ch-backend">Backend</label></td>
+            <td><select id="ch-backend" name="backend" class="text-input" required>
+              <option value="ntfy">ntfy</option>
+              <option value="slack">Slack</option>
+              <option value="discord">Discord</option>
+              <option value="apprise">Apprise</option>
+              <option value="webhook">Webhook (generic)</option>
+              <option value="custom">Custom command</option>
+            </select></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="ch-url">URL</label></td>
+            <td><input type="url" id="ch-url" name="url" class="text-input" placeholder="https://hooks.slack.com/..."></td>
+          </tr>
+        </table>
+        <p style="font-size:0.8rem;color:var(--text-3);margin:8px 0">Tokens and commands are injected via environment variables: <code>IDENTREE_NOTIFY_CHANNEL_&lt;NAME&gt;_TOKEN</code> / <code>_COMMAND</code></p>
+        <div class="modal-actions" style="margin-top:12px">
+          <button type="button" class="btn" onclick="document.getElementById('channel-form-card').style.display='none';document.getElementById('ch-add-btn').style.display=''">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Channel</button>
+        </div>
+      </form>
+    </div>
+    <div style="margin-top:14px">
+      <button type="button" id="ch-add-btn" class="btn btn-primary" onclick="document.getElementById('channel-form-card').style.display='';this.style.display='none'">Add Channel</button>
+    </div>
+
+    <!-- ── Routing Rules ─────────────────────────────────────────────── -->
+    <h3 style="margin-top:32px;margin-bottom:12px">Routing Rules</h3>
+    <p style="font-size:0.85rem;color:var(--text-3);margin-bottom:12px">Routes determine which events are delivered to which channels. Glob patterns supported (<code>*</code> = all).</p>
+    {{if .NotifyRoutes}}
+    <div class="list" role="list">
+      {{range $i, $r := .NotifyRoutes}}
+      <div class="row" role="listitem">
+        <div class="host-row-header">
+          <div class="host-row-header-info" style="gap:6px;flex-wrap:wrap">
+            {{range .Channels}}<span class="pill">{{.}}</span>{{end}}
+            <span style="color:var(--text-3);font-size:0.8rem">&larr;</span>
+            {{range .Events}}<span class="pill cmd">{{.}}</span>{{end}}
+            {{if .Hosts}}{{range .Hosts}}<span class="pill" style="background:var(--surface-2)">{{.}}</span>{{end}}{{end}}
+            {{if .Users}}{{range .Users}}<span class="pill" style="background:var(--surface-2)">user:{{.}}</span>{{end}}{{end}}
+          </div>
+          <div class="host-row-header-actions">
+            <form method="POST" action="/api/notification/routes/delete" style="display:inline">
+              <input type="hidden" name="index" value="{{$i}}">
+              <input type="hidden" name="username" value="{{$.Username}}">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+              <button type="submit" class="btn btn-danger btn-sm confirm-submit" data-confirm="Delete this route?">Delete</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <p class="empty-state">No routing rules configured. Notifications will not be delivered.</p>
+    {{end}}
+
+    <div id="route-form-card" style="display:none;margin-top:16px" class="info-section">
+      <h3>Add Route</h3>
+      <form method="POST" action="/api/notification/routes/add">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+        <table class="info-table" style="width:100%;max-width:640px">
+          <tr>
+            <td class="info-label"><label for="rt-channels">Channels</label></td>
+            <td><input type="text" id="rt-channels" name="channels" required class="text-input" placeholder="ops-slack, oncall-ntfy"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="rt-events">Events</label></td>
+            <td><input type="text" id="rt-events" name="events" required class="text-input" placeholder="* or challenge_created, challenge_approved"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="rt-hosts">Hosts</label></td>
+            <td><input type="text" id="rt-hosts" name="hosts" class="text-input" placeholder="*.prod, bastion-* (empty = all)"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="rt-users">Users</label></td>
+            <td><input type="text" id="rt-users" name="users" class="text-input" placeholder="* (empty = all)"></td>
+          </tr>
+        </table>
+        <div class="modal-actions" style="margin-top:12px">
+          <button type="button" class="btn" onclick="document.getElementById('route-form-card').style.display='none';document.getElementById('rt-add-btn').style.display=''">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Route</button>
+        </div>
+      </form>
+    </div>
+    <div style="margin-top:14px">
+      <button type="button" id="rt-add-btn" class="btn btn-primary" onclick="document.getElementById('route-form-card').style.display='';this.style.display='none'">Add Route</button>
+    </div>
+
+    <!-- ── My Notification Preferences ────────────────────────────────── -->
+    <h3 style="margin-top:32px;margin-bottom:12px">My Notification Preferences</h3>
+    <p style="font-size:0.85rem;color:var(--text-3);margin-bottom:12px">Subscribe to notifications about other users' activity. Select channels, event types, and optionally filter by hostname.</p>
+
+    <div class="info-section">
+      <form method="POST" action="/api/admin/notification-preferences">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+        <table class="info-table" style="width:100%;max-width:640px">
+          <tr>
+            <td class="info-label"><label for="pref-channels">Channels</label></td>
+            <td><input type="text" id="pref-channels" name="channels" class="text-input" value="{{if .MyNotifyPref}}{{range $i, $c := .MyNotifyPref.Channels}}{{if $i}}, {{end}}{{$c}}{{end}}{{end}}" placeholder="ops-slack, oncall-ntfy">
+            {{if .ChannelNames}}<p style="font-size:0.75rem;color:var(--text-3);margin:2px 0">Available: {{range $i, $n := .ChannelNames}}{{if $i}}, {{end}}{{$n}}{{end}}</p>{{end}}</td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="pref-events">Events</label></td>
+            <td><input type="text" id="pref-events" name="events" class="text-input" value="{{if .MyNotifyPref}}{{range $i, $e := .MyNotifyPref.Events}}{{if $i}}, {{end}}{{$e}}{{end}}{{end}}" placeholder="* (all) or challenge_created, challenge_approved"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="pref-hosts">Hosts</label></td>
+            <td><input type="text" id="pref-hosts" name="hosts" class="text-input" value="{{if .MyNotifyPref}}{{range $i, $h := .MyNotifyPref.Hosts}}{{if $i}}, {{end}}{{$h}}{{end}}{{end}}" placeholder="empty = all hosts"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="pref-enabled">Enabled</label></td>
+            <td><input type="checkbox" id="pref-enabled" name="enabled" value="true" {{if and .MyNotifyPref .MyNotifyPref.Enabled}}checked{{end}}></td>
+          </tr>
+        </table>
+        <div class="modal-actions" style="margin-top:12px">
+          {{if .MyNotifyPref}}<button type="submit" name="action" value="delete" class="btn btn-danger" style="margin-right:auto">Remove Subscription</button>{{end}}
+          <button type="submit" class="btn btn-primary">Save Preferences</button>
+        </div>
+      </form>
+    </div>
+
+    <script nonce="{{.CSPNonce}}">
+    document.querySelectorAll('.confirm-submit').forEach(function(btn){
+      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+    });
+    document.querySelectorAll('.banner-success').forEach(function(el){
+      setTimeout(function(){el.style.transition='opacity 0.4s';el.style.opacity='0';setTimeout(function(){el.remove()},500)},5000);
     });
     </script>
 

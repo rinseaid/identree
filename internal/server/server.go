@@ -622,6 +622,16 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/sudo-rules/update", s.handleSudoRuleUpdate)
 	s.mux.HandleFunc("/api/sudo-rules/delete", s.handleSudoRuleDelete)
 
+	// Notification management
+	s.mux.HandleFunc("/admin/notifications", s.handleAdminNotifications)
+	s.mux.HandleFunc("/api/notification/channels", s.handleNotifyChannelList)
+	s.mux.HandleFunc("/api/notification/channels/add", s.handleNotifyChannelAdd)
+	s.mux.HandleFunc("/api/notification/channels/delete", s.handleNotifyChannelDelete)
+	s.mux.HandleFunc("/api/notification/routes/add", s.handleNotifyRouteAdd)
+	s.mux.HandleFunc("/api/notification/routes/delete", s.handleNotifyRouteDelete)
+	s.mux.HandleFunc("/api/admin/notification-preferences", s.handleAdminNotifyPrefSave)
+	s.mux.HandleFunc("/api/admin/test-channel", s.handleAdminTestNotifyChannel)
+
 	// Host management
 	s.mux.HandleFunc("/api/hosts/elevate", s.handleElevate)
 	s.mux.HandleFunc("/api/hosts/rotate", s.handleRotateHost)
