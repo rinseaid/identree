@@ -25,6 +25,17 @@ services:
       retries: 10
       start_period: 10s
 
+  # Audit sink: syslog receiver (UDP) — socat captures RFC 5424 messages to a file.
+  syslog:
+    image: alpine:3.20
+    container_name: integ-full-syslog
+    command: ["sh", "-c", "apk add --no-cache socat >/dev/null 2>&1 && exec socat -u UDP-RECV:1514 OPEN:/var/log/audit.log,creat,append"]
+    healthcheck:
+      test: ["CMD", "test", "-e", "/proc/1/status"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+
   identree:
     build:
       context: ../../..
@@ -63,6 +74,9 @@ services:
       IDENTREE_DEV_LOGIN: "true"
       IDENTREE_CHALLENGE_TTL: "120s"
       IDENTREE_GRACE_PERIOD: "24h"
+      # Audit: JSON stdout + syslog
+      IDENTREE_AUDIT_LOG: "stdout"
+      IDENTREE_AUDIT_SYSLOG_URL: "udp://syslog:1514"
     volumes:
       - identree-data:/data
     ports:

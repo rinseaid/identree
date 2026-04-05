@@ -46,6 +46,20 @@ services:
       retries: 10
       start_period: 10s
 
+  # Audit sink: Grafana Loki
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: integ-lldap-dex-loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "127.0.0.1:3161:3100"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   identree:
     build:
       context: ../../..
@@ -75,6 +89,8 @@ services:
       IDENTREE_ESCROW_BACKEND: "local"
       IDENTREE_ESCROW_ENCRYPTION_KEY: "d37fc5f3f6gfe6gfef75dbfe0a42afff8e4191826e7ff339292895d24ffe3f52"
       IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+      # Audit: Loki push
+      IDENTREE_AUDIT_LOKI_URL: "http://loki:3100"
     volumes:
       - identree-data:/data
     ports:

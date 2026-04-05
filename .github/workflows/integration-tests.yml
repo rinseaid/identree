@@ -61,12 +61,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Bring up pocketid + identree + a single ubuntu2404 host.
+      # Bring up pocketid + identree + a single ubuntu2404 host + syslog receiver.
       # The other four OS hosts are skipped in CI (tested locally with make integration-all).
-      - name: Start full-mode stack (pocketid + identree + ubuntu2404)
+      - name: Start full-mode stack (pocketid + identree + syslog + ubuntu2404)
         run: |
           docker compose -f test/integration/full-mode/docker-compose.yml \
-            up --build -d pocketid identree host-ubuntu2404
+            up --build -d pocketid syslog identree host-ubuntu2404
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
@@ -240,6 +240,35 @@ jobs:
           print(f"Approved: {approved}  Rejected: {rejected}  — OK")
           PY
 
+      - name: Verify audit events — JSON log (stdout)
+        run: |
+          echo "==> Checking audit events in identree stdout..."
+          CREATED=$(docker logs integ-full-identree 2>/dev/null | grep -c '"event":"challenge_created"' || true)
+          APPROVED=$(docker logs integ-full-identree 2>/dev/null | grep -c '"event":"challenge_approved"' || true)
+          echo "  JSON log: challenge_created=${CREATED} challenge_approved=${APPROVED}"
+          [ "$CREATED" -ge 1 ] || { echo "FAIL: no challenge_created in stdout"; exit 1; }
+          # Verify valid JSON structure
+          docker logs integ-full-identree 2>/dev/null | grep '"event":"challenge_created"' | head -1 | python3 -c "
+          import sys, json
+          e = json.load(sys.stdin)
+          assert e['source'] == 'identree', f'bad source: {e[\"source\"]}'
+          assert e['username'], 'missing username'
+          assert e['timestamp'], 'missing timestamp'
+          print('  JSON log structure: OK')
+          "
+
+      - name: Verify audit events — syslog (RFC 5424)
+        run: |
+          echo "==> Checking syslog receiver..."
+          SYSLOG=$(docker exec integ-full-syslog cat /var/log/audit.log 2>/dev/null || echo "")
+          LINES=$(echo "$SYSLOG" | grep -c 'identree' || true)
+          echo "  Syslog lines containing 'identree': ${LINES}"
+          [ "$LINES" -ge 1 ] || { echo "FAIL: no identree events in syslog"; exit 1; }
+          # Verify RFC 5424 prefix
+          echo "$SYSLOG" | head -1 | grep -q '<86>1 ' || { echo "FAIL: missing RFC 5424 prefix"; exit 1; }
+          echo "$SYSLOG" | head -1 | grep -q 'event=' || { echo "FAIL: missing SD event param"; exit 1; }
+          echo "  Syslog format: OK"
+
       - name: Capture logs on failure
         if: failure()
         run: |
@@ -274,10 +303,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Start lldap-dex stack (lldap + dex + identree + ubuntu2404)
+      - name: Start lldap-dex stack (lldap + dex + loki + identree + ubuntu2404)
         run: |
           docker compose -f test/integration/lldap-dex/docker-compose.yml \
-            up --build -d lldap dex identree host-ubuntu2404
+            up --build -d lldap dex loki identree host-ubuntu2404
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
@@ -374,6 +403,31 @@ jobs:
           print(f"Approved: {approved}  Rejected: {rejected}  — OK")
           PY
 
+      - name: Verify audit events — Loki
+        run: |
+          echo "==> Waiting for Loki to ingest events..."
+          sleep 8  # Loki batches on a 5s timer; give extra headroom
+          START=$(date -u -d '10 minutes ago' +%s 2>/dev/null || date -u -v-10M +%s)
+          RESP=$(curl -sf "http://localhost:3161/loki/api/v1/query_range" \
+            --data-urlencode 'query={app="identree"}' \
+            --data-urlencode 'limit=50' \
+            --data-urlencode "start=${START}000000000" || echo '{}')
+          python3 << PYEOF
+          import json, sys
+          d = json.loads('''$RESP''')
+          results = d.get('data', {}).get('result', [])
+          total = sum(len(s.get('values', [])) for s in results)
+          print(f"  Loki: {total} audit log entries")
+          assert total >= 1, "FAIL: no audit events found in Loki"
+          # Check first entry is valid JSON with expected fields
+          first_line = results[0]['values'][0][1]
+          evt = json.loads(first_line)
+          assert evt.get('source') == 'identree', f"bad source: {evt.get('source')}"
+          assert evt.get('event'), "missing event field"
+          assert evt.get('username'), "missing username field"
+          print(f"  Loki event structure: OK (event={evt['event']} user={evt['username']})")
+          PYEOF
+
       - name: Capture logs on failure
         if: failure()
         run: |
@@ -383,6 +437,8 @@ jobs:
           docker logs integ-lldap-dex-dex 2>&1 | tail -30
           echo "=== identree logs ==="
           docker logs integ-lldap-dex-identree 2>&1 | tail -50
+          echo "=== loki logs ==="
+          docker logs integ-lldap-dex-loki 2>&1 | tail -20
           echo "=== ubuntu2404 sssd.conf ==="
           docker exec integ-lldap-dex-ubuntu2404 cat /etc/sssd/sssd.conf 2>/dev/null || true
           echo "=== ubuntu2404 entrypoint output ==="
@@ -408,10 +464,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Start vault-escrow stack (vault + lldap + dex + identree + ubuntu2404)
+      - name: Start vault-escrow stack (vault + lldap + dex + splunk-hec + identree + ubuntu2404)
         run: |
           docker compose -f test/integration/vault-escrow/docker-compose.yml \
-            up --build -d vault lldap dex identree host-ubuntu2404
+            up --build -d vault lldap dex splunk-hec identree host-ubuntu2404
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
@@ -523,6 +579,34 @@ jobs:
           print(f"Approved: {approved}  Rejected: {rejected}  — OK")
           PY
 
+      - name: Verify audit events — Splunk HEC
+        run: |
+          echo "==> Waiting for Splunk HEC batch flush..."
+          sleep 8  # Splunk HEC batches on a 5s timer
+          HEC_LOG=$(docker exec integ-vault-splunk-hec cat /var/log/hec.log 2>/dev/null || echo "")
+          EVENTS=$(echo "$HEC_LOG" | grep -c 'identree:audit' || true)
+          echo "  Splunk HEC: ${EVENTS} batches received"
+          [ "$EVENTS" -ge 1 ] || { echo "FAIL: no audit events in Splunk HEC"; exit 1; }
+          # Verify the payload structure
+          python3 << PYEOF
+          import json
+          log = '''$HEC_LOG'''
+          # Each line may contain multiple concatenated JSON objects
+          for line in log.strip().split('\n'):
+            if not line.strip():
+              continue
+            # Decode the first JSON object from the line
+            decoder = json.JSONDecoder()
+            obj, _ = decoder.raw_decode(line)
+            assert obj.get('sourcetype') == 'identree:audit', f"bad sourcetype: {obj.get('sourcetype')}"
+            assert obj.get('source') == 'identree', f"bad source: {obj.get('source')}"
+            evt = obj.get('event', {})
+            assert evt.get('event'), "missing event field in payload"
+            assert evt.get('username'), "missing username field in payload"
+            print(f"  Splunk HEC structure: OK (event={evt['event']} user={evt['username']})")
+            break
+          PYEOF
+
       - name: Capture logs on failure
         if: failure()
         run: |
@@ -534,6 +618,8 @@ jobs:
           docker logs integ-vault-dex 2>&1 | tail -30
           echo "=== identree logs ==="
           docker logs integ-vault-identree 2>&1 | tail -50
+          echo "=== splunk-hec log ==="
+          docker exec integ-vault-splunk-hec cat /var/log/hec.log 2>/dev/null | tail -10 || true
           echo "=== ubuntu2404 sssd.conf ==="
           docker exec integ-vault-ubuntu2404 cat /etc/sssd/sssd.conf 2>/dev/null || true
           echo "=== ubuntu2404 entrypoint output ==="

@@ -65,6 +65,33 @@ services:
       retries: 10
       start_period: 5s
 
+  # Audit sink: Splunk HEC mock — Python HTTP server that captures POST bodies.
+  splunk-hec:
+    image: python:3.12-slim
+    container_name: integ-vault-splunk-hec
+    command:
+      - python3
+      - -c
+      - |
+        import http.server
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(n)
+                with open("/var/log/hec.log", "a") as f:
+                    f.write(body.decode("utf-8", errors="replace") + "\n")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"text":"Success","code":0}')
+            def log_message(self, *a): pass
+        http.server.HTTPServer(("0.0.0.0", 8088), H).serve_forever()
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8088/')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
   identree:
     build:
       context: ../../..
@@ -99,6 +126,9 @@ services:
       IDENTREE_ESCROW_URL: "http://vault:8200"
       IDENTREE_ESCROW_AUTH_SECRET: "integ-vault-test-token"
       IDENTREE_ESCROW_PATH: "secret/identree"
+      # Audit: Splunk HEC
+      IDENTREE_AUDIT_SPLUNK_HEC_URL: "http://splunk-hec:8088/services/collector/event"
+      IDENTREE_AUDIT_SPLUNK_TOKEN: "integ-vault-splunk-token"
     volumes:
       - identree-data:/data
     ports:
