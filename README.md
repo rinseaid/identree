@@ -292,7 +292,7 @@ Multiple sinks can be active simultaneously. See [docs/audit-streaming.md](docs/
 | `IDENTREE_REDIS_SENTINEL_MASTER` | — | Sentinel master name (enables Sentinel mode) |
 | `IDENTREE_REDIS_SENTINEL_ADDRS` | — | Comma-separated Sentinel addresses |
 | `IDENTREE_REDIS_CLUSTER_ADDRS` | — | Comma-separated Cluster node addresses |
-| `IDENTREE_REDIS_POOL_SIZE` | `10` | Connection pool size |
+| `IDENTREE_REDIS_POOL_SIZE` | `50` | Connection pool size |
 
 See [docs/redis-ha.md](docs/redis-ha.md) for deployment guides (Docker Compose + Kubernetes) with both Valkey and Dragonfly.
 

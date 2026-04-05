@@ -939,6 +939,11 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		backendName = "command"
 	}
 	slog.Warn("BREAKGLASS_ESCROWED", "host", req.Hostname, "backend", backendName, "timestamp", time.Now().UTC().Format(time.RFC3339), "remote_addr", remoteAddr(r))
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "breakglass_escrowed",
+		Hostname:  req.Hostname,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
 		slog.Error("writing JSON response", "err", err)

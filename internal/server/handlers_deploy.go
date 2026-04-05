@@ -720,6 +720,12 @@ func (s *Server) runDeployJob(job *deployJob, hostname string, port int, sshUser
 			}
 			job.mu.Unlock()
 			s.store.LogAction(job.initiator, challpkg.ActionDeployed, logHost, "", "")
+			s.sendEventNotification(notify.WebhookData{
+				Event:     "deployed",
+				Hostname:  logHost,
+				Actor:     job.initiator,
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
 		}
 	case <-timer.C:
 		sess.Signal(gossh.SIGKILL)

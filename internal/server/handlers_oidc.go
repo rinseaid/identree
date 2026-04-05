@@ -149,8 +149,6 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "auth_state_unrecognized")
 }
 
-// cleanExpiredSessionNonces removes expired nonces (>15 min) from the map.
-// Must be called under sessionNonceMu lock.
 // handleSessionsLogin initiates an OIDC flow for the sessions management page.
 // GET /sessions/login
 func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
