@@ -1,4 +1,3 @@
-{{- if eq .Values.stateBackend "local" }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -6,8 +5,11 @@ metadata:
   labels:
     {{- include "identree.labels" . | nindent 4 }}
 spec:
+  {{- if eq .Values.stateBackend "redis" }}
+  maxUnavailable: 1
+  {{- else }}
   minAvailable: 1
+  {{- end }}
   selector:
     matchLabels:
       {{- include "identree.selectorLabels" . | nindent 6 }}
-{{- end }}

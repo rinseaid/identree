@@ -328,6 +328,11 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		defer func() { <-deploySemaphore }()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("deploy goroutine panic", "job", jobID, "panic", r)
+			}
+		}()
 		s.runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, installScript)
 		// zero the signer (best-effort, GC will handle the rest)
 		signer = nil
@@ -599,6 +604,11 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		defer func() { <-deploySemaphore }()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("deploy goroutine panic", "job", jobID, "panic", r)
+			}
+		}()
 		s.runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, uninstallScript)
 		_, _, jobFailed, _ := job.snapshot()
 		if !jobFailed {

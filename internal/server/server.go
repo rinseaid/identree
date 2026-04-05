@@ -443,6 +443,11 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 
 	// Periodically prune revokedNonces entries that have outlived revokedNoncesRetentionDur.
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("nonce pruning goroutine panic", "panic", r)
+			}
+		}()
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for {

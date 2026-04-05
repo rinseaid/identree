@@ -30,6 +30,8 @@ podSecurityContext:
   runAsUser: 65534
   runAsGroup: 65534
   fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
 
 securityContext:
   allowPrivilegeEscalation: false
@@ -111,6 +113,8 @@ config:
     url: ""
     command: ""
     timeout: "15s"
+    configFile: "/config/notification-channels.json"
+    adminNotifyFile: "/config/admin-notifications.json"
 
   # -- Audit streaming
   audit:

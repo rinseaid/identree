@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"time"
 
@@ -51,6 +52,11 @@ func startRedisMetrics(client redis.UniversalClient, stopCh <-chan struct{}) {
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("redis metrics goroutine panic", "panic", r)
+			}
+		}()
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
 		for {

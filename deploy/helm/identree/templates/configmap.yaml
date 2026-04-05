@@ -81,6 +81,8 @@ data:
   IDENTREE_NOTIFY_COMMAND: {{ .Values.config.notify.command | quote }}
   {{- end }}
   IDENTREE_NOTIFY_TIMEOUT: {{ .Values.config.notify.timeout | quote }}
+  IDENTREE_NOTIFICATION_CONFIG_FILE: {{ .Values.config.notify.configFile | default "/config/notification-channels.json" | quote }}
+  IDENTREE_ADMIN_NOTIFY_FILE: {{ .Values.config.notify.adminNotifyFile | default "/config/admin-notifications.json" | quote }}
 
   # ── Audit streaming ───────────────────────────────────────────────────────
   {{- if .Values.config.audit.log }}
