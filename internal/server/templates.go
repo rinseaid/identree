@@ -742,6 +742,7 @@ const pendingBarHTML = `{{if .Pending}}
       <input type="hidden" name="username" value="{{$.Username}}">
       <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
       <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+      <input type="hidden" name="from" value="inline">
       {{if .Reason}}
       <input type="hidden" name="reason" value="{{.Reason}}">
       {{else}}
@@ -1086,6 +1087,8 @@ const dashboardHTML = `<!DOCTYPE html>
     .sessions-table--user .sessions-table-row { grid-template-columns: 200px 1.5fr 210px; }
     .sessions-table-row:last-child { border-bottom: none; }
     .sessions-table-row:hover { background: var(--surface-2); }
+    @keyframes session-pulse { 0% { background: rgba(34,197,94,0.18); } 100% { background: transparent; } }
+    .session-highlight { animation: session-pulse 2s ease-out; }
     .saction-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 6px; font-size: 0.8125rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1.4; white-space: nowrap; }
     .saction-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--text-3); }
     .saction-btn.saction-danger { color: var(--danger); }
@@ -1226,7 +1229,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <div style="display:flex;justify-content:flex-end;align-items:center;padding:0 6px"><button type="button" class="filter-clear-btn" id="sessions-admin-clear">{{call .T "clear_filter"}}</button></div>
       </div>
       {{range .AllSessions}}
-      <div class="sessions-table-row" role="row">
+      <div class="sessions-table-row{{if and $.HighlightUser (eq .Username $.HighlightUser) (eq .Hostname $.HighlightHost)}} session-highlight{{end}}" role="row" data-user="{{.Username}}" data-host="{{.Hostname}}">
         <div class="gtcol gtcol-suser" role="cell"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
         <div class="gtcol gtcol-shost" role="cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
         <div class="gtcol gtcol-sremaining" role="cell"><span class="row-sub" style="font-size:0.8125rem">{{.Remaining}}</span></div>
@@ -1348,7 +1351,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <div></div>
       </div>
       {{range .HostAccess}}{{if .Active}}
-      <div class="sessions-table-row" role="row">
+      <div class="sessions-table-row{{if and $.HighlightHost (eq .Hostname $.HighlightHost)}} session-highlight{{end}}" role="row" data-host="{{.Hostname}}">
         <div class="gtcol gtcol-shost" role="cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
         <div class="gtcol gtcol-sremaining" role="cell"><span class="row-sub" style="font-size:0.8125rem">{{.Remaining}}</span></div>
         <div class="gtcol gtcol-sactions" role="cell" style="gap:6px;flex-wrap:nowrap;align-items:center;">
@@ -1458,6 +1461,11 @@ const dashboardHTML = `<!DOCTYPE html>
     });
     </script>
     {{end}}{{/* end non-admin branch */}}
+    {{if .HighlightHost}}
+    <script nonce="{{.CSPNonce}}">
+    (function(){var el=document.querySelector('.session-highlight');if(el){el.scrollIntoView({behavior:'smooth',block:'center'});}})();
+    </script>
+    {{end}}
 
   </main>
 </body>

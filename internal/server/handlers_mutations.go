@@ -142,9 +142,15 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		Actor:     username,
 	})
 
-	// Redirect back to the dashboard with flash cookie
+	// Redirect back to the dashboard with flash cookie.
+	// When the approval came from the single-challenge inline bar (from=inline),
+	// add a highlight hint so the sessions table can pulse the new row.
 	expiry := time.Now().Add(s.store.GraceRemaining(challenge.Username, challenge.Hostname))
-	s.setFlashCookie(w, fmt.Sprintf("approved:%s:%s:%d", hostname, challenge.Username, expiry.Unix()))
+	flash := fmt.Sprintf("approved:%s:%s:%d", hostname, challenge.Username, expiry.Unix())
+	if r.FormValue("from") == "inline" {
+		flash += fmt.Sprintf(",highlight:%s:%s", challenge.Username, hostname)
+	}
+	s.setFlashCookie(w, flash)
 	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 

@@ -303,6 +303,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	// Read and clear flash BEFORE auth check so login page can show flash messages.
 	var flashes []string
+	var highlightUser, highlightHost string // set by "highlight:user:host" flash fragment
 	if flashParam := s.getAndClearFlash(w, r); flashParam != "" {
 		for _, f := range strings.Split(flashParam, ",") {
 			parts := strings.SplitN(f, ":", 5)
@@ -350,6 +351,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				flashes = append(flashes, msg)
 			case "expired":
 				flashes = append(flashes, t("session_expired_sign_in"))
+			case "highlight":
+				if len(parts) == 3 {
+					highlightUser = parts[1]
+					highlightHost = parts[2]
+				}
 			}
 		}
 	}
@@ -625,6 +631,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"PocketIDUnavailable": pocketIDUnavailable,
 		"JustificationChoices": justChoices,
 		"RequireJustification": requireJust,
+		"HighlightUser":        highlightUser,
+		"HighlightHost":        highlightHost,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
 	}
