@@ -14,8 +14,8 @@ CLIENT_CONTAINER="${CLIENT_CONTAINER:-identree-authentik-saml-client}"
 passed=0
 failed=0
 
-pass() { echo "  PASS: $1"; ((passed++)); }
-fail() { echo "  FAIL: $1"; ((failed++)); }
+pass() { echo "  PASS: $1"; passed=$((passed+1)); }
+fail() { echo "  FAIL: $1"; failed=$((failed+1)); }
 
 echo "==> Validating Authentik SAML test environment"
 echo ""
@@ -71,7 +71,7 @@ CHALLENGE_RESP=$(curl -sf -X POST "${IDENTREE_URL}/api/challenge" \
     -H "Content-Type: application/json" \
     -H "X-Shared-Secret: ${SHARED_SECRET}" \
     -d '{"username":"alice","hostname":"authentik-saml-test-host"}' 2>/dev/null || echo "")
-if echo "$CHALLENGE_RESP" | grep -q '"id"'; then
+if echo "$CHALLENGE_RESP" | grep -q '"challenge_id"'; then
     pass "PAM challenge created successfully"
 else
     fail "PAM challenge creation failed: ${CHALLENGE_RESP}"

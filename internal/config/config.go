@@ -752,15 +752,17 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
-	// Validate required fields
-	if cfg.IssuerURL == "" && !cfg.DevLoginEnabled {
-		return nil, fmt.Errorf("IDENTREE_OIDC_ISSUER_URL is required")
-	}
-	if cfg.ClientID == "" && !cfg.DevLoginEnabled {
-		return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_ID is required")
-	}
-	if cfg.ClientSecret == "" && !cfg.DevLoginEnabled {
-		return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_SECRET is required")
+	// Validate required fields — OIDC fields only required when using OIDC protocol.
+	if cfg.AuthProtocol != "saml" {
+		if cfg.IssuerURL == "" && !cfg.DevLoginEnabled {
+			return nil, fmt.Errorf("IDENTREE_OIDC_ISSUER_URL is required")
+		}
+		if cfg.ClientID == "" && !cfg.DevLoginEnabled {
+			return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_ID is required")
+		}
+		if cfg.ClientSecret == "" && !cfg.DevLoginEnabled {
+			return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_SECRET is required")
+		}
 	}
 	// SharedSecret is required unless mTLS is enabled (mTLS replaces shared-secret auth).
 	if !cfg.MTLSEnabled {
