@@ -39,8 +39,12 @@ func (s *Server) notifyCfgForSave() *notify.NotificationConfig {
 	return &notify.NotificationConfig{Channels: channels, Routes: routes}
 }
 
-// validateGlobPattern checks if a glob pattern is syntactically valid.
+// validateGlobPattern checks if a glob pattern is syntactically valid and
+// contains no control characters (including null bytes).
 func validateGlobPattern(pattern string) bool {
+	if strings.ContainsFunc(pattern, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return false
+	}
 	_, err := filepath.Match(pattern, "")
 	return err == nil
 }

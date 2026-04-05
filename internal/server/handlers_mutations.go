@@ -86,6 +86,18 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enforce time-window policy: re-evaluate the policy at approval time to check
+	// if the current time is within the allowed window. This prevents approvals
+	// outside business hours even if the challenge was created during them.
+	if challenge.PolicyName != "" {
+		policyResult := s.evaluatePolicy(challenge.Username, challenge.Hostname)
+		if !policyResult.TimeWindowOK {
+			slog.Warn("APPROVAL_REJECTED outside time window", "user", challenge.Username, "host", challenge.Hostname, "policy", challenge.PolicyName, "window", policyResult.AllowedWindow)
+			revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "outside_approval_window")
+			return
+		}
+	}
+
 	// Reject approval if the requesting user's account is disabled.
 	if s.isUserDisabled(challenge.Username) {
 		slog.Warn("APPROVAL_REJECTED account disabled", "user", challenge.Username, "host", challenge.Hostname, "remote_addr", remoteAddr(r))
@@ -569,6 +581,13 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 		// Skip admin-approval-required challenges if the approver is not an admin.
 		if c.RequireAdmin && !isAdmin {
 			continue
+		}
+		// Skip challenges outside their policy time window.
+		if c.PolicyName != "" {
+			pr := s.evaluatePolicy(c.Username, c.Hostname)
+			if !pr.TimeWindowOK {
+				continue
+			}
 		}
 		if disabledMap[c.Username] {
 			slog.Warn("APPROVAL_REJECTED account disabled", "user", c.Username, "host", c.Hostname, "remote_addr", remoteAddr(r))

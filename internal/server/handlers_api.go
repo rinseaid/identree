@@ -449,7 +449,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	// AutoApproveIfWithinGracePeriod performs the grace-period check and approval
 	// atomically under a single write lock, eliminating the TOCTOU race between
 	// a separate WithinGracePeriod check and AutoApprove call.
-	if policyResult.GraceEligible && s.store.AutoApproveIfWithinGracePeriod(req.Username, req.Hostname, challenge.ID) {
+	if policyResult.GraceEligible && policyResult.TimeWindowOK && s.store.AutoApproveIfWithinGracePeriod(req.Username, req.Hostname, challenge.ID) {
 		challengesAutoApproved.Inc()
 		challpkg.ActiveChallenges.Dec()
 		challengeDuration.Observe(0)
