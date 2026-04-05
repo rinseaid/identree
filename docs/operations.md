@@ -1,0 +1,339 @@
+# Operations Guide
+
+This guide covers day-to-day operational concerns for running identree in production: reverse proxy configuration, backup procedures, monitoring, audit durability, scaling, and security hardening.
+
+---
+
+## Reverse Proxy / TLS Termination
+
+identree listens on plain HTTP internally (default `:8090`). TLS must always be terminated at a reverse proxy in front of it. `IDENTREE_EXTERNAL_URL` must match the public HTTPS URL exactly (e.g. `https://identree.example.com`).
+
+The `/api/events` endpoint uses Server-Sent Events (SSE) for real-time dashboard updates. Your proxy must not buffer this path or it will break live challenge notifications.
+
+### Key headers
+
+Your proxy should set (or pass through) these headers on every request:
+
+| Header | Purpose |
+|---|---|
+| `X-Forwarded-For` | Client IP for audit logs and rate limiting |
+| `X-Forwarded-Proto` | Lets identree know the original scheme was HTTPS |
+| `Host` | Must match the hostname in `IDENTREE_EXTERNAL_URL` |
+
+Strip `X-Forwarded-*` headers from untrusted clients at the edge to prevent IP spoofing.
+
+### nginx
+
+```nginx
+upstream identree {
+    server 127.0.0.1:8090;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name identree.example.com;
+
+    ssl_certificate     /etc/ssl/certs/identree.pem;
+    ssl_certificate_key /etc/ssl/private/identree.key;
+
+    # Strip X-Forwarded-* from untrusted clients
+    proxy_set_header X-Forwarded-For    $remote_addr;
+    proxy_set_header X-Forwarded-Proto  $scheme;
+    proxy_set_header Host               $host;
+
+    location / {
+        proxy_pass http://identree;
+
+        # WebSocket / SSE support (required for /api/events)
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+    }
+}
+```
+
+The critical lines for SSE are `proxy_buffering off` and the long `proxy_read_timeout`. Without these, the dashboard will not receive live challenge updates.
+
+### Caddy
+
+Caddy handles TLS automatically via Let's Encrypt:
+
+```
+identree.example.com {
+    reverse_proxy 127.0.0.1:8090 {
+        # Disable response buffering for SSE
+        flush_interval -1
+    }
+}
+```
+
+Caddy sets `X-Forwarded-For` and `X-Forwarded-Proto` by default.
+
+### Traefik (Docker labels)
+
+```yaml
+services:
+  identree:
+    image: identree:latest
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.identree.rule=Host(`identree.example.com`)"
+      - "traefik.http.routers.identree.tls=true"
+      - "traefik.http.routers.identree.tls.certresolver=letsencrypt"
+      - "traefik.http.services.identree.loadbalancer.server.port=8090"
+      # Disable response buffering for SSE
+      - "traefik.http.middlewares.identree-nobuffer.buffering.maxResponseBodyBytes=0"
+      - "traefik.http.routers.identree.middlewares=identree-nobuffer"
+```
+
+Traefik forwards `X-Forwarded-For` and `X-Forwarded-Proto` by default.
+
+---
+
+## Backup and Recovery
+
+### What to back up
+
+identree stores all persistent state as JSON files in `/config/` (or wherever the corresponding `IDENTREE_*_FILE` variables point). Back up these files regularly:
+
+| File | Contents | Impact if lost |
+|---|---|---|
+| `/config/sessions.json` | Active approved sudo sessions | Users must re-approve; no data loss |
+| `/config/uidmap.json` | UID/GID assignments for LDAP users | UID reassignment breaks file ownership on hosts |
+| `/config/hosts.json` | Registered host registry | Hosts must re-register |
+| `/config/sudorules.json` | Sudo rules (bridge mode) | Sudo policies must be recreated |
+
+**`uidmap.json` is the most critical file.** If lost, identree assigns new UIDs to existing users, which breaks file ownership on every managed host. Back this up before every upgrade.
+
+### Other files to back up
+
+- **Break-glass hash files** (`/etc/identree-breakglass` on each managed host) -- the bcrypt hash is the only local authentication fallback if the server is unreachable.
+- **TOML config** (`/etc/identree/identree.toml`) -- if you use the live configuration editor in the admin UI, changes are written to this file.
+- **Escrow data** -- if using the `local` escrow backend, the encrypted break-glass passwords are stored inside identree's state. Ensure your backup captures the full `/config/` directory.
+
+### Recovery procedure
+
+1. Stop identree.
+2. Restore `/config/sessions.json`, `/config/uidmap.json`, `/config/hosts.json`, and `/config/sudorules.json` from backup.
+3. Restore `/etc/identree/identree.toml` if applicable.
+4. Verify environment variables or config file contain all required secrets (`IDENTREE_SHARED_SECRET`, `IDENTREE_OIDC_CLIENT_SECRET`, etc.).
+5. Start identree.
+6. Open the admin UI and verify hosts appear and LDAP sync completes.
+
+---
+
+## Monitoring
+
+### Healthcheck endpoint
+
+```
+GET /healthz
+```
+
+Returns JSON with per-component status:
+
+```json
+{
+  "status": "ok",
+  "checks": {
+    "disk": "ok",
+    "ldap_sync": "ok",
+    "ldap_server": "ok",
+    "pocketid": "ok",
+    "oidc": "ok"
+  }
+}
+```
+
+| HTTP status | `status` field | Meaning |
+|---|---|---|
+| 200 | `"ok"` | All components healthy |
+| 200 | `"degraded"` | PocketID or OIDC issuer unreachable (LDAP continues from cache) |
+| 503 | `"unhealthy"` | Critical failure: disk not writable, LDAP sync stale, or LDAP server not started |
+
+The Docker image includes a built-in `HEALTHCHECK` that polls `/healthz` every 30 seconds.
+
+Component statuses:
+
+| Check | `"ok"` | Failure value | Severity |
+|---|---|---|---|
+| `disk` | Config directory is writable | `"not_writable"` | Critical (503) |
+| `ldap_sync` | Last sync within 1.5x refresh interval | `"stale"` | Critical (503) |
+| `ldap_server` | LDAP listener is bound | `"not_started"` | Critical (503) |
+| `pocketid` | PocketID API responds (full mode only) | `"unreachable"` | Degraded (200) |
+| `oidc` | OIDC discovery endpoint responds | `"unreachable"` | Degraded (200) |
+
+### Prometheus metrics
+
+Metrics are served at `GET /metrics` in Prometheus exposition format.
+
+**Authentication:** When `IDENTREE_METRICS_TOKEN` is set, requests must include `Authorization: Bearer <token>`. When unset, metrics are served without authentication.
+
+Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: identree
+    scheme: https
+    static_configs:
+      - targets: ["identree.example.com"]
+    authorization:
+      credentials: "your-metrics-token"
+```
+
+### Key metrics to alert on
+
+| Metric | Type | Alert condition | Description |
+|---|---|---|---|
+| `identree_challenges_created_total` | Counter | Unexpected drop to zero | No challenges being created may indicate PAM misconfiguration |
+| `identree_challenges_approved_total` | Counter | — | Track approval rate |
+| `identree_challenges_auto_approved_total` | Counter | — | Grace period / one-tap approvals |
+| `identree_challenges_denied_total` | Counter (by `reason`) | Spike in denials | Possible brute-force or misconfiguration |
+| `identree_challenge_duration_seconds` | Histogram | p95 > 60s | Users waiting too long for approval |
+| `identree_audit_events_total{status="dropped"}` | Counter | Any increase | Audit events are being lost due to buffer overflow |
+| `identree_audit_events_total{status="failed"}` | Counter | Any increase | A sink is failing to deliver events |
+| `identree_breakglass_escrow_total{status="failure"}` | Counter | Any increase | Break-glass password escrow is failing |
+| `identree_auth_failures_total` | Counter | Spike | Invalid shared secrets -- possible misconfigured or rogue host |
+| `identree_rate_limit_rejections_total` | Counter | Sustained increase | Legitimate users may be rate-limited |
+| `identree_ldap_sync_failures_total` | Counter | Any increase | PocketID API unreachable or returning errors |
+| `identree_registered_hosts` | Gauge | Unexpected decrease | Hosts may have been removed |
+| `identree_oidc_exchange_duration_seconds` | Histogram | p95 > 5s | OIDC provider is slow |
+
+### Grafana dashboard recommendations
+
+Build a dashboard with these panels:
+
+1. **Challenge flow** -- stacked time series of `challenges_created_total`, `challenges_approved_total`, `challenges_auto_approved_total`, `challenges_denied_total`
+2. **Challenge latency** -- histogram quantiles from `challenge_duration_seconds` (p50, p90, p99)
+3. **Audit health** -- `audit_events_total` by sink and status, with alert annotations on `dropped` or `failed`
+4. **Break-glass** -- `breakglass_escrow_total` by status
+5. **Auth failures** -- `auth_failures_total` rate
+6. **OIDC latency** -- `oidc_exchange_duration_seconds` quantiles
+7. **Host count** -- `registered_hosts` gauge
+8. **Healthcheck** -- probe the `/healthz` endpoint with Blackbox Exporter or use a JSON check
+
+---
+
+## Audit Durability and Event Loss
+
+identree supports multiple audit sinks running simultaneously. Each has different durability characteristics. Understanding these tradeoffs is critical for compliance.
+
+### JSON log sink (stdout or file)
+
+- **Durability:** Synchronous write. Events are written to the output stream before the function returns.
+- **Loss scenario:** A process crash (SIGKILL, OOM) may lose the event currently being written. In practice, this is effectively zero-loss for normal operations.
+- **Recommendation:** Use as your primary sink. Container runtimes (Docker, Kubernetes) capture stdout automatically, making it the simplest and most reliable option.
+
+```sh
+IDENTREE_AUDIT_LOG=stdout
+# or
+IDENTREE_AUDIT_LOG=file:/var/log/identree/audit.jsonl
+```
+
+### Syslog (RFC 5424)
+
+- **UDP:** Fire-and-forget. Events may be lost on network congestion, packet drops, or if the syslog receiver is down. No delivery confirmation.
+- **TCP:** Reliable delivery with automatic reconnection on connection failure. Events buffer in-process during reconnection.
+- **Recommendation:** Use TCP (`tcp://host:601`) if syslog is your compliance sink. UDP is acceptable only as a secondary/convenience sink.
+
+```sh
+IDENTREE_AUDIT_SYSLOG_URL=tcp://syslog.local:601   # reliable
+IDENTREE_AUDIT_SYSLOG_URL=udp://syslog.local:514   # fire-and-forget
+```
+
+### Splunk HEC / Loki
+
+- **Durability:** Events are batched (up to 100 events or 5 seconds) before being pushed over HTTP.
+- **Loss scenario:** Up to 5 seconds of events (one batch window) can be lost on a hard crash. Events in the current batch that have not yet been flushed are gone.
+- **Recommendation:** Use as a secondary sink alongside the JSON log sink. The JSON log captures everything synchronously; Splunk/Loki provides searchability and dashboards.
+
+### Buffer overflow
+
+All sinks receive events through a buffered channel (default size: 4096). If all sinks are slow or blocked, new events are **dropped** rather than blocking the server. Dropped events are counted:
+
+```
+identree_audit_events_total{sink="_channel",status="dropped"}
+```
+
+Alert on any increase in this counter. If you see drops, either increase the buffer size or investigate why sinks are slow:
+
+```sh
+IDENTREE_AUDIT_BUFFER_SIZE=8192   # increase from default 4096
+```
+
+### Recommended configuration
+
+Use the JSON log sink as your primary (captured by the container runtime with no configuration), and add Splunk/Loki/syslog as secondary sinks for search and alerting:
+
+```sh
+IDENTREE_AUDIT_LOG=stdout                                          # primary: zero-loss
+IDENTREE_AUDIT_SPLUNK_HEC_URL=https://splunk.example.com:8088/...  # secondary: searchable
+IDENTREE_AUDIT_SYSLOG_URL=tcp://syslog.local:601                   # secondary: compliance
+```
+
+---
+
+## Scaling Considerations
+
+### Single-instance by design
+
+identree is a single-instance service. All state is stored in local JSON files (`sessions.json`, `uidmap.json`, `hosts.json`, `sudorules.json`) and in-memory challenge maps. There is no database, no clustering, and no leader election. This is intentional -- it keeps the operational footprint minimal and eliminates distributed-system failure modes.
+
+Do not run multiple identree instances behind a load balancer. Challenges are stored in memory on the instance that created them; a second instance would not see them.
+
+### Capacity
+
+identree handles thousands of concurrent challenges in its in-memory store. The bottleneck in practice is the OIDC provider (token exchange latency) rather than identree itself. Monitor `identree_oidc_exchange_duration_seconds` to detect IdP slowdowns.
+
+### LDAP refresh interval tuning
+
+In full mode, identree polls the PocketID API every `IDENTREE_LDAP_REFRESH_INTERVAL` (default 300 seconds / 5 minutes) to sync users and groups. For large directories (1000+ users):
+
+- **Increase the interval** if the PocketID API is under load. Set `IDENTREE_LDAP_REFRESH_INTERVAL=600s` or higher.
+- **Use webhooks** for near-instant sync. Point a PocketID webhook at `https://identree.example.com/api/webhook/pocketid` with `IDENTREE_WEBHOOK_SECRET` set. This triggers an immediate refresh on user/group changes, letting you use a longer polling interval as a fallback.
+
+### Rate limiting
+
+identree applies internal rate limiting to challenge creation to prevent abuse. Rejected requests are counted in `identree_rate_limit_rejections_total`. If legitimate users are being rate-limited, check for:
+
+- Misconfigured PAM on a host retrying in a tight loop
+- Automated scripts running `sudo` repeatedly
+- A compromised host flooding the server
+
+---
+
+## Security Hardening Checklist
+
+Review this list before going to production.
+
+- [ ] **`IDENTREE_SHARED_SECRET` is 32+ random bytes**
+  Generate with `openssl rand -hex 32`. This secret authenticates every PAM client request. A weak or leaked secret means any network host can create and approve challenges.
+
+- [ ] **`IDENTREE_EXTERNAL_URL` uses HTTPS**
+  All OIDC flows, approval URLs, and API calls use this URL. HTTP in production exposes tokens and session cookies.
+
+- [ ] **`IDENTREE_WEBHOOK_SECRET` is set**
+  Without this, anyone who can reach `/api/webhook/pocketid` can trigger LDAP refreshes. With a flood of requests, this becomes a denial-of-service vector.
+
+- [ ] **`IDENTREE_ESCROW_HKDF_SALT` is set**
+  Generate with `openssl rand -hex 32`. This salt diversifies the encryption key for the local escrow backend per deployment. Without it, a static legacy salt is used (and a warning is logged at startup). Two deployments with the same `ESCROW_ENCRYPTION_KEY` and no salt produce identical ciphertexts.
+
+- [ ] **`IDENTREE_METRICS_TOKEN` is set**
+  Without this, `/metrics` is unauthenticated. Prometheus metrics expose challenge counts, host counts, failure rates, and OIDC latency -- useful reconnaissance for an attacker.
+
+- [ ] **Break-glass passwords are escrowed (not just local hash)**
+  Without escrow, the break-glass password exists only as a bcrypt hash on the managed host. You can verify it works but cannot recover the plaintext if a user needs emergency access. Configure an escrow backend (`local`, `vault`, `1password-connect`, `bitwarden`, or `infisical`).
+
+- [ ] **State files (`/config/`) are on a persistent volume with restricted permissions**
+  `sessions.json` contains active session data. `uidmap.json` contains UID mappings. Mount `/config` on a volume accessible only to the identree container user (UID/GID `identree`).
+
+- [ ] **Reverse proxy strips `X-Forwarded-*` from untrusted clients**
+  identree trusts `X-Forwarded-For` for audit logging. If your proxy does not strip these headers from inbound requests, an attacker can spoof their source IP in audit logs.
+
+- [ ] **LDAP bind credentials are set (if LDAP is network-exposed)**
+  Set `IDENTREE_LDAP_BIND_DN` and `IDENTREE_LDAP_BIND_PASSWORD` to require authentication for LDAP queries. Without these (and with `IDENTREE_LDAP_ALLOW_ANONYMOUS=true`), anyone who can reach port 389 can enumerate your entire user directory.
+
+- [ ] **`IDENTREE_OIDC_CLIENT_SECRET` is kept out of version control**
+  Use environment variables or a secrets manager. Never commit OIDC credentials to a repository.
