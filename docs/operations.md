@@ -201,18 +201,32 @@ scrape_configs:
 | `identree_registered_hosts` | Gauge | Unexpected decrease | Hosts may have been removed |
 | `identree_oidc_exchange_duration_seconds` | Histogram | p95 > 5s | OIDC provider is slow |
 
-### Grafana dashboard recommendations
+### Grafana dashboards
 
-Build a dashboard with these panels:
+Ready-to-import Grafana dashboard JSON files are provided in [`deploy/grafana/`](../deploy/grafana/):
 
-1. **Challenge flow** -- stacked time series of `challenges_created_total`, `challenges_approved_total`, `challenges_auto_approved_total`, `challenges_denied_total`
-2. **Challenge latency** -- histogram quantiles from `challenge_duration_seconds` (p50, p90, p99)
-3. **Audit health** -- `audit_events_total` by sink and status, with alert annotations on `dropped` or `failed`
-4. **Break-glass** -- `breakglass_escrow_total` by status
-5. **Auth failures** -- `auth_failures_total` rate
-6. **OIDC latency** -- `oidc_exchange_duration_seconds` quantiles
-7. **Host count** -- `registered_hosts` gauge
-8. **Healthcheck** -- probe the `/healthz` endpoint with Blackbox Exporter or use a JSON check
+| File | Contents |
+|---|---|
+| `identree-overview.json` | Challenge flow (rates, durations, active gauges), notifications (by channel/status, delivery latency), authentication (auth failures, rate limiting, OIDC latency), LDAP (sync failures, query rates, bind failures, host count), and break-glass escrow operations |
+| `identree-audit-health.json` | Audit pipeline health (emitted/dropped/failed events by sink) and Redis backend metrics (pool connections, command latency) |
+
+**Importing into Grafana:**
+
+1. Open Grafana and navigate to **Dashboards > Import** (or the `+` menu > **Import dashboard**).
+2. Click **Upload JSON file** and select one of the files from `deploy/grafana/`.
+3. On the import screen, select your Prometheus datasource from the **Prometheus** dropdown (the dashboards use a `${DS_PROMETHEUS}` variable).
+4. Click **Import**.
+
+Both dashboards default to a 6-hour time range with 30-second refresh. The overview dashboard uses collapsible rows to organize panels by subsystem.
+
+**Recommended alerts** (configure in Grafana or Alertmanager):
+
+- `identree_audit_events_total{status="dropped"}` -- any increase means the audit buffer is full
+- `identree_audit_events_total{status="failed"}` -- any increase means a sink is failing
+- `identree_auth_failures_total` -- spike indicates invalid shared secrets (misconfigured or rogue host)
+- `identree_breakglass_escrow_total{status="failure"}` -- any increase means escrow is broken
+- `identree_challenge_duration_seconds` p95 > 60s -- users waiting too long for approval
+- `identree_oidc_exchange_duration_seconds` p95 > 5s -- OIDC provider is slow
 
 ---
 
