@@ -721,6 +721,13 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogAction(username, challpkg.ActionExtended, displayHostname, "", actor)
 	slog.Info("EXTENDED", "user", username, "host", displayHostname, "remaining", remaining, "remote_addr", remoteAddr(r))
+	s.dispatchNotification(notify.WebhookData{
+		Event:     "session_extended",
+		Username:  username,
+		Hostname:  displayHostname,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Actor:     actor,
+	})
 	s.sseBroadcaster.Broadcast(username, "session_changed")
 
 	dest := safeRedirectDest(r.FormValue("from"))
@@ -760,6 +767,12 @@ func (s *Server) handleExtendAll(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sseBroadcaster.Broadcast(targetUser, "session_changed")
 	slog.Info("BULK_EXTEND_ALL", "user", username, "count", count, "target_user", targetUser, "remote_addr", remoteAddr(r))
+	s.dispatchNotification(notify.WebhookData{
+		Event:     "session_extended",
+		Username:  targetUser,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Actor:     username,
+	})
 
 	expiry := time.Now().Add(s.cfg.GracePeriod)
 	s.setFlashCookie(w, fmt.Sprintf("extended_all:%d:%d", count, expiry.Unix()))

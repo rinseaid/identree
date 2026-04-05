@@ -216,6 +216,10 @@ type ChallengeStore struct {
 
 	sessionNoncesMap map[string]SessionNonceData // nonce -> OIDC login state
 	sessionNoncesMu  sync.Mutex
+
+	// OnExpire is an optional callback invoked when a pending challenge is
+	// reaped (expired). The server wires this up to emit audit events.
+	OnExpire func(username, hostname, code string)
 }
 
 // persistedState is the JSON-serializable snapshot of grace sessions, revocation timestamps,
@@ -1383,6 +1387,10 @@ func (s *ChallengeStore) reapLoopWithBackoff(backoff time.Duration) {
 
 func (s *ChallengeStore) reap() {
 	now := time.Now()
+	type expiredInfo struct {
+		username, hostname, code string
+	}
+	var expired []expiredInfo
 	s.mu.Lock()
 	for id, c := range s.challenges {
 		if now.After(c.ExpiresAt.Add(30 * time.Second)) {
@@ -1391,6 +1399,13 @@ func (s *ChallengeStore) reap() {
 				s.decPending(c.Username)
 				challengesExpired.Inc()
 				ActiveChallenges.Dec()
+				if s.OnExpire != nil {
+					hostname := c.Hostname
+					if hostname == "" {
+						hostname = "(unknown)"
+					}
+					expired = append(expired, expiredInfo{c.Username, hostname, c.UserCode})
+				}
 			}
 			delete(s.byCode, c.UserCode)
 			delete(s.challenges, id)
@@ -1476,6 +1491,10 @@ func (s *ChallengeStore) reap() {
 	s.mu.Unlock()
 	if data != nil {
 		s.writeStateToDisk(data, rotate)
+	}
+	// Invoke OnExpire callback outside the lock to avoid deadlocks.
+	for _, e := range expired {
+		s.OnExpire(e.username, e.hostname, e.code)
 	}
 }
 

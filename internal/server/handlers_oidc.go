@@ -12,6 +12,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/rinseaid/identree/internal/challenge"
+	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/randutil"
 	"github.com/rinseaid/identree/internal/sanitize"
 	"golang.org/x/oauth2"
@@ -351,6 +352,12 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	slog.Info("SESSIONS", "user", username, "role", role, "remote_addr", remoteAddr(r))
+
+	s.dispatchNotification(notify.WebhookData{
+		Event:     "user_logged_in",
+		Username:  username,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 
 	// Record OIDC authentication time for one-tap freshness checks.
 	s.store.RecordOIDCAuth(username)

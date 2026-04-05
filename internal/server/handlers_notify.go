@@ -238,6 +238,12 @@ func (s *Server) handleNotifyChannelAdd(w http.ResponseWriter, r *http.Request) 
 	s.reloadNotificationConfig()
 
 	slog.Info("NOTIFY_CHANNEL_ADDED", "admin", adminUser, "channel", ch.Name, "backend", ch.Backend)
+	s.dispatchNotification(notify.WebhookData{
+		Event:     "notification_channel_added",
+		Actor:     adminUser,
+		Hostname:  ch.Name,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 	s.setFlashCookie(w, "channel_added:"+ch.Name)
 	http.Redirect(w, r, s.baseURL+"/admin/notifications", http.StatusSeeOther)
 }
@@ -292,6 +298,12 @@ func (s *Server) handleNotifyChannelDelete(w http.ResponseWriter, r *http.Reques
 	}
 
 	slog.Info("NOTIFY_CHANNEL_DELETED", "admin", adminUser, "channel", name)
+	s.dispatchNotification(notify.WebhookData{
+		Event:     "notification_channel_deleted",
+		Actor:     adminUser,
+		Hostname:  name,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 	s.setFlashCookie(w, "channel_deleted:"+name)
 	http.Redirect(w, r, s.baseURL+"/admin/notifications", http.StatusSeeOther)
 }
@@ -350,6 +362,11 @@ func (s *Server) handleNotifyRouteAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("NOTIFY_ROUTE_ADDED", "admin", adminUser, "channels", route.Channels, "events", route.Events)
+	s.dispatchNotification(notify.WebhookData{
+		Event:     "notification_route_added",
+		Actor:     adminUser,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 	s.setFlashCookie(w, "route_added:")
 	http.Redirect(w, r, s.baseURL+"/admin/notifications", http.StatusSeeOther)
 }
@@ -397,6 +414,11 @@ func (s *Server) handleNotifyRouteDelete(w http.ResponseWriter, r *http.Request)
 	}
 
 	slog.Info("NOTIFY_ROUTE_DELETED", "admin", adminUser, "index", idx)
+	s.dispatchNotification(notify.WebhookData{
+		Event:     "notification_route_deleted",
+		Actor:     adminUser,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 	s.setFlashCookie(w, "route_deleted:")
 	http.Redirect(w, r, s.baseURL+"/admin/notifications", http.StatusSeeOther)
 }

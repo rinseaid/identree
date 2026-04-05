@@ -352,6 +352,15 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		},
 	}
 
+	// ── Challenge expiry audit callback ─────────────────────────────────────
+	// Wire up the OnExpire callback so expired pending challenges emit audit events.
+	// Only the local ChallengeStore supports this; Redis TTL-based expiry is handled differently.
+	if localStore, ok := challengeStore.(*challenge.ChallengeStore); ok {
+		localStore.OnExpire = func(username, hostname, code string) {
+			s.emitAuditEvent("challenge_expired", username, hostname, code, "", "")
+		}
+	}
+
 	// ── SSE broadcaster ─────────────────────────────────────────────────────
 	if cfg.StateBackend == "redis" && storeRedisClient != nil {
 		// Create a dedicated Redis client for pub/sub to avoid blocking the store client.
