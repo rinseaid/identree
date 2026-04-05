@@ -243,6 +243,71 @@ func TestJSONLogSink_InvalidPath(t *testing.T) {
 	}
 }
 
+func TestJSONLogSink_Rotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+
+	// Use a tiny MaxSize so rotation triggers after a few events.
+	sink, err := NewJSONLogSink(path, RotationConfig{MaxSize: 500, MaxFiles: 5})
+	if err != nil {
+		t.Fatalf("NewJSONLogSink: %v", err)
+	}
+
+	// Each JSON event is roughly 150-200 bytes; writing 10 should exceed 500.
+	for i := 0; i < 10; i++ {
+		if err := sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "web-01", "CODE", "", "reason", "dev")); err != nil {
+			t.Fatalf("Emit %d: %v", i, err)
+		}
+	}
+	sink.Close()
+
+	// The rotated file .1 should exist.
+	if _, err := os.Stat(path + ".1"); err != nil {
+		t.Errorf("expected rotated file %s.1 to exist: %v", path, err)
+	}
+
+	// The current file should exist and be non-empty.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("current file missing: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("current file should be non-empty after rotation")
+	}
+}
+
+func TestJSONLogSink_MaxFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+
+	// MaxFiles=2 means only .1 and .2 should be kept.
+	sink, err := NewJSONLogSink(path, RotationConfig{MaxSize: 200, MaxFiles: 2})
+	if err != nil {
+		t.Fatalf("NewJSONLogSink: %v", err)
+	}
+
+	// Write enough events to trigger multiple rotations.
+	for i := 0; i < 30; i++ {
+		if err := sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "web-01", "CODE", "", "reason", "dev")); err != nil {
+			t.Fatalf("Emit %d: %v", i, err)
+		}
+	}
+	sink.Close()
+
+	// .1 and .2 should exist.
+	if _, err := os.Stat(path + ".1"); err != nil {
+		t.Errorf("expected %s.1 to exist: %v", path, err)
+	}
+	if _, err := os.Stat(path + ".2"); err != nil {
+		t.Errorf("expected %s.2 to exist: %v", path, err)
+	}
+
+	// .3 should NOT exist (pruned).
+	if _, err := os.Stat(path + ".3"); err == nil {
+		t.Errorf("expected %s.3 to NOT exist (max_files=2), but it does", path)
+	}
+}
+
 // ── SyslogSink tests ────────────────────────────────────────────────────────
 
 func TestSyslogSink_UDP(t *testing.T) {

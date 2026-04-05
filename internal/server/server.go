@@ -722,12 +722,16 @@ func initAuditSinks(cfg *config.ServerConfig) ([]audit.Sink, error) {
 		if strings.HasPrefix(dest, "file:") {
 			dest = strings.TrimPrefix(dest, "file:")
 		}
-		sink, err := audit.NewJSONLogSink(dest)
+		sink, err := audit.NewJSONLogSink(dest, audit.RotationConfig{
+			MaxSize:  cfg.AuditLogMaxSize,
+			MaxFiles: cfg.AuditLogMaxFiles,
+		})
 		if err != nil {
 			return nil, err
 		}
 		sinks = append(sinks, sink)
-		slog.Info("AUDIT sink: jsonlog", "dest", dest)
+		slog.Info("AUDIT sink: jsonlog", "dest", dest,
+			"max_size", cfg.AuditLogMaxSize, "max_files", cfg.AuditLogMaxFiles)
 	}
 
 	if cfg.AuditSyslogURL != "" {

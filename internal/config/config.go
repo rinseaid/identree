@@ -154,6 +154,8 @@ type ServerConfig struct {
 	AuditLokiURL      string // Loki base URL (e.g. "http://loki:3100")
 	AuditLokiToken    string // optional Loki bearer token
 	AuditBufferSize   int    // channel buffer size (default 4096)
+	AuditLogMaxSize   int    // max bytes per log file before rotation (default 100MB, 0 = no rotation)
+	AuditLogMaxFiles  int    // number of rotated files to keep (default 5)
 
 	// ── Break-glass escrow ────────────────────────────────────────────────────
 	EscrowCommand          string
@@ -332,6 +334,39 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 		return n
 	}
+	getBytes := func(key string, def int) int {
+		v := get(key)
+		if v == "" {
+			return def
+		}
+		// Try plain integer first (raw bytes).
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+		// Parse human-friendly suffixes: "100MB", "50mb", "1GB", etc.
+		v = strings.TrimSpace(strings.ToUpper(v))
+		multiplier := 1
+		switch {
+		case strings.HasSuffix(v, "GB"):
+			multiplier = 1024 * 1024 * 1024
+			v = strings.TrimSuffix(v, "GB")
+		case strings.HasSuffix(v, "MB"):
+			multiplier = 1024 * 1024
+			v = strings.TrimSuffix(v, "MB")
+		case strings.HasSuffix(v, "KB"):
+			multiplier = 1024
+			v = strings.TrimSuffix(v, "KB")
+		default:
+			slog.Warn("config: invalid byte size, using default", "key", key, "value", get(key), "default", def)
+			return def
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			slog.Warn("config: invalid byte size, using default", "key", key, "value", get(key), "default", def)
+			return def
+		}
+		return n * multiplier
+	}
 	getSlice := func(key string) []string {
 		v := get(key)
 		if v == "" {
@@ -400,6 +435,8 @@ func LoadServerConfig() (*ServerConfig, error) {
 		AuditLokiURL:      get("IDENTREE_AUDIT_LOKI_URL"),
 		AuditLokiToken:    get("IDENTREE_AUDIT_LOKI_TOKEN"),
 		AuditBufferSize:   getInt("IDENTREE_AUDIT_BUFFER_SIZE", 4096),
+		AuditLogMaxSize:   getBytes("IDENTREE_AUDIT_LOG_MAX_SIZE", 100*1024*1024),
+		AuditLogMaxFiles:  getInt("IDENTREE_AUDIT_LOG_MAX_FILES", 5),
 
 		EscrowCommand:        get("IDENTREE_ESCROW_COMMAND"),
 		EscrowEnvPassthrough: getSlice("IDENTREE_ESCROW_COMMAND_ENV"),
