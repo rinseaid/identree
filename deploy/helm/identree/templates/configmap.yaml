@@ -130,6 +130,33 @@ data:
   # ── UI ────────────────────────────────────────────────────────────────────
   IDENTREE_DEFAULT_PAGE_SIZE: {{ .Values.config.defaultPageSize | quote }}
 
+  # ── State backend (HA) ───────────────────────────────────────────────────
+  IDENTREE_STATE_BACKEND: {{ .Values.stateBackend | quote }}
+  {{- if eq .Values.stateBackend "redis" }}
+  {{- if .Values.redis.url }}
+  IDENTREE_REDIS_URL: {{ .Values.redis.url | quote }}
+  {{- end }}
+  IDENTREE_REDIS_DB: {{ .Values.redis.db | quote }}
+  IDENTREE_REDIS_KEY_PREFIX: {{ .Values.redis.keyPrefix | quote }}
+  IDENTREE_REDIS_TLS: {{ .Values.redis.tls | quote }}
+  {{- if .Values.redis.tlsCACert }}
+  IDENTREE_REDIS_TLS_CA_CERT: {{ .Values.redis.tlsCACert | quote }}
+  {{- end }}
+  {{- if .Values.redis.sentinelMaster }}
+  IDENTREE_REDIS_SENTINEL_MASTER: {{ .Values.redis.sentinelMaster | quote }}
+  {{- end }}
+  {{- if .Values.redis.sentinelAddrs }}
+  IDENTREE_REDIS_SENTINEL_ADDRS: {{ .Values.redis.sentinelAddrs | quote }}
+  {{- end }}
+  {{- if .Values.redis.clusterAddrs }}
+  IDENTREE_REDIS_CLUSTER_ADDRS: {{ .Values.redis.clusterAddrs | quote }}
+  {{- end }}
+  IDENTREE_REDIS_POOL_SIZE: {{ .Values.redis.poolSize | quote }}
+  IDENTREE_REDIS_DIAL_TIMEOUT: {{ .Values.redis.dialTimeout | quote }}
+  IDENTREE_REDIS_READ_TIMEOUT: {{ .Values.redis.readTimeout | quote }}
+  IDENTREE_REDIS_WRITE_TIMEOUT: {{ .Values.redis.writeTimeout | quote }}
+  {{- end }}
+
   # ── Persistent state file paths ──────────────────────────────────────────
   IDENTREE_SESSION_STATE_FILE: "/config/sessions.json"
   IDENTREE_LDAP_UID_MAP_FILE: "/config/uidmap.json"

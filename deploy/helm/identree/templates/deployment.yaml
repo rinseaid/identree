@@ -6,9 +6,18 @@ metadata:
     {{- include "identree.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
-  # identree uses local state files — parallel rollouts would cause conflicts.
+  {{- if eq .Values.stateBackend "redis" }}
+  # Redis backend: rolling updates are safe because state is shared.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  {{- else }}
+  # Local backend: parallel rollouts would cause state file conflicts.
   strategy:
     type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "identree.selectorLabels" . | nindent 6 }}

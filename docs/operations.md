@@ -277,15 +277,23 @@ IDENTREE_AUDIT_SYSLOG_URL=tcp://syslog.local:601                   # secondary: 
 
 ## Scaling Considerations
 
-### Single-instance by design
+### Single-instance (default)
 
-identree is a single-instance service. All state is stored in local JSON files (`sessions.json`, `uidmap.json`, `hosts.json`, `sudorules.json`) and in-memory challenge maps. There is no database, no clustering, and no leader election. This is intentional -- it keeps the operational footprint minimal and eliminates distributed-system failure modes.
+By default, identree is a single-instance service. All state is stored in local JSON files (`sessions.json`, `uidmap.json`, `hosts.json`, `sudorules.json`) and in-memory challenge maps. There is no database, no clustering, and no leader election. This is intentional -- it keeps the operational footprint minimal and eliminates distributed-system failure modes.
 
-Do not run multiple identree instances behind a load balancer. Challenges are stored in memory on the instance that created them; a second instance would not see them.
+With the default `local` state backend, do not run multiple identree instances behind a load balancer. Challenges are stored in memory on the instance that created them; a second instance would not see them.
+
+### Multi-instance with Redis
+
+To run multiple identree instances for high availability, switch to the Redis state backend. Set `IDENTREE_STATE_BACKEND=redis` and point all instances at the same Redis/Valkey/Dragonfly server. Challenges, sessions, and all runtime state are shared via Redis, and dashboard SSE events propagate across instances via Redis pub/sub.
+
+No sticky sessions are required. Any instance can serve any request.
+
+See [redis-ha.md](redis-ha.md) for full deployment guides covering Docker Compose, Kubernetes, Sentinel, Cluster mode, TLS, failover behavior, and monitoring.
 
 ### Capacity
 
-identree handles thousands of concurrent challenges in its in-memory store. The bottleneck in practice is the OIDC provider (token exchange latency) rather than identree itself. Monitor `identree_oidc_exchange_duration_seconds` to detect IdP slowdowns.
+identree handles thousands of concurrent challenges whether stored in memory (local backend) or Redis. The bottleneck in practice is the OIDC provider (token exchange latency) rather than identree itself. Monitor `identree_oidc_exchange_duration_seconds` to detect IdP slowdowns.
 
 ### LDAP refresh interval tuning
 

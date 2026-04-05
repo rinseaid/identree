@@ -1,7 +1,7 @@
 # -- Default values for identree Helm chart.
 
-# -- Number of replicas. identree is designed as a single-instance server
-# (state files are not shared), so keep this at 1.
+# -- Number of replicas. With stateBackend=local, keep at 1 (state files are
+# not shared). With stateBackend=redis, set to 2+ for high availability.
 replicaCount: 1
 
 image:
@@ -143,6 +143,36 @@ config:
 
   # -- UI
   defaultPageSize: "10"
+
+# ── State backend (HA) ────────────────────────────────────────────────────
+# Set to "redis" to enable multi-instance HA with a shared Redis/Valkey/Dragonfly.
+stateBackend: "local"  # "local" or "redis"
+
+redis:
+  # -- External Redis URL (standalone mode)
+  url: ""
+  # -- Redis AUTH password (or use existingSecret)
+  password: ""
+  # -- Redis database number
+  db: 0
+  # -- Key namespace prefix
+  keyPrefix: "identree:"
+  # -- Connection pool size
+  poolSize: 10
+  # -- Enable TLS
+  tls: false
+  # -- TLS CA certificate path (mounted via extraVolumes)
+  tlsCACert: ""
+  # -- Sentinel master name (enables Sentinel mode)
+  sentinelMaster: ""
+  # -- Sentinel addresses (comma-separated)
+  sentinelAddrs: ""
+  # -- Cluster addresses (comma-separated, enables Cluster mode)
+  clusterAddrs: ""
+  # -- Dial/read/write timeouts
+  dialTimeout: "5s"
+  readTimeout: "3s"
+  writeTimeout: "3s"
 
 # ---------------------------------------------------------------------------
 # Secrets (sensitive values — stored in a Kubernetes Secret)

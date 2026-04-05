@@ -279,6 +279,23 @@ See [docs/notifications.md](docs/notifications.md) for full details and examples
 
 Multiple sinks can be active simultaneously. See [docs/audit-streaming.md](docs/audit-streaming.md) for event format, sink details, and LogQL/Splunk query examples.
 
+#### State backend (multi-instance HA)
+
+| Variable | Default | Description |
+|---|---|---|
+| `IDENTREE_STATE_BACKEND` | `local` | `local` (file-based, single instance) or `redis` (multi-instance HA) |
+| `IDENTREE_REDIS_URL` | — | Redis connection URL (`redis://host:6379/0`) |
+| `IDENTREE_REDIS_PASSWORD` | — | Redis AUTH password |
+| `IDENTREE_REDIS_PASSWORD_FILE` | — | Path to file containing Redis password |
+| `IDENTREE_REDIS_KEY_PREFIX` | `identree:` | Key namespace prefix (for shared Redis instances) |
+| `IDENTREE_REDIS_TLS` | `false` | Enable TLS for Redis connections |
+| `IDENTREE_REDIS_SENTINEL_MASTER` | — | Sentinel master name (enables Sentinel mode) |
+| `IDENTREE_REDIS_SENTINEL_ADDRS` | — | Comma-separated Sentinel addresses |
+| `IDENTREE_REDIS_CLUSTER_ADDRS` | — | Comma-separated Cluster node addresses |
+| `IDENTREE_REDIS_POOL_SIZE` | `10` | Connection pool size |
+
+See [docs/redis-ha.md](docs/redis-ha.md) for deployment guides (Docker Compose + Kubernetes) with both Valkey and Dragonfly.
+
 #### PocketID webhook receiver
 
 | Variable | Default | Description |
