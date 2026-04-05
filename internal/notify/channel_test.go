@@ -176,6 +176,9 @@ func TestInjectChannelSecrets(t *testing.T) {
 }
 
 func TestDeliverWebhook(t *testing.T) {
+	ssrfCheckEnabled = false
+	t.Cleanup(func() { ssrfCheckEnabled = true })
+
 	var received []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received, _ = json.Marshal(map[string]string{"ok": "true"})
@@ -195,6 +198,9 @@ func TestDeliverWebhook(t *testing.T) {
 }
 
 func TestDeliverWebhook4xxNeverRetried(t *testing.T) {
+	ssrfCheckEnabled = false
+	t.Cleanup(func() { ssrfCheckEnabled = true })
+
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++

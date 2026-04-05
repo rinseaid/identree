@@ -159,11 +159,15 @@ func FormatWebhookNtfy(d WebhookData) ([]byte, error) {
 }
 
 // WebhookClient is a hardened HTTP client for webhook delivery:
-// no proxy (prevents SSRF via proxy env vars) and no redirect following
-// (prevents redirect-based SSRF to internal hosts).
+// no proxy (prevents SSRF via proxy env vars), no redirect following
+// (prevents redirect-based SSRF to internal hosts), and a custom DialContext
+// that rejects connections to private/internal IP ranges (prevents DNS-based SSRF).
 var WebhookClient = &http.Client{
-	Timeout:   10 * time.Second,
-	Transport: &http.Transport{Proxy: nil},
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		Proxy:       nil,
+		DialContext: ssrfSafeDialContext,
+	},
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
