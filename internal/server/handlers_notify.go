@@ -74,6 +74,7 @@ func (s *Server) handleAdminNotifications(w http.ResponseWriter, r *http.Request
 	}
 
 	var flashes []string
+	var flashErrors []string
 	if flashParam := s.getAndClearFlash(w, r); flashParam != "" {
 		for _, f := range strings.Split(flashParam, ",") {
 			parts := strings.SplitN(f, ":", 2)
@@ -98,7 +99,7 @@ func (s *Server) handleAdminNotifications(w http.ResponseWriter, r *http.Request
 			case "test_sent":
 				flashes = append(flashes, "Test notification sent to: "+parts[1])
 			case "test_failed":
-				flashes = append(flashes, "Test notification failed: "+parts[1])
+				flashErrors = append(flashErrors, "Test notification failed: "+parts[1])
 			}
 		}
 	}
@@ -151,6 +152,7 @@ func (s *Server) handleAdminNotifications(w http.ResponseWriter, r *http.Request
 		"Avatar":                getAvatar(r),
 		"Timezone":              adminTZ,
 		"Flashes":               flashes,
+		"FlashErrors":           flashErrors,
 		"ActivePage":            "admin",
 		"AdminTab":              "notifications",
 		"BridgeMode":            s.isBridgeMode(),

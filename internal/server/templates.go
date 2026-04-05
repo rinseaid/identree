@@ -1022,7 +1022,7 @@ const sidebarNavHTML = `
         <a href="/admin/groups" class="sub-item{{if eq .AdminTab "groups"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{{call .T "groups"}}</a>
         <a href="/admin/hosts" class="sub-item{{if eq .AdminTab "hosts"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>{{call .T "hosts"}}</a>
         {{if .BridgeMode}}<a href="/admin/sudo-rules" class="sub-item{{if eq .AdminTab "sudo-rules"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>{{call .T "sudo_rules"}}</a>{{end}}
-        <a href="/admin/notifications" class="sub-item{{if eq .AdminTab "notifications"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Notifications</a>
+        <a href="/admin/notifications" class="sub-item{{if eq .AdminTab "notifications"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Notifications{{/* TODO: i18n */}}</a>
         <a href="/admin/config" class="sub-item{{if eq .AdminTab "config"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>{{call .T "config"}}</a>
         <a href="/admin/info" class="sub-item{{if eq .AdminTab "info"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>{{call .T "info"}}</a>
       </div>{{end}}`
@@ -3204,6 +3204,7 @@ const adminPageHTML = `<!DOCTYPE html>
     </script>
 
     {{else if eq .AdminTab "notifications"}}
+    {{range .FlashErrors}}<div class="banner banner-error" role="alert">{{.}}</div>{{end}}
 
     <!-- ── Notification Channels ──────────────────────────────────────── -->
     <h3 style="margin-bottom:12px">Channels</h3>
@@ -3270,13 +3271,13 @@ const adminPageHTML = `<!DOCTYPE html>
         </table>
         <p style="font-size:0.8rem;color:var(--text-3);margin:8px 0">Tokens and commands are injected via environment variables: <code>IDENTREE_NOTIFY_CHANNEL_&lt;NAME&gt;_TOKEN</code> / <code>_COMMAND</code></p>
         <div class="modal-actions" style="margin-top:12px">
-          <button type="button" class="btn" onclick="document.getElementById('channel-form-card').style.display='none';document.getElementById('ch-add-btn').style.display=''">Cancel</button>
+          <button type="button" class="btn" onclick="document.getElementById('channel-form-card').style.display='none';document.getElementById('ch-add-btn').style.display='';document.getElementById('ch-add-btn').setAttribute('aria-expanded','false')">Cancel</button>
           <button type="submit" class="btn btn-primary">Add Channel</button>
         </div>
       </form>
     </div>
     <div style="margin-top:14px">
-      <button type="button" id="ch-add-btn" class="btn btn-primary" onclick="document.getElementById('channel-form-card').style.display='';this.style.display='none'">Add Channel</button>
+      <button type="button" id="ch-add-btn" class="btn btn-primary" aria-expanded="false" onclick="document.getElementById('channel-form-card').style.display='';this.style.display='none';this.setAttribute('aria-expanded','true')">Add Channel</button>
     </div>
 
     <!-- ── Routing Rules ─────────────────────────────────────────────── -->
@@ -3336,13 +3337,13 @@ const adminPageHTML = `<!DOCTYPE html>
           </tr>
         </table>
         <div class="modal-actions" style="margin-top:12px">
-          <button type="button" class="btn" onclick="document.getElementById('route-form-card').style.display='none';document.getElementById('rt-add-btn').style.display=''">Cancel</button>
+          <button type="button" class="btn" onclick="document.getElementById('route-form-card').style.display='none';document.getElementById('rt-add-btn').style.display='';document.getElementById('rt-add-btn').setAttribute('aria-expanded','false')">Cancel</button>
           <button type="submit" class="btn btn-primary">Add Route</button>
         </div>
       </form>
     </div>
     <div style="margin-top:14px">
-      <button type="button" id="rt-add-btn" class="btn btn-primary" onclick="document.getElementById('route-form-card').style.display='';this.style.display='none'">Add Route</button>
+      <button type="button" id="rt-add-btn" class="btn btn-primary" aria-expanded="false" onclick="document.getElementById('route-form-card').style.display='';this.style.display='none';this.setAttribute('aria-expanded','true')">Add Route</button>
     </div>
 
     <!-- ── My Notification Preferences ────────────────────────────────── -->
@@ -3374,7 +3375,7 @@ const adminPageHTML = `<!DOCTYPE html>
           </tr>
         </table>
         <div class="modal-actions" style="margin-top:12px">
-          {{if .MyNotifyPref}}<button type="submit" name="action" value="delete" class="btn btn-danger" style="margin-right:auto">Remove Subscription</button>{{end}}
+          {{if .MyNotifyPref}}<button type="submit" name="action" value="delete" class="btn btn-danger confirm-submit" data-confirm="Remove your notification subscription?" style="margin-right:auto">Remove Subscription</button>{{end}}
           <button type="submit" class="btn btn-primary">Save Preferences</button>
         </div>
       </form>
