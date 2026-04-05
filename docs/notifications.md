@@ -14,7 +14,6 @@ Event (challenge_created, approved, etc.)
   │
   └─ Admin Preferences (per-admin, UI-driven)
        match event × hostname → channels
-  │
   └─ Deduplicate → Fan-out delivery to matched channels
 ```
 

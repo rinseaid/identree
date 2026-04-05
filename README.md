@@ -176,6 +176,8 @@ volumes:
 | `/config/uidmap.json` | UID/GID assignments for LDAP users (full mode) |
 | `/config/hosts.json` | Registered host registry |
 | `/config/sudorules.json` | Sudo rules (bridge mode) |
+| `/config/notification-channels.json` | Notification channel definitions |
+| `/config/admin-notifications.json` | Per-admin notification preferences |
 
 Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 
@@ -257,13 +259,11 @@ See [docs/justification.md](docs/justification.md) for full details including th
 
 | Variable | Default | Description |
 |---|---|---|
-| `IDENTREE_NOTIFY_BACKEND` | — | `ntfy`, `slack`, `discord`, `apprise`, `webhook`, or `custom` |
-| `IDENTREE_NOTIFY_URL` | — | Webhook URL (all backends except `custom`) |
-| `IDENTREE_NOTIFY_TOKEN` | — | Optional Bearer token for webhook auth |
-| `IDENTREE_NOTIFY_COMMAND` | — | Command to execute (`custom` backend only) |
+| `IDENTREE_NOTIFICATION_CONFIG_FILE` | `/config/notification-channels.json` | Channel definitions (backends, URLs, tokens) |
+| `IDENTREE_ADMIN_NOTIFY_FILE` | `/config/admin-notifications.json` | Per-admin notification preferences |
 | `IDENTREE_NOTIFY_TIMEOUT` | `15s` | Timeout for HTTP requests or command execution |
 
-See [docs/notifications.md](docs/notifications.md) for full details and examples.
+Notifications use multi-channel routing: events are matched against org-level rules and per-admin preferences, then deduplicated and fanned out. See [docs/notifications.md](docs/notifications.md) for full details, supported backends, and examples.
 
 #### Audit streaming
 

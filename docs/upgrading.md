@@ -26,9 +26,11 @@ Always back up state files before upgrading. identree stores all persistent stat
    | File | Contents |
    |---|---|
    | `sessions.json` | Active approved sessions |
-   | `uid-map.json` | UID/GID assignments (full mode) |
-   | `host-registry.json` | Registered host registry |
-   | `sudo-rules.json` | Sudo rules (bridge mode) |
+   | `uidmap.json` | UID/GID assignments (full mode) |
+   | `hosts.json` | Registered host registry |
+   | `sudorules.json` | Sudo rules (bridge mode) |
+   | `notification-channels.json` | Notification channel definitions |
+   | `admin-notifications.json` | Per-admin notification preferences |
 
    > File names can differ if you have overridden them with `IDENTREE_*_FILE` environment variables. Back up those paths instead.
 
@@ -54,10 +56,12 @@ If you need to revert to the previous version:
 2. Restore the backup files:
 
    ```sh
-   cp /config.bak-<date>/sessions.json       /config/sessions.json
-   cp /config.bak-<date>/uid-map.json        /config/uid-map.json
-   cp /config.bak-<date>/host-registry.json  /config/host-registry.json
-   cp /config.bak-<date>/sudo-rules.json     /config/sudo-rules.json
+   cp /config.bak-<date>/sessions.json                /config/sessions.json
+   cp /config.bak-<date>/uidmap.json                 /config/uidmap.json
+   cp /config.bak-<date>/hosts.json                  /config/hosts.json
+   cp /config.bak-<date>/sudorules.json              /config/sudorules.json
+   cp /config.bak-<date>/notification-channels.json  /config/notification-channels.json
+   cp /config.bak-<date>/admin-notifications.json    /config/admin-notifications.json
    ```
 
 3. Switch the image tag back to the previous version in `docker-compose.yml` and start it:
@@ -131,7 +135,7 @@ The following features are on the roadmap but not yet implemented. Do not rely o
 |---|---|
 | SAML 2.0 identity provider support | Not implemented |
 | mTLS client certificate authentication | Not implemented |
-| Per-admin notification preferences (granular routing) | Not implemented |
+| Per-admin notification preferences (granular routing) | Implemented — configure via **Admin > Notifications** (`/admin/notifications`) |
 | Approval policies (time windows, host-specific rules, step-up auth) | Not implemented |
 
 Check the [GitHub issues](https://github.com/rinseaid/identree/issues) for the latest status and to add your vote or comments.

@@ -589,12 +589,12 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
-	// Clamp ChallengeTTL to sane bounds (10s–600s).
-	if cfg.ChallengeTTL < 10*time.Second {
-		cfg.ChallengeTTL = 10 * time.Second
+	// Clamp ChallengeTTL to sane bounds (30s–24h), matching live-update range.
+	if cfg.ChallengeTTL < 30*time.Second {
+		cfg.ChallengeTTL = 30 * time.Second
 	}
-	if cfg.ChallengeTTL > 600*time.Second {
-		cfg.ChallengeTTL = 600 * time.Second
+	if cfg.ChallengeTTL > 86400*time.Second {
+		cfg.ChallengeTTL = 86400 * time.Second
 	}
 
 	// Normalize LDAPUIDBase/GIDBase: 0 means "unset" (e.g. stored in a legacy TOML

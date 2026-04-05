@@ -62,6 +62,8 @@ var liveUpdateKeys = map[string]bool{
 	"IDENTREE_LDAP_PROVISION_ENABLED":          true,
 	"IDENTREE_LDAP_EXTERNAL_URL":               true,
 	"IDENTREE_LDAP_TLS_CA_CERT":               true,
+	"IDENTREE_REQUIRE_JUSTIFICATION":           true,
+	"IDENTREE_JUSTIFICATION_CHOICES":           true,
 }
 
 var configSectionLabels = map[string]string{
@@ -894,13 +896,6 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 			}
 		}
 	}
-	if v := values["IDENTREE_NOTIFY_BACKEND"]; v != "" {
-		switch v {
-		case "ntfy", "slack", "discord", "apprise", "webhook", "custom":
-		default:
-			return fmt.Errorf("invalid notify backend: %q", v)
-		}
-	}
 	if v := values["IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"]; v != "" {
 		switch v {
 		case "true", "false", "claims":
@@ -1078,8 +1073,15 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 		}
 		s.cfg.AdminApprovalHosts = newHosts
 	}
-	// Notification config file paths: reload the channel/route config from disk
-	// when the path changes (or on any settings save as a convenience).
+	// Notification config file paths: update before reload so the new path is used.
+	if !config.IsEnvSourced("IDENTREE_NOTIFICATION_CONFIG_FILE") {
+		s.cfg.NotificationConfigFile = values["IDENTREE_NOTIFICATION_CONFIG_FILE"]
+	}
+	if !config.IsEnvSourced("IDENTREE_ADMIN_NOTIFY_FILE") {
+		s.cfg.AdminNotifyFile = values["IDENTREE_ADMIN_NOTIFY_FILE"]
+	}
+	// Reload the channel/route config from disk when the path changes
+	// (or on any settings save as a convenience).
 	s.reloadNotificationConfig()
 	if !config.IsEnvSourced("IDENTREE_NOTIFY_TIMEOUT") {
 		if d, err := time.ParseDuration(values["IDENTREE_NOTIFY_TIMEOUT"]); err == nil && d > 0 {
@@ -1183,7 +1185,14 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 		}
 	}
 	if !config.IsEnvSourced("IDENTREE_DEFAULT_PAGE_SIZE") {
-		s.cfg.DefaultPageSize = parseInt("IDENTREE_DEFAULT_PAGE_SIZE", s.cfg.DefaultPageSize)
+		ps := parseInt("IDENTREE_DEFAULT_PAGE_SIZE", s.cfg.DefaultPageSize)
+		if ps < 1 {
+			ps = 1
+		}
+		if ps > 500 {
+			ps = 500
+		}
+		s.cfg.DefaultPageSize = ps
 	}
 	if !config.IsEnvSourced("IDENTREE_LDAP_SUDO_NO_AUTHENTICATE") {
 		switch v := config.SudoNoAuthenticate(values["IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"]); v {
@@ -1196,7 +1205,14 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 		}
 	}
 	if !config.IsEnvSourced("IDENTREE_LDAP_DEFAULT_SHELL") {
-		s.cfg.LDAPDefaultShell = values["IDENTREE_LDAP_DEFAULT_SHELL"]
+		shell := values["IDENTREE_LDAP_DEFAULT_SHELL"]
+		if shell != "" && !strings.HasPrefix(shell, "/") {
+			slog.Warn("IDENTREE_LDAP_DEFAULT_SHELL must be an absolute path, ignoring", "value", shell)
+		} else if shell != "" && strings.ContainsAny(shell, " \t\n\r\x00;|&$`'\"\\<>(){}*?[]!^%~@#") {
+			slog.Warn("IDENTREE_LDAP_DEFAULT_SHELL contains invalid characters, ignoring", "value", shell)
+		} else {
+			s.cfg.LDAPDefaultShell = shell
+		}
 	}
 	if !config.IsEnvSourced("IDENTREE_LDAP_DEFAULT_HOME") {
 		s.cfg.LDAPDefaultHome = values["IDENTREE_LDAP_DEFAULT_HOME"]
