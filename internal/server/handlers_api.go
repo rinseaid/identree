@@ -390,13 +390,14 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 		s.store.LogActionWithReason(req.Username, challpkg.ActionAutoApproved, hostname, challenge.UserCode, "", challenge.Reason)
 		s.dispatchNotification(notify.WebhookData{
-			Event:     "auto_approved",
-			Username:  req.Username,
-			Actor:     req.Username,
-			Hostname:  hostname,
-			UserCode:  challenge.UserCode,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			Reason:    challenge.Reason,
+			Event:      "auto_approved",
+			Username:   req.Username,
+			Actor:      req.Username,
+			Hostname:   hostname,
+			UserCode:   challenge.UserCode,
+			Timestamp:  time.Now().UTC().Format(time.RFC3339),
+			Reason:     challenge.Reason,
+			RemoteAddr: remoteAddr(r),
 		})
 
 		w.Header().Set("Content-Type", "application/json")
@@ -435,7 +436,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fire push notification asynchronously (no-op if no channels configured).
-	s.sendChallengeNotification(challenge, approvalURL, oneTapURL)
+	s.sendChallengeNotification(challenge, approvalURL, oneTapURL, remoteAddr(r))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -950,10 +951,11 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 	}
 	slog.Warn("BREAKGLASS_ESCROWED", "host", req.Hostname, "backend", backendName, "timestamp", time.Now().UTC().Format(time.RFC3339), "remote_addr", remoteAddr(r))
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "breakglass_escrowed",
-		Username:  req.Hostname,
-		Hostname:  req.Hostname,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "breakglass_escrowed",
+		Username:   req.Hostname,
+		Hostname:   req.Hostname,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: remoteAddr(r),
 	})
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
@@ -1042,11 +1044,12 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	slog.Warn("BREAKGLASS password revealed", "host", hostname, "admin", actor, "remote_addr", remoteAddr(r))
 
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "revealed_breakglass",
-		Username:  actor,
-		Hostname:  hostname,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Actor:     actor,
+		Event:      "revealed_breakglass",
+		Username:   actor,
+		Hostname:   hostname,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		Actor:      actor,
+		RemoteAddr: remoteAddr(r),
 	})
 
 	w.Header().Set("Content-Type", "application/json")

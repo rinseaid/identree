@@ -2,6 +2,8 @@ package audit
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,8 +57,8 @@ func TestStreamer_EmitAndClose(t *testing.T) {
 	sink := &mockSink{}
 	s := NewStreamer([]Sink{sink}, 100)
 
-	s.Emit(NewEvent("challenge_created", "alice", "web-01", "ABC123", "", "test reason", "dev"))
-	s.Emit(NewEvent("challenge_approved", "alice", "web-01", "ABC123", "bob", "", "dev"))
+	s.Emit(NewEvent("challenge_created", "alice", "web-01", "ABC123", "", "test reason", "10.0.0.1", "dev"))
+	s.Emit(NewEvent("challenge_approved", "alice", "web-01", "ABC123", "bob", "", "10.0.0.2", "dev"))
 	s.Close()
 
 	events := sink.Events()
@@ -81,7 +83,7 @@ func TestStreamer_MultipleSinks(t *testing.T) {
 	s1, s2 := &mockSink{}, &mockSink{}
 	streamer := NewStreamer([]Sink{s1, s2}, 100)
 
-	streamer.Emit(NewEvent("test", "alice", "host", "", "", "", "dev"))
+	streamer.Emit(NewEvent("test", "alice", "host", "", "", "", "", "dev"))
 	streamer.Close()
 
 	if len(s1.Events()) != 1 {
@@ -97,7 +99,7 @@ func TestStreamer_NonBlocking(t *testing.T) {
 	s := NewStreamer([]Sink{sink}, 2)
 
 	for i := 0; i < 100; i++ {
-		s.Emit(NewEvent("test", "user", "host", "", "", "", "dev"))
+		s.Emit(NewEvent("test", "user", "host", "", "", "", "", "dev"))
 	}
 	s.Close()
 
@@ -113,7 +115,7 @@ func TestStreamer_NonBlocking(t *testing.T) {
 func TestStreamer_DefaultBufferSize(t *testing.T) {
 	sink := &mockSink{}
 	s := NewStreamer([]Sink{sink}, 0)
-	s.Emit(NewEvent("test", "user", "host", "", "", "", "dev"))
+	s.Emit(NewEvent("test", "user", "host", "", "", "", "", "dev"))
 	s.Close()
 
 	if len(sink.Events()) != 1 {
@@ -121,8 +123,61 @@ func TestStreamer_DefaultBufferSize(t *testing.T) {
 	}
 }
 
+func TestNewEvent_RemoteAddr(t *testing.T) {
+	e := NewEvent("test", "alice", "web-01", "CODE", "actor", "reason", "10.0.0.1", "v1.0")
+	if e.RemoteAddr != "10.0.0.1" {
+		t.Errorf("RemoteAddr = %q, want 10.0.0.1", e.RemoteAddr)
+	}
+	// Empty remote addr should be omitted from JSON.
+	e2 := NewEvent("test", "alice", "web-01", "CODE", "", "", "", "v1.0")
+	b, _ := json.Marshal(e2)
+	if strings.Contains(string(b), "remote_addr") {
+		t.Error("expected remote_addr to be omitted when empty")
+	}
+}
+
+func TestStreamer_HashChain(t *testing.T) {
+	sink := &mockSink{}
+	s := NewStreamer([]Sink{sink}, 100)
+
+	s.Emit(NewEvent("event_a", "alice", "host", "", "", "", "10.0.0.1", "dev"))
+	s.Emit(NewEvent("event_b", "bob", "host", "", "", "", "10.0.0.2", "dev"))
+	s.Emit(NewEvent("event_c", "carol", "host", "", "", "", "", "dev"))
+	s.Close()
+
+	events := sink.Events()
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	// Verify sequence numbers.
+	for i, e := range events {
+		if e.Seq != uint64(i) {
+			t.Errorf("event[%d].Seq = %d, want %d", i, e.Seq, i)
+		}
+	}
+
+	// First event should have no prev_hash.
+	if events[0].PrevHash != "" {
+		t.Errorf("event[0].PrevHash = %q, want empty", events[0].PrevHash)
+	}
+
+	// Verify the hash chain: each event's PrevHash should be the SHA-256 of the previous event's JSON.
+	for i := 1; i < len(events); i++ {
+		prevJSON, err := json.Marshal(events[i-1])
+		if err != nil {
+			t.Fatalf("marshal event[%d]: %v", i-1, err)
+		}
+		h := sha256.Sum256(prevJSON)
+		want := hex.EncodeToString(h[:])
+		if events[i].PrevHash != want {
+			t.Errorf("event[%d].PrevHash = %q, want %q", i, events[i].PrevHash, want)
+		}
+	}
+}
+
 func TestNewEvent_Timestamp(t *testing.T) {
-	e := NewEvent("test", "alice", "web-01", "CODE", "actor", "reason", "v1.0")
+	e := NewEvent("test", "alice", "web-01", "CODE", "actor", "reason", "192.168.1.1", "v1.0")
 	if e.Timestamp == "" {
 		t.Error("expected non-empty timestamp")
 	}
@@ -154,7 +209,7 @@ func TestJSONLogSink_Stdout(t *testing.T) {
 		t.Errorf("Name() = %q, want jsonlog", sink.Name())
 	}
 
-	e := NewEvent("challenge_created", "alice", "web-01", "ABC123", "", "", "dev")
+	e := NewEvent("challenge_created", "alice", "web-01", "ABC123", "", "", "", "dev")
 	if err := sink.Emit(e); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -189,8 +244,8 @@ func TestJSONLogSink_File(t *testing.T) {
 		t.Fatalf("NewJSONLogSink(file): %v", err)
 	}
 
-	e1 := NewEvent("challenge_created", "alice", "web-01", "ABC", "", "deploy", "dev")
-	e2 := NewEvent("challenge_approved", "alice", "web-01", "ABC", "bob", "", "dev")
+	e1 := NewEvent("challenge_created", "alice", "web-01", "ABC", "", "deploy", "", "dev")
+	e2 := NewEvent("challenge_approved", "alice", "web-01", "ABC", "bob", "", "", "dev")
 	sink.Emit(e1)
 	sink.Emit(e2)
 	sink.Close()
@@ -221,12 +276,12 @@ func TestJSONLogSink_FileAppend(t *testing.T) {
 
 	// Write first event, close.
 	s1, _ := NewJSONLogSink(path)
-	s1.Emit(NewEvent("event1", "alice", "", "", "", "", "dev"))
+	s1.Emit(NewEvent("event1", "alice", "", "", "", "", "", "dev"))
 	s1.Close()
 
 	// Write second event, close.
 	s2, _ := NewJSONLogSink(path)
-	s2.Emit(NewEvent("event2", "bob", "", "", "", "", "dev"))
+	s2.Emit(NewEvent("event2", "bob", "", "", "", "", "", "dev"))
 	s2.Close()
 
 	data, _ := os.ReadFile(path)
@@ -255,7 +310,7 @@ func TestJSONLogSink_Rotation(t *testing.T) {
 
 	// Each JSON event is roughly 150-200 bytes; writing 10 should exceed 500.
 	for i := 0; i < 10; i++ {
-		if err := sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "web-01", "CODE", "", "reason", "dev")); err != nil {
+		if err := sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "web-01", "CODE", "", "reason", "", "dev")); err != nil {
 			t.Fatalf("Emit %d: %v", i, err)
 		}
 	}
@@ -288,7 +343,7 @@ func TestJSONLogSink_MaxFiles(t *testing.T) {
 
 	// Write enough events to trigger multiple rotations.
 	for i := 0; i < 30; i++ {
-		if err := sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "web-01", "CODE", "", "reason", "dev")); err != nil {
+		if err := sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "web-01", "CODE", "", "reason", "", "dev")); err != nil {
 			t.Fatalf("Emit %d: %v", i, err)
 		}
 	}
@@ -327,7 +382,7 @@ func TestSyslogSink_UDP(t *testing.T) {
 		t.Errorf("Name() = %q, want syslog", sink.Name())
 	}
 
-	e := NewEvent("challenge_approved", "alice", "web-01", "CODE1", "bob", "deploy", "dev")
+	e := NewEvent("challenge_approved", "alice", "web-01", "CODE1", "bob", "deploy", "10.0.0.1", "dev")
 	if err := sink.Emit(e); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -372,7 +427,7 @@ func TestSyslogSink_Reconnect(t *testing.T) {
 	defer sink.Close()
 
 	// Emit should not panic, just return an error or succeed (UDP is fire-and-forget).
-	e := NewEvent("test", "alice", "", "", "", "", "dev")
+	e := NewEvent("test", "alice", "", "", "", "", "", "dev")
 	// UDP sends may not return errors, so we just verify no panic.
 	_ = sink.Emit(e)
 }
@@ -403,7 +458,7 @@ func TestSplunkHECSink_Batching(t *testing.T) {
 
 	// Emit fewer than batch max — should flush on Close.
 	for i := 0; i < 5; i++ {
-		sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "host", "", "", "", "dev"))
+		sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "host", "", "", "", "", "dev"))
 	}
 	sink.Close()
 
@@ -451,7 +506,7 @@ func TestLokiSink_Push(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "host", "", "", "", "dev"))
+		sink.Emit(NewEvent(fmt.Sprintf("event_%d", i), "alice", "host", "", "", "", "", "dev"))
 	}
 	sink.Close()
 

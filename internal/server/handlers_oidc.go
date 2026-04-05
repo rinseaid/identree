@@ -354,9 +354,10 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	slog.Info("SESSIONS", "user", username, "role", role, "remote_addr", remoteAddr(r))
 
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "user_logged_in",
-		Username:  username,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "user_logged_in",
+		Username:   username,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: remoteAddr(r),
 	})
 
 	// Record OIDC authentication time for one-tap freshness checks.

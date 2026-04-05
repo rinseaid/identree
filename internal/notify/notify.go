@@ -37,6 +37,7 @@ type WebhookData struct {
 	Timestamp   string
 	Reason      string `json:"reason,omitempty"`
 	Actor       string `json:"actor,omitempty"`
+	RemoteAddr  string `json:"remote_addr,omitempty"`
 }
 
 // BestApprovalURL returns the one-tap URL if available, otherwise the dashboard URL.

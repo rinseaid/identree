@@ -366,7 +366,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	// Only the local ChallengeStore supports this; Redis TTL-based expiry is handled differently.
 	if localStore, ok := challengeStore.(*challenge.ChallengeStore); ok {
 		localStore.OnExpire = func(username, hostname, code string) {
-			s.emitAuditEvent("challenge_expired", username, hostname, code, "", "")
+			s.emitAuditEvent("challenge_expired", username, hostname, code, "", "", "")
 		}
 	}
 

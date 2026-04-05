@@ -176,11 +176,12 @@ func (s *Server) handleSudoRuleAdd(w http.ResponseWriter, r *http.Request) {
 
 	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "sudo_rule_modified",
-		Username:  adminUser,
-		Hostname:  rule.Group,
-		Actor:     adminUser,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "sudo_rule_modified",
+		Username:   adminUser,
+		Hostname:   rule.Group,
+		Actor:      adminUser,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: remoteAddr(r),
 	})
 	slog.Info("SUDO_RULE_ADDED", "admin", adminUser, "group", rule.Group, "remote_addr", remoteAddr(r))
 	s.setFlashCookie(w, "sudo_added:"+rule.Group)
@@ -236,11 +237,12 @@ func (s *Server) handleSudoRuleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "sudo_rule_modified",
-		Username:  adminUser,
-		Hostname:  rule.Group,
-		Actor:     adminUser,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "sudo_rule_modified",
+		Username:   adminUser,
+		Hostname:   rule.Group,
+		Actor:      adminUser,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: remoteAddr(r),
 	})
 	slog.Info("SUDO_RULE_UPDATED", "admin", adminUser, "group", rule.Group, "remote_addr", remoteAddr(r))
 	s.setFlashCookie(w, "sudo_updated:"+rule.Group)
@@ -284,11 +286,12 @@ func (s *Server) handleSudoRuleDelete(w http.ResponseWriter, r *http.Request) {
 
 	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, group, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "sudo_rule_modified",
-		Username:  adminUser,
-		Hostname:  group,
-		Actor:     adminUser,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "sudo_rule_modified",
+		Username:   adminUser,
+		Hostname:   group,
+		Actor:      adminUser,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: remoteAddr(r),
 	})
 	slog.Info("SUDO_RULE_DELETED", "admin", adminUser, "group", group, "remote_addr", remoteAddr(r))
 	s.setFlashCookie(w, "sudo_deleted:"+group)

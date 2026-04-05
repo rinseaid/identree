@@ -17,11 +17,11 @@ var notifySemaphore = make(chan struct{}, 50)
 
 // emitAuditEvent sends a structured event to all configured audit sinks.
 // It is a no-op when no audit streamer is configured.
-func (s *Server) emitAuditEvent(event, username, hostname, code, actor, reason string) {
+func (s *Server) emitAuditEvent(event, username, hostname, code, actor, reason, remoteAddr string) {
 	if s.audit == nil {
 		return
 	}
-	s.audit.Emit(audit.NewEvent(event, username, hostname, code, actor, reason, version))
+	s.audit.Emit(audit.NewEvent(event, username, hostname, code, actor, reason, remoteAddr, version))
 }
 
 // dispatchNotification evaluates notification routing rules and admin preferences,
@@ -29,7 +29,7 @@ func (s *Server) emitAuditEvent(event, username, hostname, code, actor, reason s
 // Audit events are always emitted regardless of notification configuration.
 func (s *Server) dispatchNotification(d notify.WebhookData) {
 	// Always emit to audit sinks.
-	s.emitAuditEvent(d.Event, d.Username, d.Hostname, d.UserCode, d.Actor, d.Reason)
+	s.emitAuditEvent(d.Event, d.Username, d.Hostname, d.UserCode, d.Actor, d.Reason, d.RemoteAddr)
 
 	// Collect matching channels from org-level routes.
 	channels := notify.EvaluateRoutes(s.notifyRoutes(), d.Event, d.Hostname, d.Username)
@@ -61,7 +61,7 @@ func (s *Server) dispatchNotification(d notify.WebhookData) {
 
 // sendChallengeNotification is the dispatch entry point for challenge_created events.
 // It constructs WebhookData from the challenge and fires dispatchNotification.
-func (s *Server) sendChallengeNotification(ch *challenge.Challenge, approvalURL, oneTapURL string) {
+func (s *Server) sendChallengeNotification(ch *challenge.Challenge, approvalURL, oneTapURL, remoteAddr string) {
 	s.cfgMu.RLock()
 	challengeTTL := s.cfg.ChallengeTTL
 	s.cfgMu.RUnlock()
@@ -76,6 +76,7 @@ func (s *Server) sendChallengeNotification(ch *challenge.Challenge, approvalURL,
 		ExpiresIn:   int(challengeTTL.Seconds()),
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 		Reason:      ch.Reason,
+		RemoteAddr:  remoteAddr,
 	})
 }
 

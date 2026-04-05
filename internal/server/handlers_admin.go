@@ -593,10 +593,11 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 
 		s.store.LogAction(username, challpkg.ActionConfigChanged, "", "", username)
 		s.dispatchNotification(notify.WebhookData{
-			Event:     "config_changed",
-			Username:  username,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			Actor:     username,
+			Event:      "config_changed",
+			Username:   username,
+			Timestamp:  time.Now().UTC().Format(time.RFC3339),
+			Actor:      username,
+			RemoteAddr: remoteAddr(r),
 		})
 
 		if len(restartSections) > 0 {
@@ -2127,10 +2128,11 @@ func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 	slog.Info("USER_REMOVED", "admin", adminUser, "user", targetUser, "remote_addr", remoteAddr(r))
 
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "user_removed",
-		Username:  targetUser,
-		Actor:     adminUser,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "user_removed",
+		Username:   targetUser,
+		Actor:      adminUser,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: remoteAddr(r),
 	})
 
 	s.setFlashCookie(w, "removed_user:"+targetUser)
@@ -2220,10 +2222,11 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 	s.pocketIDClient.InvalidateCache()
 	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Name, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "claims_updated",
-		Username:  current.Name,
-		Actor:     adminUser,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "claims_updated",
+		Username:   current.Name,
+		Actor:      adminUser,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: remoteAddr(r),
 	})
 	slog.Info("CLAIMS_UPDATED", "admin", adminUser, "group_id", groupID, "remote_addr", remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
@@ -2347,10 +2350,11 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 	s.pocketIDClient.InvalidateCache()
 	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Username, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "claims_updated",
-		Username:  current.Username,
-		Actor:     adminUser,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "claims_updated",
+		Username:   current.Username,
+		Actor:      adminUser,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: remoteAddr(r),
 	})
 	slog.Info("CLAIMS_UPDATED", "admin", adminUser, "user_id", userID, "remote_addr", remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
@@ -2499,10 +2503,11 @@ func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogAction(username, challpkg.ActionServerRestarted, "", "", username)
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "server_restarted",
-		Username:  username,
-		Actor:     username,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "server_restarted",
+		Username:   username,
+		Actor:      username,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: remoteAddr(r),
 	})
 	slog.Info("server restart requested via admin UI", "user", username)
 	w.WriteHeader(http.StatusNoContent)

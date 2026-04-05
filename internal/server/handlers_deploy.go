@@ -486,11 +486,12 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 	slog.Info("HOST_REMOVED", "admin", adminUser, "host", req.Hostname, "client_ip", clientIP(r))
 
 	s.dispatchNotification(notify.WebhookData{
-		Event:     "host_removed",
-		Username:  adminUser,
-		Hostname:  req.Hostname,
-		Actor:     adminUser,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:      "host_removed",
+		Username:   adminUser,
+		Hostname:   req.Hostname,
+		Actor:      adminUser,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RemoteAddr: clientIP(r),
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -732,11 +733,11 @@ func (s *Server) runDeployJob(job *deployJob, hostname string, port int, sshUser
 			job.mu.Unlock()
 			s.store.LogAction(job.initiator, challpkg.ActionDeployed, logHost, "", "")
 			s.dispatchNotification(notify.WebhookData{
-				Event:     "deployed",
-				Username:  job.initiator,
-				Hostname:  logHost,
-				Actor:     job.initiator,
-				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				Event:      "deployed",
+				Username:   job.initiator,
+				Hostname:   logHost,
+				Actor:      job.initiator,
+				Timestamp:  time.Now().UTC().Format(time.RFC3339),
 			})
 		}
 	case <-timer.C:
