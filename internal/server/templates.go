@@ -46,7 +46,7 @@ const sharedCSS = `
       --surface-2: #efecf8;
       --text: #100f18;
       --text-2: #635e80;
-      --text-3: #9c98b8;
+      --text-3: #736e91;
       --border: #e2dff2;
       --primary: #7c3aed;
       --primary-h: #6d28d9;
@@ -86,7 +86,7 @@ const sharedCSS = `
         --surface-2: #1d1a32;
         --text: #f0eeff;
         --text-2: #9b97c4;
-        --text-3: #7c78a4;
+        --text-3: #9590b8;
         --border: #2a2647;
         --primary: #c084fc;
         --primary-h: #a855f7;
@@ -112,7 +112,7 @@ const sharedCSS = `
     }
     .theme-light {
       --bg: #f4f2fb; --surface: #ffffff; --surface-2: #ebe8f8;
-      --text: #0e0d1a; --text-2: #5a5578; --text-3: #9490b4;
+      --text: #0e0d1a; --text-2: #5a5578; --text-3: #736e91;
       --border: #dbd8f0; --primary: #7c3aed; --primary-h: #6d28d9;
       --primary-fg: #ffffff; --primary-sub: #ede9fd;
       --success: #059669; --success-bg: #ecfdf5; --success-border: #a7f3d0;
@@ -127,7 +127,7 @@ const sharedCSS = `
     }
     .theme-dark {
       --bg: #07060e; --surface: #100e1e; --surface-2: #1d1a32;
-      --text: #f0eeff; --text-2: #9b97c4; --text-3: #7c78a4;
+      --text: #f0eeff; --text-2: #9b97c4; --text-3: #9590b8;
       --border: #2a2647; --primary: #c084fc; --primary-h: #a855f7;
       --primary-fg: #ffffff; --primary-sub: rgba(192,132,252,0.18);
       --success: #34d399; --success-bg: #031510; --success-border: #064e3b;
