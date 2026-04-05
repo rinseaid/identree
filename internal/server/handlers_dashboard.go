@@ -1015,8 +1015,11 @@ func (s *Server) handleApprovalPage(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("ACCESS", "path", "/approve/", "remote_addr", remoteAddr(r), "code_prefix", code[:6])
 
+	// Return identical 404 for ALL non-pending states (not found, already
+	// approved/denied, expired) to prevent pre-auth enumeration of valid
+	// challenge codes.
 	challenge, ok := s.store.GetByCode(code)
-	if !ok {
+	if !ok || challenge.Status != challpkg.StatusPending {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusNotFound)
 		lang := detectLanguage(r)
@@ -1024,21 +1027,6 @@ func (s *Server) handleApprovalPage(w http.ResponseWriter, r *http.Request) {
 			"Theme": getTheme(r),
 			"Lang":  lang,
 			"T":     T(lang),
-		}); err != nil {
-			slog.Error("template execution", "err", err)
-		}
-		return
-	}
-
-	if challenge.Status != challpkg.StatusPending {
-		w.Header().Set("Content-Type", "text/html")
-		lang := detectLanguage(r)
-		t := T(lang)
-		if err := approvalAlreadyTmpl.Execute(w, map[string]interface{}{
-			"Status": t(string(challenge.Status)),
-			"Theme":  getTheme(r),
-			"Lang":   lang,
-			"T":      t,
 		}); err != nil {
 			slog.Error("template execution", "err", err)
 		}

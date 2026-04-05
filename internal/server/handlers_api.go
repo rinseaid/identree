@@ -534,8 +534,10 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		switch challenge.Status {
 		case challpkg.StatusApproved:
 			resp["approval_token"] = s.computeStatusHMAC(id, challenge.Username, "approved", challenge.BreakglassRotateBefore, challenge.RevokeTokensBefore)
-			// Forward the raw ID token so the PAM client can cache it locally
-			// for subsequent authentication without a full device flow.
+			// id_token is returned for the PAM client's local token cache
+			// (IDENTREE_TOKEN_CACHE_ENABLED). It contains OIDC claims but is
+			// transmitted over the HMAC-authenticated channel and cached locally
+			// on the managed host. It is NOT logged by the server.
 			if challenge.RawIDToken != "" {
 				resp["id_token"] = challenge.RawIDToken
 			}
