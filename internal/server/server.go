@@ -25,10 +25,12 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/rinseaid/identree/internal/adminnotify"
 	"github.com/rinseaid/identree/internal/audit"
 	"github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/escrow"
+	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/pocketid"
 	"github.com/rinseaid/identree/internal/randutil"
 	"github.com/rinseaid/identree/internal/sudorules"
@@ -134,10 +136,17 @@ type Server struct {
 	ldapBound atomic.Bool
 
 	// notifyShutdown is set to true (under notifyMu) before WaitForNotifications
-	// calls notifyWg.Wait(). sendNotification and sendEventNotification hold
-	// notifyMu while checking this flag and calling notifyWg.Add(1) to prevent
-	// a TOCTOU panic from Add-after-Wait.
+	// calls notifyWg.Wait(). dispatchNotification holds notifyMu while checking
+	// this flag and calling notifyWg.Add(1) to prevent Add-after-Wait.
 	notifyShutdown atomic.Bool
+
+	// notifyCfg holds the loaded notification channels and routes.
+	// Protected by notifyCfgMu for concurrent reads during dispatch.
+	notifyCfg   *notify.NotificationConfig
+	notifyCfgMu sync.RWMutex
+
+	// adminNotifyStore manages per-admin notification preferences.
+	adminNotifyStore *adminnotify.Store
 
 	// audit is the SIEM/log aggregator streamer. nil when no audit sinks are configured.
 	audit *audit.Streamer
@@ -153,8 +162,8 @@ type Server struct {
 	// When OIDCInsecureSkipVerify is set it uses InsecureSkipVerify (test only).
 	oidcHTTPClient *http.Client
 
-	// webhookClient is the hardened HTTP client for outbound notifications.
-	// Initialised in NewServer with the configured NotifyTimeout.
+	// webhookClient is kept for backward compat with test notification handler.
+	// TODO: remove once test notification uses dispatchNotification.
 	webhookClient *http.Client
 
 	// hashedAPIKeys and hashedMetricsToken are pre-computed at startup to avoid
@@ -364,6 +373,25 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		s.audit = audit.NewStreamer(sinks, cfg.AuditBufferSize)
 		slog.Info("AUDIT streaming enabled", "sinks", len(sinks))
 	}
+
+	// ── Notification channels and routing ──────────────────────────────────
+	notifyCfg, err := notify.LoadNotificationConfig(cfg.NotificationConfigFile)
+	if err != nil {
+		slog.Warn("notify: failed to load config, notifications disabled", "path", cfg.NotificationConfigFile, "err", err)
+		notifyCfg = &notify.NotificationConfig{}
+	}
+	notify.InjectChannelSecrets(notifyCfg.Channels)
+	s.notifyCfg = notifyCfg
+	if len(notifyCfg.Channels) > 0 {
+		slog.Info("NOTIFY enabled", "channels", len(notifyCfg.Channels), "routes", len(notifyCfg.Routes))
+	}
+
+	adminNotifyStore, err := adminnotify.NewStore(cfg.AdminNotifyFile)
+	if err != nil {
+		slog.Warn("notify: failed to load admin preferences", "path", cfg.AdminNotifyFile, "err", err)
+		adminNotifyStore, _ = adminnotify.NewStore("/dev/null") // fallback empty
+	}
+	s.adminNotifyStore = adminNotifyStore
 
 	// Pre-hash API keys and the metrics token at startup.
 	for _, key := range cfg.APIKeys {

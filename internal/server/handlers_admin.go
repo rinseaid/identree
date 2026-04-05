@@ -40,13 +40,8 @@ var liveUpdateKeys = map[string]bool{
 	"IDENTREE_ONE_TAP_MAX_AGE":                 true,
 	"IDENTREE_ADMIN_GROUPS":                    true,
 	"IDENTREE_ADMIN_APPROVAL_HOSTS":            true,
-	"IDENTREE_NOTIFY_BACKEND":                  true,
-	"IDENTREE_NOTIFY_URL":                      true,
-	// IDENTREE_NOTIFY_COMMAND is intentionally excluded from live-update keys.
-	// It executes arbitrary shell commands as the identree process user; allowing
-	// admins to change it without a process restart (and without OS-level access)
-	// would let any admin silently install persistence. Set via env var only,
-	// like IDENTREE_ESCROW_COMMAND.
+	"IDENTREE_NOTIFICATION_CONFIG_FILE":        true,
+	"IDENTREE_ADMIN_NOTIFY_FILE":               true,
 	"IDENTREE_NOTIFY_TIMEOUT":                  true,
 	"IDENTREE_ESCROW_BACKEND":                  true,
 	"IDENTREE_ESCROW_URL":                      true,
@@ -595,7 +590,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		s.applyLiveConfigUpdates(values, username)
 
 		s.store.LogAction(username, challpkg.ActionConfigChanged, "", "", username)
-		s.sendEventNotification(notify.WebhookData{
+		s.dispatchNotification(notify.WebhookData{
 			Event:     "config_changed",
 			Username:  username,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -729,11 +724,8 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_LDAP_TLS_CA_CERT":                cfg.LDAPTLSCACert,
 		"IDENTREE_ADMIN_GROUPS":                    strings.Join(cfg.AdminGroups, ", "),
 		"IDENTREE_ADMIN_APPROVAL_HOSTS":            strings.Join(cfg.AdminApprovalHosts, ", "),
-		"IDENTREE_NOTIFY_BACKEND":                  cfg.NotifyBackend,
-		"IDENTREE_NOTIFY_URL":                      cfg.NotifyURL,
-		// IDENTREE_NOTIFY_COMMAND intentionally excluded: it contains a shell command
-		// path that may reveal internal infrastructure and runs as the server process.
-		// It is env-var only (not admin-UI writable) and must not be shown in the UI.
+		"IDENTREE_NOTIFICATION_CONFIG_FILE":        cfg.NotificationConfigFile,
+		"IDENTREE_ADMIN_NOTIFY_FILE":               cfg.AdminNotifyFile,
 		"IDENTREE_NOTIFY_TIMEOUT":                  formatDuration(nil, cfg.NotifyTimeout),
 		"IDENTREE_ESCROW_BACKEND":                  string(cfg.EscrowBackend),
 		"IDENTREE_ESCROW_URL":                      cfg.EscrowURL,
@@ -790,7 +782,6 @@ func configLockedKeys() map[string]bool {
 		"IDENTREE_OIDC_CLIENT_SECRET", "IDENTREE_POCKETID_API_KEY",
 		"IDENTREE_SHARED_SECRET", "IDENTREE_LDAP_BIND_PASSWORD",
 		"IDENTREE_ESCROW_AUTH_SECRET", "IDENTREE_ESCROW_ENCRYPTION_KEY", "IDENTREE_WEBHOOK_SECRET", "IDENTREE_API_KEYS",
-		"IDENTREE_NOTIFY_TOKEN",
 	} {
 		if config.IsEnvSourced(key) {
 			locked[key] = true
@@ -809,7 +800,7 @@ func configSecretStatus(cfg *config.ServerConfig) map[string]bool {
 		"IDENTREE_ESCROW_AUTH_SECRET":    cfg.EscrowAuthSecret != "",
 		"IDENTREE_ESCROW_ENCRYPTION_KEY": cfg.EscrowEncryptionKey != "",
 		"IDENTREE_WEBHOOK_SECRET":        cfg.WebhookSecret != "",
-		"IDENTREE_NOTIFY_TOKEN":          cfg.NotifyToken != "",
+		// Notification secrets are now per-channel (env-only).
 	}
 }
 
@@ -1087,24 +1078,9 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 		}
 		s.cfg.AdminApprovalHosts = newHosts
 	}
-	if !config.IsEnvSourced("IDENTREE_NOTIFY_BACKEND") {
-		if values["IDENTREE_NOTIFY_BACKEND"] != s.cfg.NotifyBackend {
-			slog.Info("NOTIFY_BACKEND_CHANGED", "actor", actor,
-				"old", s.cfg.NotifyBackend, "new", values["IDENTREE_NOTIFY_BACKEND"])
-		}
-		s.cfg.NotifyBackend = values["IDENTREE_NOTIFY_BACKEND"]
-	}
-	if !config.IsEnvSourced("IDENTREE_NOTIFY_URL") {
-		if values["IDENTREE_NOTIFY_URL"] != s.cfg.NotifyURL {
-			slog.Info("NOTIFY_URL_CHANGED", "actor", actor,
-				"old", s.cfg.NotifyURL, "new", values["IDENTREE_NOTIFY_URL"])
-		}
-		s.cfg.NotifyURL = values["IDENTREE_NOTIFY_URL"]
-	}
-	// IDENTREE_NOTIFY_COMMAND is intentionally not live-updated: it executes
-	// arbitrary shell commands as the identree process user. Allowing admins
-	// to change it without an OS-level restart would let any admin silently
-	// install persistence. Set via environment variable only.
+	// Notification config file paths: reload the channel/route config from disk
+	// when the path changes (or on any settings save as a convenience).
+	s.reloadNotificationConfig()
 	if !config.IsEnvSourced("IDENTREE_NOTIFY_TIMEOUT") {
 		if d, err := time.ParseDuration(values["IDENTREE_NOTIFY_TIMEOUT"]); err == nil && d > 0 {
 			s.cfg.NotifyTimeout = d
@@ -2133,7 +2109,7 @@ func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 	s.removedUsersMu.Unlock()
 	slog.Info("USER_REMOVED", "admin", adminUser, "user", targetUser, "remote_addr", remoteAddr(r))
 
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "user_removed",
 		Username:  targetUser,
 		Actor:     adminUser,
@@ -2226,7 +2202,7 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 
 	s.pocketIDClient.InvalidateCache()
 	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Name, "", adminUser)
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "claims_updated",
 		Username:  current.Name,
 		Actor:     adminUser,
@@ -2353,7 +2329,7 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 
 	s.pocketIDClient.InvalidateCache()
 	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Username, "", adminUser)
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "claims_updated",
 		Username:  current.Username,
 		Actor:     adminUser,
@@ -2420,9 +2396,9 @@ func (s *Server) handleGetUserClaims(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// handleAdminTestNotification sends a test notification via the configured backend
+// handleAdminTestNotification sends a test notification to a named channel
 // and returns the result as JSON so operators can verify their webhook setup.
-// POST /api/admin/test-notification
+// POST /api/admin/test-notification?channel=ops-slack
 func (s *Server) handleAdminTestNotification(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -2433,23 +2409,33 @@ func (s *Server) handleAdminTestNotification(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	s.cfgMu.RLock()
-	backend := s.cfg.NotifyBackend
-	timeout := s.cfg.NotifyTimeout
-	command := s.cfg.NotifyCommand
-	token := s.cfg.NotifyToken
-	notifyURL := s.cfg.NotifyURL
-	s.cfgMu.RUnlock()
-
+	channelName := r.URL.Query().Get("channel")
 	w.Header().Set("Content-Type", "application/json")
 
-	if backend == "" {
+	channelMap := s.notifyChannelMap()
+	if len(channelMap) == 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "no notification backend configured"})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "no notification channels configured"})
 		return
 	}
 
-	d := NotifyData{
+	// If no channel specified, test all channels.
+	var targets []notify.Channel
+	if channelName != "" {
+		ch, ok := channelMap[channelName]
+		if !ok {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "unknown channel: " + channelName})
+			return
+		}
+		targets = []notify.Channel{ch}
+	} else {
+		s.notifyCfgMu.RLock()
+		targets = append(targets, s.notifyCfg.Channels...)
+		s.notifyCfgMu.RUnlock()
+	}
+
+	d := notify.WebhookData{
 		Event:     "test",
 		Username:  "test-user",
 		Hostname:  "test-host",
@@ -2458,25 +2444,23 @@ func (s *Server) handleAdminTestNotification(w http.ResponseWriter, r *http.Requ
 		Actor:     actor,
 	}
 
-	if timeout <= 0 {
-		timeout = notifyTimeout
+	timeout := s.notifyDefaultTimeout()
+
+	var errors []string
+	for _, ch := range targets {
+		if err := notify.Deliver(ch, d, timeout); err != nil {
+			slog.Warn("admin test-notification failed", "actor", actor, "channel", ch.Name, "err", err)
+			errors = append(errors, ch.Name+": "+err.Error())
+		} else {
+			slog.Info("admin test-notification sent", "actor", actor, "channel", ch.Name)
+		}
 	}
 
-	var err error
-	if backend == "custom" {
-		err = s.runNotifyCommand(d, timeout, command)
-	} else {
-		err = s.postNotifyWebhook(d, timeout, backend, notifyURL, token)
-	}
-
-	if err != nil {
-		slog.Warn("admin test-notification failed", "actor", actor, "backend", backend, "err", err)
+	if len(errors) > 0 {
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "errors": errors})
 		return
 	}
-
-	slog.Info("admin test-notification sent", "actor", actor, "backend", backend)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
 
@@ -2497,7 +2481,7 @@ func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.LogAction(username, challpkg.ActionServerRestarted, "", "", username)
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "server_restarted",
 		Username:  username,
 		Actor:     username,

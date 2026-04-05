@@ -371,7 +371,6 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	// Snapshot live-updated config fields under read lock before use in response.
 	s.cfgMu.RLock()
 	challengeTTL := s.cfg.ChallengeTTL
-	notifyBackend := s.cfg.NotifyBackend
 	s.cfgMu.RUnlock()
 
 	// Auto-approve if within grace period, but only for hosts that don't require admin approval.
@@ -390,7 +389,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 			hostname = "(unknown)"
 		}
 		s.store.LogActionWithReason(req.Username, challpkg.ActionAutoApproved, hostname, challenge.UserCode, "", challenge.Reason)
-		s.sendEventNotification(notify.WebhookData{
+		s.dispatchNotification(notify.WebhookData{
 			Event:     "auto_approved",
 			Username:  req.Username,
 			Actor:     req.Username,
@@ -435,8 +434,8 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		oneTapURL = s.baseURL + "/api/onetap/" + oneTapToken
 	}
 
-	// Fire push notification asynchronously (no-op if not configured).
-	s.sendNotification(challenge, approvalURL, oneTapURL)
+	// Fire push notification asynchronously (no-op if no channels configured).
+	s.sendChallengeNotification(challenge, approvalURL, oneTapURL)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -446,7 +445,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		"verification_url": approvalURL,
 		"expires_in":       int(challengeTTL.Seconds()),
 	}
-	if notifyBackend != "" {
+	if len(s.notifyRoutes()) > 0 {
 		resp["notification_queued"] = true
 	}
 	if challenge.BreakglassRotateBefore != "" {
@@ -947,7 +946,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		backendName = "command"
 	}
 	slog.Warn("BREAKGLASS_ESCROWED", "host", req.Hostname, "backend", backendName, "timestamp", time.Now().UTC().Format(time.RFC3339), "remote_addr", remoteAddr(r))
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "breakglass_escrowed",
 		Username:  req.Hostname,
 		Hostname:  req.Hostname,
@@ -1033,7 +1032,7 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	s.store.LogAction(actor, challpkg.ActionRevealedBreakglass, hostname, "", actor)
 	slog.Warn("BREAKGLASS password revealed", "host", hostname, "admin", actor, "remote_addr", remoteAddr(r))
 
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "revealed_breakglass",
 		Username:  actor,
 		Hostname:  hostname,

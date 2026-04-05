@@ -10,18 +10,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// NotificationsTotal tracks notification outcomes.
+// NotificationsTotal tracks notification outcomes per channel.
 var NotificationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "identree",
 	Name:      "notifications_total",
 	Help:      "Total push notification attempts.",
-}, []string{"status"}) // sent, failed, skipped
-
-func init() {
-	NotificationsTotal.WithLabelValues("sent")
-	NotificationsTotal.WithLabelValues("failed")
-	NotificationsTotal.WithLabelValues("skipped")
-}
+}, []string{"status", "channel"}) // status: sent|failed|skipped, channel: channel name
 
 // WebhookData holds all the fields available to webhook formatters.
 type WebhookData struct {

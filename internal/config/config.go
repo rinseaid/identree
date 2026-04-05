@@ -140,11 +140,16 @@ type ServerConfig struct {
 	APIKeys            []string // API bearer tokens for programmatic access
 
 	// ── Notifications ─────────────────────────────────────────────────────────
-	NotifyBackend string        // ntfy | slack | discord | apprise | webhook | custom | "" (disabled)
-	NotifyURL     string        // webhook URL (all backends except custom)
-	NotifyToken   string        // optional Bearer token (e.g. ntfy auth)
-	NotifyCommand string        // path to executable (custom backend only)
-	NotifyTimeout time.Duration // timeout for both HTTP and command (default 15s)
+	// NotificationConfigFile is the path to the JSON file defining notification
+	// channels and routing rules. Channels are named destinations (Slack, ntfy,
+	// Discord, etc.); routes determine which events go to which channels.
+	NotificationConfigFile string
+	// AdminNotifyFile is the path to the JSON file storing per-admin notification
+	// preferences (personal subscriptions to event channels).
+	AdminNotifyFile string
+	// NotifyTimeout is the default timeout for webhook delivery and command
+	// execution. Individual channels can override this.
+	NotifyTimeout time.Duration
 
 	// ── Audit streaming ──────────────────────────────────────────────────────
 	AuditLog          string // "stdout" | "file:/path/to/audit.jsonl" | "" (disabled)
@@ -439,11 +444,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		AdminApprovalHosts: getSlice("IDENTREE_ADMIN_APPROVAL_HOSTS"),
 		APIKeys:            getSlice("IDENTREE_API_KEYS"),
 
-		NotifyBackend: get("IDENTREE_NOTIFY_BACKEND"),
-		NotifyURL:     get("IDENTREE_NOTIFY_URL"),
-		NotifyToken:   get("IDENTREE_NOTIFY_TOKEN"),
-		NotifyCommand: get("IDENTREE_NOTIFY_COMMAND"),
-		NotifyTimeout: getDuration("IDENTREE_NOTIFY_TIMEOUT", 15*time.Second),
+		NotificationConfigFile: stringDefault(get("IDENTREE_NOTIFICATION_CONFIG_FILE"), "/config/notification-channels.json"),
+		AdminNotifyFile:        stringDefault(get("IDENTREE_ADMIN_NOTIFY_FILE"), "/config/admin-notifications.json"),
+		NotifyTimeout:          getDuration("IDENTREE_NOTIFY_TIMEOUT", 15*time.Second),
 
 		AuditLog:          get("IDENTREE_AUDIT_LOG"),
 		AuditSyslogURL:    get("IDENTREE_AUDIT_SYSLOG_URL"),
@@ -738,18 +741,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
-	// NotifyBackend must be one of the recognised values or empty (disabled).
-	switch cfg.NotifyBackend {
-	case "", "ntfy", "slack", "discord", "apprise", "webhook", "custom":
-		// valid
-	default:
-		return nil, fmt.Errorf("IDENTREE_NOTIFY_BACKEND must be one of: ntfy, slack, discord, apprise, webhook, custom (got %q)", cfg.NotifyBackend)
-	}
-
-	// Warn if NotifyToken or EscrowAuthSecret are set but too short.
-	if cfg.NotifyToken != "" && len(cfg.NotifyToken) < 16 {
-		slog.Warn("IDENTREE_NOTIFY_TOKEN is set but shorter than 16 characters; consider using a longer token for better security")
-	}
+	// Warn if EscrowAuthSecret is set but too short.
 	if cfg.EscrowAuthSecret != "" && len(cfg.EscrowAuthSecret) < 16 {
 		slog.Warn("IDENTREE_ESCROW_AUTH_SECRET is set but shorter than 16 characters; consider using a longer secret for better security")
 	}
@@ -788,7 +780,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		{"IDENTREE_OIDC_ISSUER_URL", cfg.IssuerURL},
 		{"IDENTREE_OIDC_ISSUER_PUBLIC_URL", cfg.IssuerPublicURL},
 		{"IDENTREE_POCKETID_API_URL", cfg.APIURL},
-		{"IDENTREE_NOTIFY_URL", cfg.NotifyURL},
+		// Notification URLs are validated per-channel at load time, not here.
 		{"IDENTREE_ESCROW_URL", cfg.EscrowURL},
 		{"IDENTREE_ESCROW_WEB_URL", cfg.EscrowWebURL},
 	} {

@@ -480,7 +480,7 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
 	slog.Info("HOST_REMOVED", "admin", adminUser, "host", req.Hostname, "client_ip", clientIP(r))
 
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "host_removed",
 		Username:  adminUser,
 		Hostname:  req.Hostname,
@@ -721,7 +721,7 @@ func (s *Server) runDeployJob(job *deployJob, hostname string, port int, sshUser
 			}
 			job.mu.Unlock()
 			s.store.LogAction(job.initiator, challpkg.ActionDeployed, logHost, "", "")
-			s.sendEventNotification(notify.WebhookData{
+			s.dispatchNotification(notify.WebhookData{
 				Event:     "deployed",
 				Username:  job.initiator,
 				Hostname:  logHost,

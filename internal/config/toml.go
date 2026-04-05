@@ -81,10 +81,8 @@ var TOMLSections = []TOMLSection{
 		{Key: "approval_hosts", EnvKey: "IDENTREE_ADMIN_APPROVAL_HOSTS", IsList: true},
 	}},
 	{Name: "notifications", Fields: []TOMLField{
-		{Key: "backend", EnvKey: "IDENTREE_NOTIFY_BACKEND"},
-		{Key: "url", EnvKey: "IDENTREE_NOTIFY_URL"},
-		// IDENTREE_NOTIFY_COMMAND is intentionally excluded — it runs arbitrary
-		// shell commands; must be set via environment variable only, like EscrowCommand.
+		{Key: "config_file", EnvKey: "IDENTREE_NOTIFICATION_CONFIG_FILE"},
+		{Key: "admin_notify_file", EnvKey: "IDENTREE_ADMIN_NOTIFY_FILE"},
 		{Key: "timeout", EnvKey: "IDENTREE_NOTIFY_TIMEOUT"},
 	}},
 	{Name: "escrow", Fields: []TOMLField{

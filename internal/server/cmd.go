@@ -261,9 +261,7 @@ func runServer() {
 			slog.Info("host registry empty — using global shared secret", "path", cfg.HostRegistryFile)
 		}
 	}
-	if cfg.NotifyCommand != "" {
-		slog.Info("push notifications enabled")
-	}
+	// Notification config is loaded inside NewServer.
 
 	// Start LDAP server if enabled.
 	var ldapCancel context.CancelFunc

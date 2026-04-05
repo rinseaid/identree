@@ -132,7 +132,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, username, logReason)
 	s.sseBroadcaster.Broadcast(challenge.Username, "challenge_resolved")
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "challenge_approved",
 		Username:  challenge.Username,
 		Hostname:  hostname,
@@ -524,7 +524,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	// Log the action
 	s.store.LogAction(sessionOwner, challpkg.ActionRevoked, displayHostname, "", actor)
 	s.sseBroadcaster.Broadcast(sessionOwner, "session_changed")
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "session_revoked",
 		Username:  sessionOwner,
 		Hostname:  displayHostname,
@@ -577,7 +577,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 			s.store.LogActionWithReason(username, challpkg.ActionApproved, hostname, c.UserCode, username, c.Reason)
 			count++
 			slog.Info("BULK_APPROVE_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
-			s.sendEventNotification(notify.WebhookData{
+			s.dispatchNotification(notify.WebhookData{
 				Event:     "challenge_approved",
 				Username:  c.Username,
 				Hostname:  hostname,
@@ -652,7 +652,7 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.baseURL+dest, http.StatusSeeOther)
 		return
 	}
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "sessions_revoked_bulk",
 		Username:  targetUser,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -813,7 +813,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 	slog.Info("REJECTED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
 	s.store.LogActionWithReason(challenge.Username, challpkg.ActionRejected, hostname, challenge.UserCode, username, challenge.Reason)
 	s.sseBroadcaster.Broadcast(challenge.Username, "challenge_resolved")
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "challenge_rejected",
 		Username:  challenge.Username,
 		Hostname:  hostname,
@@ -855,7 +855,7 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 			s.store.LogActionWithReason(username, challpkg.ActionRejected, hostname, c.UserCode, username, c.Reason)
 			count++
 			slog.Info("BULK_REJECT_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
-			s.sendEventNotification(notify.WebhookData{
+			s.dispatchNotification(notify.WebhookData{
 				Event:     "challenge_rejected",
 				Username:  c.Username,
 				Hostname:  hostname,
@@ -962,7 +962,7 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(targetUser, challpkg.ActionElevated, hostname, "", username)
 	slog.Info("ELEVATED", "user", targetUser, "host", hostname, "duration", duration, "by", username, "remote_addr", remoteAddr(r))
 	s.sseBroadcaster.Broadcast(targetUser, "session_changed")
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "grace_elevated",
 		Username:  targetUser,
 		Hostname:  hostname,
@@ -1007,7 +1007,7 @@ func (s *Server) handleRotateHost(w http.ResponseWriter, r *http.Request) {
 	s.store.LogAction(username, challpkg.ActionRotationRequested, hostname, "", username)
 	slog.Info("ROTATE_BREAKGLASS", "user", username, "host", hostname, "remote_addr", remoteAddr(r))
 	s.sseBroadcaster.Broadcast(username, "host_changed")
-	s.sendEventNotification(notify.WebhookData{
+	s.dispatchNotification(notify.WebhookData{
 		Event:     "breakglass_rotation_requested",
 		Username:  username,
 		Hostname:  hostname,
