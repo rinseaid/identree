@@ -1,0 +1,137 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "identree.fullname" . }}
+  labels:
+    {{- include "identree.labels" . | nindent 4 }}
+data:
+  # ── OIDC ──────────────────────────────────────────────────────────────────
+  {{- if .Values.config.oidc.issuerUrl }}
+  IDENTREE_OIDC_ISSUER_URL: {{ .Values.config.oidc.issuerUrl | quote }}
+  {{- end }}
+  {{- if .Values.config.oidc.issuerPublicUrl }}
+  IDENTREE_OIDC_ISSUER_PUBLIC_URL: {{ .Values.config.oidc.issuerPublicUrl | quote }}
+  {{- end }}
+  {{- if .Values.config.oidc.clientId }}
+  IDENTREE_OIDC_CLIENT_ID: {{ .Values.config.oidc.clientId | quote }}
+  {{- end }}
+
+  # ── PocketID API ──────────────────────────────────────────────────────────
+  {{- if .Values.config.pocketid.apiUrl }}
+  IDENTREE_POCKETID_API_URL: {{ .Values.config.pocketid.apiUrl | quote }}
+  {{- end }}
+
+  # ── HTTP server ───────────────────────────────────────────────────────────
+  {{- if .Values.config.server.externalUrl }}
+  IDENTREE_EXTERNAL_URL: {{ .Values.config.server.externalUrl | quote }}
+  {{- end }}
+  IDENTREE_LISTEN_ADDR: {{ .Values.config.server.listenAddr | quote }}
+  {{- if .Values.config.server.installUrl }}
+  IDENTREE_INSTALL_URL: {{ .Values.config.server.installUrl | quote }}
+  {{- end }}
+
+  # ── Challenge / session flow ──────────────────────────────────────────────
+  IDENTREE_CHALLENGE_TTL: {{ .Values.config.challenge.ttl | quote }}
+  IDENTREE_GRACE_PERIOD: {{ .Values.config.challenge.gracePeriod | quote }}
+  IDENTREE_ONE_TAP_MAX_AGE: {{ .Values.config.challenge.oneTapMaxAge | quote }}
+
+  # ── Justification ────────────────────────────────────────────────────────
+  IDENTREE_REQUIRE_JUSTIFICATION: {{ .Values.config.justification.require | quote }}
+  {{- if .Values.config.justification.choices }}
+  IDENTREE_JUSTIFICATION_CHOICES: {{ .Values.config.justification.choices | quote }}
+  {{- end }}
+
+  # ── Admin access ──────────────────────────────────────────────────────────
+  {{- if .Values.config.admin.groups }}
+  IDENTREE_ADMIN_GROUPS: {{ .Values.config.admin.groups | quote }}
+  {{- end }}
+  {{- if .Values.config.admin.approvalHosts }}
+  IDENTREE_ADMIN_APPROVAL_HOSTS: {{ .Values.config.admin.approvalHosts | quote }}
+  {{- end }}
+
+  # ── LDAP server ───────────────────────────────────────────────────────────
+  IDENTREE_LDAP_ENABLED: {{ .Values.config.ldap.enabled | quote }}
+  IDENTREE_LDAP_LISTEN_ADDR: {{ .Values.config.ldap.listenAddr | quote }}
+  {{- if .Values.config.ldap.baseDn }}
+  IDENTREE_LDAP_BASE_DN: {{ .Values.config.ldap.baseDn | quote }}
+  {{- end }}
+  {{- if .Values.config.ldap.bindDn }}
+  IDENTREE_LDAP_BIND_DN: {{ .Values.config.ldap.bindDn | quote }}
+  {{- end }}
+  IDENTREE_LDAP_REFRESH_INTERVAL: {{ .Values.config.ldap.refreshInterval | quote }}
+  IDENTREE_LDAP_UID_BASE: {{ .Values.config.ldap.uidBase | quote }}
+  IDENTREE_LDAP_GID_BASE: {{ .Values.config.ldap.gidBase | quote }}
+  IDENTREE_LDAP_DEFAULT_SHELL: {{ .Values.config.ldap.defaultShell | quote }}
+  IDENTREE_LDAP_DEFAULT_HOME: {{ .Values.config.ldap.defaultHome | quote }}
+  IDENTREE_LDAP_SUDO_NO_AUTHENTICATE: {{ .Values.config.ldap.sudoNoAuthenticate | quote }}
+  IDENTREE_LDAP_ALLOW_ANONYMOUS: {{ .Values.config.ldap.allowAnonymous | quote }}
+  IDENTREE_LDAP_PROVISION_ENABLED: {{ .Values.config.ldap.provisionEnabled | quote }}
+  {{- if .Values.config.ldap.externalUrl }}
+  IDENTREE_LDAP_EXTERNAL_URL: {{ .Values.config.ldap.externalUrl | quote }}
+  {{- end }}
+
+  # ── Notifications ─────────────────────────────────────────────────────────
+  {{- if .Values.config.notify.backend }}
+  IDENTREE_NOTIFY_BACKEND: {{ .Values.config.notify.backend | quote }}
+  {{- end }}
+  {{- if .Values.config.notify.url }}
+  IDENTREE_NOTIFY_URL: {{ .Values.config.notify.url | quote }}
+  {{- end }}
+  {{- if .Values.config.notify.command }}
+  IDENTREE_NOTIFY_COMMAND: {{ .Values.config.notify.command | quote }}
+  {{- end }}
+  IDENTREE_NOTIFY_TIMEOUT: {{ .Values.config.notify.timeout | quote }}
+
+  # ── Audit streaming ───────────────────────────────────────────────────────
+  {{- if .Values.config.audit.log }}
+  IDENTREE_AUDIT_LOG: {{ .Values.config.audit.log | quote }}
+  {{- end }}
+  {{- if .Values.config.audit.syslogUrl }}
+  IDENTREE_AUDIT_SYSLOG_URL: {{ .Values.config.audit.syslogUrl | quote }}
+  {{- end }}
+  {{- if .Values.config.audit.splunkHecUrl }}
+  IDENTREE_AUDIT_SPLUNK_HEC_URL: {{ .Values.config.audit.splunkHecUrl | quote }}
+  {{- end }}
+  {{- if .Values.config.audit.lokiUrl }}
+  IDENTREE_AUDIT_LOKI_URL: {{ .Values.config.audit.lokiUrl | quote }}
+  {{- end }}
+  IDENTREE_AUDIT_BUFFER_SIZE: {{ .Values.config.audit.bufferSize | quote }}
+
+  # ── Break-glass escrow ────────────────────────────────────────────────────
+  {{- if .Values.config.escrow.backend }}
+  IDENTREE_ESCROW_BACKEND: {{ .Values.config.escrow.backend | quote }}
+  {{- end }}
+  {{- if .Values.config.escrow.url }}
+  IDENTREE_ESCROW_URL: {{ .Values.config.escrow.url | quote }}
+  {{- end }}
+  {{- if .Values.config.escrow.authId }}
+  IDENTREE_ESCROW_AUTH_ID: {{ .Values.config.escrow.authId | quote }}
+  {{- end }}
+  {{- if .Values.config.escrow.path }}
+  IDENTREE_ESCROW_PATH: {{ .Values.config.escrow.path | quote }}
+  {{- end }}
+  {{- if .Values.config.escrow.webUrl }}
+  IDENTREE_ESCROW_WEB_URL: {{ .Values.config.escrow.webUrl | quote }}
+  {{- end }}
+
+  # ── Break-glass rotation ──────────────────────────────────────────────────
+  {{- if .Values.config.breakglass.rotateBefore }}
+  IDENTREE_BREAKGLASS_ROTATE_BEFORE: {{ .Values.config.breakglass.rotateBefore | quote }}
+  {{- end }}
+
+  # ── Client defaults ───────────────────────────────────────────────────────
+  IDENTREE_CLIENT_POLL_INTERVAL: {{ .Values.config.clientDefaults.pollInterval | quote }}
+  IDENTREE_CLIENT_TIMEOUT: {{ .Values.config.clientDefaults.timeout | quote }}
+  IDENTREE_CLIENT_BREAKGLASS_ENABLED: {{ .Values.config.clientDefaults.breakglassEnabled | quote }}
+  IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE: {{ .Values.config.clientDefaults.breakglassPasswordType | quote }}
+  IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS: {{ .Values.config.clientDefaults.breakglassRotationDays | quote }}
+  IDENTREE_CLIENT_TOKEN_CACHE_ENABLED: {{ .Values.config.clientDefaults.tokenCacheEnabled | quote }}
+
+  # ── UI ────────────────────────────────────────────────────────────────────
+  IDENTREE_DEFAULT_PAGE_SIZE: {{ .Values.config.defaultPageSize | quote }}
+
+  # ── Persistent state file paths ──────────────────────────────────────────
+  IDENTREE_SESSION_STATE_FILE: "/config/sessions.json"
+  IDENTREE_LDAP_UID_MAP_FILE: "/config/uidmap.json"
+  IDENTREE_SUDO_RULES_FILE: "/config/sudorules.json"
+  IDENTREE_HOST_REGISTRY_FILE: "/config/hosts.json"

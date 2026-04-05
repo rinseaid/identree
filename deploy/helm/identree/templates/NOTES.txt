@@ -1,0 +1,32 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named: {{ .Release.Name }}
+
+1. Get the application URL:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  https://{{ $host.host }}
+{{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "identree.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else if contains "LoadBalancer" .Values.service.type }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  kubectl get --namespace {{ .Release.Namespace }} svc {{ include "identree.fullname" . }} -w
+{{- else }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "identree.fullname" . }} 8090:{{ .Values.service.port }}
+  echo "Visit http://127.0.0.1:8090"
+{{- end }}
+
+{{- if and .Values.config.ldap.enabled .Values.ldapService.enabled }}
+
+2. LDAP is available at:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "identree.fullname" . }}-ldap 389:{{ .Values.ldapService.port }}
+  # Point sssd at ldap://127.0.0.1:389 (or use the in-cluster service name)
+{{- end }}
+
+3. To install identree on a managed host:
+  curl -fsSL <IDENTREE_EXTERNAL_URL>/install.sh | sudo bash
+
+For full documentation, see: https://github.com/rinseaid/identree

@@ -1,0 +1,23 @@
+apiVersion: v2
+name: identree
+description: >-
+  identree bridges your identity provider to Linux — passkey-gated sudo,
+  SSH without passwords, embedded LDAP, and break-glass escrow in a single binary.
+type: application
+version: 0.1.0
+appVersion: "0.0.0-dev"
+home: https://github.com/rinseaid/identree
+sources:
+  - https://github.com/rinseaid/identree
+keywords:
+  - identree
+  - pam
+  - sudo
+  - ldap
+  - oidc
+  - pocketid
+  - passkey
+  - breakglass
+maintainers:
+  - name: rinseaid
+    url: https://github.com/rinseaid

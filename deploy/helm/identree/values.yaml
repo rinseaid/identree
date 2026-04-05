@@ -1,0 +1,300 @@
+# -- Default values for identree Helm chart.
+
+# -- Number of replicas. identree is designed as a single-instance server
+# (state files are not shared), so keep this at 1.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/rinseaid/identree
+  # -- Overrides the image tag. Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Whether to create a ServiceAccount.
+  create: true
+  # -- Annotations to add to the ServiceAccount.
+  annotations: {}
+  # -- Name override. If empty, the fullname template is used.
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ---------------------------------------------------------------------------
+# identree configuration
+# ---------------------------------------------------------------------------
+# Non-sensitive values go into a ConfigMap; sensitive values go into a Secret.
+# Each key maps directly to the corresponding IDENTREE_* environment variable.
+# See the README configuration reference for full documentation.
+
+config:
+  # -- OIDC / Authentication
+  oidc:
+    # -- (required) OIDC issuer URL used for discovery / token exchange.
+    issuerUrl: ""
+    # -- Public-facing OIDC URL (set when internal and external URLs differ).
+    issuerPublicUrl: ""
+    # -- (required) OIDC client ID.
+    clientId: ""
+
+  # -- PocketID API (full mode only; omit apiKey to run in bridge mode)
+  pocketid:
+    # -- PocketID admin API URL (defaults to oidc.issuerUrl if empty).
+    apiUrl: ""
+
+  # -- HTTP server
+  server:
+    # -- (required) Public-facing URL of identree.
+    externalUrl: ""
+    # -- Listen address inside the container.
+    listenAddr: ":8090"
+    # -- URL embedded in install scripts (split-horizon DNS). Defaults to externalUrl.
+    installUrl: ""
+
+  # -- Challenge / session flow
+  challenge:
+    ttl: "120s"
+    gracePeriod: "0"
+    oneTapMaxAge: "24h"
+
+  # -- Justification
+  justification:
+    require: false
+    # -- Comma-separated preset choices (leave empty for built-in defaults).
+    choices: ""
+
+  # -- Admin access
+  admin:
+    # -- Comma-separated OIDC group names with admin access.
+    groups: ""
+    # -- Comma-separated hostname glob patterns requiring admin approval.
+    approvalHosts: ""
+
+  # -- LDAP server
+  ldap:
+    enabled: true
+    listenAddr: ":389"
+    # -- (required when LDAP enabled) Base DN, e.g. dc=example,dc=com
+    baseDn: ""
+    bindDn: ""
+    refreshInterval: "300s"
+    uidBase: "200000"
+    gidBase: "200000"
+    defaultShell: "/bin/bash"
+    defaultHome: "/home/%s"
+    sudoNoAuthenticate: "false"
+    allowAnonymous: false
+    provisionEnabled: false
+    externalUrl: ""
+
+  # -- Notifications
+  notify:
+    backend: ""
+    url: ""
+    command: ""
+    timeout: "15s"
+
+  # -- Audit streaming
+  audit:
+    log: ""
+    syslogUrl: ""
+    splunkHecUrl: ""
+    lokiUrl: ""
+    bufferSize: "4096"
+
+  # -- Break-glass escrow
+  escrow:
+    backend: ""
+    url: ""
+    authId: ""
+    path: ""
+    webUrl: ""
+
+  # -- Break-glass rotation
+  breakglass:
+    rotateBefore: ""
+
+  # -- Client defaults (pushed to clients on every auth)
+  clientDefaults:
+    pollInterval: "2s"
+    timeout: "120s"
+    breakglassEnabled: "true"
+    breakglassPasswordType: "random"
+    breakglassRotationDays: "90"
+    tokenCacheEnabled: "true"
+
+  # -- UI
+  defaultPageSize: "10"
+
+# ---------------------------------------------------------------------------
+# Secrets (sensitive values — stored in a Kubernetes Secret)
+# ---------------------------------------------------------------------------
+secrets:
+  # -- (required) HMAC secret shared with PAM clients.
+  sharedSecret: ""
+  # -- (required) OIDC client secret.
+  oidcClientSecret: ""
+  # -- PocketID admin API key (required for full mode).
+  pocketidApiKey: ""
+  # -- Optional separate HMAC signing key (defaults to sharedSecret).
+  hmacSecret: ""
+  # -- Bearer token for /metrics endpoint (empty = unauthenticated).
+  metricsToken: ""
+  # -- Comma-separated API bearer tokens for programmatic access.
+  apiKeys: ""
+  # -- LDAP service-account bind password.
+  ldapBindPassword: ""
+  # -- Notification bearer token.
+  notifyToken: ""
+  # -- Splunk HEC token.
+  auditSplunkToken: ""
+  # -- Loki bearer token.
+  auditLokiToken: ""
+  # -- Escrow auth secret (or use escrowAuthSecretFile for file-mounted secrets).
+  escrowAuthSecret: ""
+  # -- Path to file containing escrow auth secret.
+  escrowAuthSecretFile: ""
+  # -- Encryption key for local escrow backend.
+  escrowEncryptionKey: ""
+  # -- HKDF salt for local escrow key derivation.
+  escrowHkdfSalt: ""
+  # -- HMAC-SHA256 secret for PocketID webhook validation.
+  webhookSecret: ""
+
+  # -- Use an existing Secret instead of creating one. When set, the chart
+  # does not create a Secret resource and mounts this one instead.
+  existingSecret: ""
+
+# ---------------------------------------------------------------------------
+# Persistence — state files under /config
+# ---------------------------------------------------------------------------
+persistence:
+  enabled: true
+  # -- Storage class (empty = cluster default).
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  # -- Use an existing PVC.
+  existingClaim: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 8090
+  annotations: {}
+
+# -- Separate Service for the LDAP port. Only created when ldap.enabled is true.
+ldapService:
+  enabled: true
+  type: ClusterIP
+  port: 389
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: identree.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: identree-tls
+  #    hosts:
+  #      - identree.example.com
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+resources: {}
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # limits:
+  #   cpu: 500m
+  #   memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# ---------------------------------------------------------------------------
+# Scheduling
+# ---------------------------------------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ---------------------------------------------------------------------------
+# Prometheus ServiceMonitor (requires prometheus-operator CRDs)
+# ---------------------------------------------------------------------------
+serviceMonitor:
+  enabled: false
+  # -- Additional labels for the ServiceMonitor (e.g. release: prometheus).
+  labels: {}
+  # -- Scrape interval.
+  interval: 30s
+  # -- Scrape timeout.
+  scrapeTimeout: 10s
+  # -- Metric path.
+  path: /metrics
+  # -- Bearer token secret ref for authenticated /metrics.
+  bearerTokenSecret: {}
+  #   name: identree-secret
+  #   key: metrics-token
+
+# ---------------------------------------------------------------------------
+# Extra environment variables (list of {name, value} or {name, valueFrom})
+# ---------------------------------------------------------------------------
+extraEnv: []
+
+# ---------------------------------------------------------------------------
+# Extra volumes and volume mounts
+# ---------------------------------------------------------------------------
+extraVolumes: []
+extraVolumeMounts: []
