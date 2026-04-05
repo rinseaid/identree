@@ -2225,6 +2225,12 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 
 	s.pocketIDClient.InvalidateCache()
 	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Name, "", adminUser)
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "claims_updated",
+		Username:  current.Name,
+		Actor:     adminUser,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 	slog.Info("CLAIMS_UPDATED", "admin", adminUser, "group_id", groupID, "remote_addr", remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
 		w.Header().Set("Content-Type", "application/json")
@@ -2346,6 +2352,12 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 
 	s.pocketIDClient.InvalidateCache()
 	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Username, "", adminUser)
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "claims_updated",
+		Username:  current.Username,
+		Actor:     adminUser,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 	slog.Info("CLAIMS_UPDATED", "admin", adminUser, "user_id", userID, "remote_addr", remoteAddr(r))
 	if r.Header.Get("Accept") == "application/json" {
 		w.Header().Set("Content-Type", "application/json")
@@ -2484,6 +2496,11 @@ func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.LogAction(username, challpkg.ActionServerRestarted, "", "", username)
+	s.sendEventNotification(notify.WebhookData{
+		Event:     "server_restarted",
+		Actor:     username,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 	slog.Info("server restart requested via admin UI", "user", username)
 	w.WriteHeader(http.StatusNoContent)
 	go func() {

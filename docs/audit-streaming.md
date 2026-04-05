@@ -68,6 +68,11 @@ Each event is a single JSON line:
 | `config_changed` | Server configuration updated |
 | `user_removed` | User removed from system |
 | `host_removed` | Host removed from registry |
+| `breakglass_escrowed` | Break-glass password escrowed to vault |
+| `sudo_rule_modified` | Sudo rule added, updated, or deleted |
+| `claims_updated` | User or group claims updated |
+| `server_restarted` | Server restart requested via admin UI |
+| `deployed` | Remote host deploy completed successfully |
 
 ---
 
