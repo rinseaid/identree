@@ -170,10 +170,12 @@ func (s *Server) handleDeployPubkey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"type":        signer.PublicKey().Type(),
 		"fingerprint": gossh.FingerprintSHA256(signer.PublicKey()),
-	})
+	}); err != nil {
+		slog.Error("encoding JSON response", "err", err)
+	}
 }
 
 // handleDeployUsers returns PocketID users with at least one sshPublicKey* claim.
@@ -208,7 +210,7 @@ func (s *Server) handleDeployUsers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, userEntry{Username: u.Username, Email: u.Email, SSHKeys: u.SSHKeys})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	if err := json.NewEncoder(w).Encode(out); err != nil { slog.Error("encoding JSON response", "err", err) }
 }
 
 // handleDeploy starts an SSH remote-install job.
@@ -344,7 +346,9 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"id": jobID})
+	if err := json.NewEncoder(w).Encode(map[string]string{"id": jobID}); err != nil {
+		slog.Error("encoding JSON response", "err", err)
+	}
 }
 
 // handleDeployStream streams deploy job output as SSE.
@@ -484,7 +488,9 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		slog.Error("encoding JSON response", "err", err)
+	}
 }
 
 // handleRemoveDeploy SSHes into a host, runs the uninstall script, then removes it from the store.
@@ -616,7 +622,9 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 	slog.Info("REMOVE starting", "admin", adminUser, "host", req.Hostname, "port", req.Port, "ssh_user", req.SSHUser, "job", jobID)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"id": jobID})
+	if err := json.NewEncoder(w).Encode(map[string]string{"id": jobID}); err != nil {
+		slog.Error("encoding JSON response", "err", err)
+	}
 }
 
 // runDeployJob connects via SSH, pipes installScript to stdin of cmd, and streams output to job.
@@ -771,15 +779,4 @@ func clientIP(r *http.Request) string {
 }
 
 // cidrContains reports whether ip falls within any of the given CIDRs.
-func cidrContains(cidrs []*net.IPNet, ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	for _, cidr := range cidrs {
-		if cidr.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
+

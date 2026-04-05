@@ -90,7 +90,6 @@ type Server struct {
 	notifyMu     sync.Mutex // guards notifyShutdown + notifyWg.Add to prevent TOCTOU
 
 	sessionNonces  map[string]sessionNonceData
-	sessionNonceMu sync.Mutex
 
 	sseClients     map[string][]chan string
 	sseMu          sync.RWMutex
@@ -739,10 +738,7 @@ func initAuditSinks(cfg *config.ServerConfig) ([]audit.Sink, error) {
 	var sinks []audit.Sink
 
 	if cfg.AuditLog != "" {
-		dest := cfg.AuditLog
-		if strings.HasPrefix(dest, "file:") {
-			dest = strings.TrimPrefix(dest, "file:")
-		}
+		dest := strings.TrimPrefix(cfg.AuditLog, "file:")
 		sink, err := audit.NewJSONLogSink(dest, audit.RotationConfig{
 			MaxSize:  cfg.AuditLogMaxSize,
 			MaxFiles: cfg.AuditLogMaxFiles,

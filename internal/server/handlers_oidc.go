@@ -151,15 +151,6 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 // cleanExpiredSessionNonces removes expired nonces (>15 min) from the map.
 // Must be called under sessionNonceMu lock.
-func (s *Server) cleanExpiredSessionNonces() {
-	cutoff := time.Now().Add(-15 * time.Minute)
-	for nonce, data := range s.sessionNonces {
-		if data.issuedAt.Before(cutoff) {
-			delete(s.sessionNonces, nonce)
-		}
-	}
-}
-
 // handleSessionsLogin initiates an OIDC flow for the sessions management page.
 // GET /sessions/login
 func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
