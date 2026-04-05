@@ -265,6 +265,20 @@ See [docs/justification.md](docs/justification.md) for full details including th
 
 See [docs/notifications.md](docs/notifications.md) for full details and examples.
 
+#### Audit streaming
+
+| Variable | Default | Description |
+|---|---|---|
+| `IDENTREE_AUDIT_LOG` | — | `stdout` or `file:/path/to/audit.jsonl` — structured JSON event stream |
+| `IDENTREE_AUDIT_SYSLOG_URL` | — | RFC 5424 syslog destination (`udp://host:514` or `tcp://host:601`) |
+| `IDENTREE_AUDIT_SPLUNK_HEC_URL` | — | Splunk HTTP Event Collector endpoint URL |
+| `IDENTREE_AUDIT_SPLUNK_TOKEN` | — | Splunk HEC authentication token |
+| `IDENTREE_AUDIT_LOKI_URL` | — | Grafana Loki push URL (e.g. `http://loki:3100`) |
+| `IDENTREE_AUDIT_LOKI_TOKEN` | — | Optional Loki bearer token |
+| `IDENTREE_AUDIT_BUFFER_SIZE` | `4096` | Event channel buffer size |
+
+Multiple sinks can be active simultaneously. See [docs/audit-streaming.md](docs/audit-streaming.md) for event format, sink details, and LogQL/Splunk query examples.
+
 #### PocketID webhook receiver
 
 | Variable | Default | Description |
