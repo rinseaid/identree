@@ -203,6 +203,12 @@ curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
 | `sudo_rule_modified` | Sudo rule added/updated/deleted |
 | `user_removed` | User removed |
 | `claims_updated` | User or group claims updated |
+| `session_extended` | Grace session extended |
+| `user_logged_in` | User logged in via OIDC/SAML |
+| `notification_channel_added` | Notification channel created |
+| `notification_channel_deleted` | Notification channel removed |
+| `notification_route_added` | Notification route created |
+| `notification_route_deleted` | Notification route removed |
 | `test` | Test notification |
 
 ---
@@ -242,4 +248,5 @@ curl -X POST https://identree.example.com/api/admin/test-notification \
 - Webhook retries: 3 attempts with exponential backoff (1s, 2s)
 - 4xx responses are treated as permanent failures (no retry)
 - Prometheus metrics: `identree_notifications_total{status="sent|failed|skipped",channel="..."}`
+- Delivery latency histogram: `identree_notification_delivery_duration_seconds{channel="..."}`
 - Graceful shutdown waits for in-flight notifications (configurable timeout)

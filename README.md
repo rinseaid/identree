@@ -178,6 +178,7 @@ volumes:
 | `/config/sudorules.json` | Sudo rules (bridge mode) |
 | `/config/notification-channels.json` | Notification channel definitions |
 | `/config/admin-notifications.json` | Per-admin notification preferences |
+| `/config/approval-policies.json` | Approval policy rules (per-host/per-user/per-group overrides) |
 
 Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 
@@ -195,6 +196,22 @@ Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 | `IDENTREE_OIDC_ISSUER_PUBLIC_URL` | — | Public-facing OIDC URL (split internal/external routing) |
 | `IDENTREE_OIDC_CLIENT_ID` | — | **Required.** OIDC client ID |
 | `IDENTREE_OIDC_CLIENT_SECRET` | — | **Required.** OIDC client secret |
+| `IDENTREE_OIDC_INSECURE_SKIP_VERIFY` | `false` | Skip TLS certificate verification for the OIDC issuer |
+| `IDENTREE_OIDC_ENFORCE_IP_BINDING` | `false` | Bind sessions to the originating IP address |
+
+#### SAML (alternative to OIDC)
+
+| Variable | Default | Description |
+|---|---|---|
+| `IDENTREE_AUTH_PROTOCOL` | `oidc` | Authentication protocol: `oidc` or `saml` |
+| `IDENTREE_SAML_IDP_METADATA_URL` | — | URL to fetch IdP metadata XML |
+| `IDENTREE_SAML_IDP_METADATA` | — | Inline IdP metadata XML (alternative to URL) |
+| `IDENTREE_SAML_ENTITY_ID` | — | SP entity ID |
+| `IDENTREE_SAML_CERT_FILE` | — | Path to SP certificate file |
+| `IDENTREE_SAML_KEY_FILE` | — | Path to SP private key file |
+| `IDENTREE_SAML_GROUPS_ATTR` | `groups` | SAML attribute containing group memberships |
+| `IDENTREE_SAML_USERNAME_ATTR` | — | SAML attribute containing the username |
+| `IDENTREE_SAML_DISPLAY_NAME_ATTR` | `displayName` | SAML attribute containing the display name |
 
 #### PocketID API (full mode only)
 
@@ -211,7 +228,19 @@ Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 | `IDENTREE_LISTEN_ADDR` | `:8090` | HTTP listen address |
 | `IDENTREE_INSTALL_URL` | `IDENTREE_EXTERNAL_URL` | URL embedded in install scripts (split-horizon DNS) |
 | `IDENTREE_SHARED_SECRET` | — | **Required.** HMAC secret shared with PAM clients |
+| `IDENTREE_HMAC_SECRET` | — | Separate HMAC secret for internal token signing (defaults to `IDENTREE_SHARED_SECRET`) |
 | `IDENTREE_API_KEYS` | — | Comma-separated API bearer tokens for programmatic access |
+| `IDENTREE_METRICS_TOKEN` | — | Bearer token for the `/metrics` endpoint |
+
+#### TLS / mTLS
+
+| Variable | Default | Description |
+|---|---|---|
+| `IDENTREE_TLS_CERT_FILE` | — | Path to TLS certificate file for HTTPS listener |
+| `IDENTREE_TLS_KEY_FILE` | — | Path to TLS private key file for HTTPS listener |
+| `IDENTREE_MTLS_CA_CERT` | — | Path to CA certificate for verifying client certificates (enables mTLS) |
+| `IDENTREE_MTLS_CA_KEY` | — | Path to CA key for issuing client certificates |
+| `IDENTREE_MTLS_CERT_TTL` | `8760h` | Validity duration for issued client certificates (default: 1 year) |
 
 #### Challenge / session flow
 
@@ -226,7 +255,7 @@ Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 | Variable | Default | Description |
 |---|---|---|
 | `IDENTREE_REQUIRE_JUSTIFICATION` | `false` | Require a written justification for every elevation |
-| `IDENTREE_JUSTIFICATION_CHOICES` | — | Comma-separated preset choices (defaults to: Routine maintenance, Incident response, Deployment) |
+| `IDENTREE_JUSTIFICATION_CHOICES` | — | Comma-separated preset choices (defaults to: Routine maintenance, Incident response, Deployment, Debugging / troubleshooting, Security investigation, Configuration change) |
 
 See [docs/justification.md](docs/justification.md) for full details including the terminal prompt flow and `SUDO_REASON` env var.
 
@@ -236,6 +265,8 @@ See [docs/justification.md](docs/justification.md) for full details including th
 |---|---|---|
 | `IDENTREE_ADMIN_GROUPS` | — | Comma-separated OIDC groups with admin UI access |
 | `IDENTREE_APPROVAL_POLICIES_FILE` | `/config/approval-policies.json` | Path to the approval policies JSON file (per-host/per-user rules) |
+
+Approval policies let you define per-host, per-user, and per-group rules that override the global challenge/session defaults. Policies can require additional approvers, enforce justification, set custom TTLs, or auto-approve/deny specific combinations. See [docs/approval-policies.md](docs/approval-policies.md) for schema and examples.
 
 #### LDAP server
 
@@ -252,6 +283,10 @@ See [docs/justification.md](docs/justification.md) for full details including th
 | `IDENTREE_LDAP_GID_BASE` | `200000` | First GID assigned to PocketID groups |
 | `IDENTREE_LDAP_DEFAULT_SHELL` | `/bin/bash` | Default `loginShell` |
 | `IDENTREE_LDAP_DEFAULT_HOME` | `/home/%s` | `homeDirectory` pattern (`%s` = username) |
+| `IDENTREE_LDAP_ALLOW_ANONYMOUS` | `false` | Allow anonymous LDAP binds |
+| `IDENTREE_LDAP_PROVISION_ENABLED` | `false` | Enable automatic provisioning of LDAP accounts |
+| `IDENTREE_LDAP_EXTERNAL_URL` | — | Public-facing LDAP URL (for client referrals) |
+| `IDENTREE_LDAP_TLS_CA_CERT` | — | Path to CA certificate for LDAP StartTLS |
 | `IDENTREE_LDAP_SUDO_NO_AUTHENTICATE` | `false` | `false`, `true`, or `claims` — see [deployment modes](docs/deployment-modes.md) |
 | `IDENTREE_SUDO_RULES_FILE` | `/config/sudorules.json` | Sudo rules file (bridge mode) |
 
@@ -276,6 +311,8 @@ Notifications use multi-channel routing: events are matched against org-level ru
 | `IDENTREE_AUDIT_LOKI_URL` | — | Grafana Loki push URL (e.g. `http://loki:3100`) |
 | `IDENTREE_AUDIT_LOKI_TOKEN` | — | Optional Loki bearer token |
 | `IDENTREE_AUDIT_BUFFER_SIZE` | `4096` | Event channel buffer size |
+| `IDENTREE_AUDIT_LOG_MAX_SIZE` | `100MB` | Maximum size of a single audit log file before rotation |
+| `IDENTREE_AUDIT_LOG_MAX_FILES` | `5` | Number of rotated audit log files to retain |
 
 Multiple sinks can be active simultaneously. See [docs/audit-streaming.md](docs/audit-streaming.md) for event format, sink details, and LogQL/Splunk query examples.
 
@@ -292,6 +329,11 @@ Multiple sinks can be active simultaneously. See [docs/audit-streaming.md](docs/
 | `IDENTREE_REDIS_SENTINEL_MASTER` | — | Sentinel master name (enables Sentinel mode) |
 | `IDENTREE_REDIS_SENTINEL_ADDRS` | — | Comma-separated Sentinel addresses |
 | `IDENTREE_REDIS_CLUSTER_ADDRS` | — | Comma-separated Cluster node addresses |
+| `IDENTREE_REDIS_DB` | `0` | Redis database number |
+| `IDENTREE_REDIS_TLS_CA_CERT` | — | Path to CA certificate for Redis TLS verification |
+| `IDENTREE_REDIS_DIAL_TIMEOUT` | `5s` | Timeout for establishing Redis connections |
+| `IDENTREE_REDIS_READ_TIMEOUT` | `3s` | Timeout for Redis read operations |
+| `IDENTREE_REDIS_WRITE_TIMEOUT` | `3s` | Timeout for Redis write operations |
 | `IDENTREE_REDIS_POOL_SIZE` | `50` | Connection pool size |
 
 See [docs/redis-ha.md](docs/redis-ha.md) for deployment guides (Docker Compose + Kubernetes) with both Valkey and Dragonfly.
@@ -316,6 +358,9 @@ Set up a webhook in PocketID pointing to `https://identree.example.com/api/webho
 | `IDENTREE_ESCROW_PATH` | — | Storage path/prefix in the backend |
 | `IDENTREE_ESCROW_WEB_URL` | — | Link to the backend's web UI (shown in admin panel) |
 | `IDENTREE_ESCROW_ENCRYPTION_KEY` | — | Encryption key for `local` backend |
+| `IDENTREE_ESCROW_COMMAND` | — | External command to run after escrow storage (e.g. custom notification) |
+| `IDENTREE_ESCROW_COMMAND_ENV` | — | Comma-separated `KEY=VALUE` pairs passed as environment to the escrow command |
+| `IDENTREE_ESCROW_VAULT_MAP` | — | JSON map of hostname patterns to Vault paths for per-host secret routing |
 | `IDENTREE_ESCROW_HKDF_SALT` | — | Hex-encoded salt for HKDF key derivation (16+ bytes recommended). Set to a random value per deployment for cross-deployment key diversification. Generate with: `openssl rand -hex 32`. Changing this value invalidates existing escrow ciphertexts. If unset, a static legacy salt is used (warning logged at startup). |
 | `IDENTREE_BREAKGLASS_ROTATE_BEFORE` | — | RFC 3339 timestamp — clients older than this are prompted to rotate |
 
@@ -331,7 +376,7 @@ See [docs/operations.md](docs/operations.md) for reverse proxy setup, backup pro
 |---|---|---|
 | `IDENTREE_SESSION_STATE_FILE` | `/config/sessions.json` | Active sessions (persists across restarts) |
 | `IDENTREE_HOST_REGISTRY_FILE` | `/config/hosts.json` | Registered host registry |
-| `IDENTREE_DEFAULT_PAGE_SIZE` | `10` | Default entries per page in the history view |
+| `IDENTREE_DEFAULT_PAGE_SIZE` | `15` | Default entries per page in the history view |
 
 #### Client defaults (pushed to clients on every auth)
 
@@ -339,11 +384,11 @@ These are sent in the challenge response and override each client's local config
 
 | Variable | Default | Description |
 |---|---|---|
-| `IDENTREE_CLIENT_POLL_INTERVAL` | `2s` | How often clients poll for challenge resolution |
-| `IDENTREE_CLIENT_TIMEOUT` | `120s` | Max time clients wait for user approval |
+| `IDENTREE_CLIENT_POLL_INTERVAL` | `0` | How often clients poll for challenge resolution (server override; 0 = use client default of `2s`) |
+| `IDENTREE_CLIENT_TIMEOUT` | `0` | Max time clients wait for user approval (server override; 0 = use client default of `120s`) |
 | `IDENTREE_CLIENT_BREAKGLASS_ENABLED` | `true` | Enable break-glass fallback on clients |
 | `IDENTREE_CLIENT_BREAKGLASS_PASSWORD_TYPE` | `random` | Break-glass password style: `random`, `passphrase`, `alphanumeric` |
-| `IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS` | `90` | Days between auto-rotations (`0` disables) |
+| `IDENTREE_CLIENT_BREAKGLASS_ROTATION_DAYS` | `0` | Days between auto-rotations (server override; 0 = use client default of `90`) |
 | `IDENTREE_CLIENT_TOKEN_CACHE_ENABLED` | `true` | Allow clients to cache OIDC tokens locally |
 
 ---
@@ -376,8 +421,11 @@ Server-pushed values are sent in the challenge response on every `sudo` invocati
 ```
 identree serve                          Start the server
 identree                                PAM helper (invoked by pam_exec.so)
+identree setup [--sssd] [--hostname <name>] [--force] [--dry-run]
+                                        Configure PAM/SSSD on a managed host
 identree rotate-breakglass [--force]    Rotate break-glass password
 identree verify-breakglass              Verify current break-glass password
+identree rotate-host-secret <hostname>  Rotate a host's shared secret
 identree add-host <hostname>            Register a host
 identree remove-host <hostname>         Unregister a host
 identree list-hosts                     List registered hosts

@@ -26,6 +26,8 @@ Each event is a single JSON line:
 
 ```json
 {
+  "seq": 42,
+  "prev_hash": "sha256:9f86d08...a3d25",
   "timestamp": "2026-04-04T22:00:00Z",
   "event": "challenge_approved",
   "username": "alice",
@@ -33,6 +35,7 @@ Each event is a single JSON line:
   "code": "ABCDEF-123456",
   "actor": "bob",
   "reason": "nginx declared war. help me win this battle.",
+  "remote_addr": "198.51.100.23",
   "source": "identree",
   "version": "1.2.0"
 }
@@ -40,6 +43,8 @@ Each event is a single JSON line:
 
 | Field | Description |
 |---|---|
+| `seq` | Monotonically increasing sequence number (per server instance) |
+| `prev_hash` | SHA-256 hash of the previous event's JSON line, forming a hash chain for tamper evidence |
 | `timestamp` | RFC 3339 UTC timestamp |
 | `event` | Action type (see table below) |
 | `username` | User who initiated or is the subject of the action |
@@ -47,8 +52,13 @@ Each event is a single JSON line:
 | `code` | User-visible challenge code (if applicable) |
 | `actor` | Who performed the action, if different from `username` |
 | `reason` | Justification text (if provided) |
+| `remote_addr` | IP address of the client that triggered the event (from `X-Forwarded-For` or direct connection) |
 | `source` | Always `"identree"` |
 | `version` | Server build version |
+
+### Hash chain (tamper evidence)
+
+Each audit event includes a `seq` number and a `prev_hash` field containing the SHA-256 digest of the previous event's serialized JSON line. Together these form a hash chain: any insertion, deletion, or modification of a log entry breaks the chain, making tampering detectable. The first event in a server instance's lifetime has `prev_hash` set to `sha256:0`. This supports SOC 2 CC7.2 (system operations monitoring) by providing a verifiable, append-only audit trail.
 
 ---
 
@@ -73,6 +83,12 @@ Each event is a single JSON line:
 | `claims_updated` | User or group claims updated |
 | `server_restarted` | Server restart requested via admin UI |
 | `deployed` | Remote host deploy completed successfully |
+| `session_extended` | Grace session extended |
+| `user_logged_in` | User logged in via OIDC/SAML |
+| `notification_channel_added` | Notification channel created |
+| `notification_channel_deleted` | Notification channel removed |
+| `notification_route_added` | Notification route created |
+| `notification_route_deleted` | Notification route removed |
 
 ---
 

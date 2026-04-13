@@ -254,6 +254,15 @@ components:
           type: string
         tls_ca_cert:
           type: string
+        client_cert:
+          type: string
+          description: PEM-encoded mTLS client certificate (when mTLS CA is configured).
+        client_key:
+          type: string
+          description: PEM-encoded mTLS client private key (when mTLS CA is configured).
+        ca_cert:
+          type: string
+          description: PEM-encoded mTLS CA certificate for server verification.
 
     SudoRule:
       type: object
@@ -335,6 +344,10 @@ tags:
     description: Notification channel and routing rule management.
   - name: SudoRules
     description: Sudo rule management (bridge mode only).
+  - name: SAML
+    description: SAML 2.0 Service Provider endpoints.
+  - name: Policies
+    description: Approval policy management.
   - name: Dashboard
     description: Browser-facing pages and utilities.
 
@@ -342,6 +355,66 @@ tags:
 # Paths
 # ---------------------------------------------------------------------------
 paths:
+
+  # ── SAML ───────────────────────────────────────────────────────────────
+
+  /saml/metadata:
+    get:
+      operationId: samlMetadata
+      summary: SAML SP metadata document
+      description: >
+        Returns the SAML 2.0 Service Provider metadata as XML. Used by IdPs
+        during federation setup.
+      tags: [SAML]
+      security: []
+      responses:
+        "200":
+          description: SAML SP metadata.
+          content:
+            application/xml: {}
+
+  /saml/login:
+    get:
+      operationId: samlLogin
+      summary: Initiate SAML SSO login
+      description: >
+        Redirects the browser to the configured SAML IdP for authentication.
+      tags: [SAML]
+      security: []
+      responses:
+        "302":
+          description: Redirect to SAML IdP.
+
+  /saml/acs:
+    post:
+      operationId: samlAcs
+      summary: SAML Assertion Consumer Service
+      description: >
+        Receives the SAML Response from the IdP. On success, sets a session
+        cookie and redirects to the dashboard. Returns 400 on malformed
+        assertions and 403 when the user is not authorized.
+      tags: [SAML]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                SAMLResponse:
+                  type: string
+                  description: Base64-encoded SAML Response.
+                RelayState:
+                  type: string
+                  description: Optional relay state for post-login redirect.
+      responses:
+        "302":
+          description: Authentication successful; redirect to dashboard.
+        "400":
+          description: Malformed or invalid SAML assertion.
+        "403":
+          description: User not authorized (e.g. missing required group membership).
 
   # ── Challenges ──────────────────────────────────────────────────────────
 
@@ -1488,10 +1561,86 @@ paths:
           description: Missing or invalid X-Hostname header.
         "401":
           description: Unauthorized.
+        "403":
+          description: Hostname not registered or not permitted.
         "404":
           description: Provisioning not enabled.
         "500":
           description: Server misconfigured (missing secret, base DN, or LDAP URL).
+
+  # ── Approval Policies ───────────────────────────────────────────────────
+
+  /api/policies/add:
+    post:
+      operationId: addPolicy
+      summary: Create or update an approval policy
+      tags: [Policies]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                name:
+                  type: string
+                  description: Policy name.
+                hosts:
+                  type: string
+                  description: Comma-separated host patterns.
+                users:
+                  type: string
+                  description: Comma-separated usernames.
+                action:
+                  type: string
+                  description: Policy action (e.g. auto_approve, require_admin).
+                schedule:
+                  type: string
+                  description: Time-of-day constraint (e.g. "09:00-17:00").
+      responses:
+        "303":
+          description: Redirect to approval policies page.
+        "400":
+          description: Invalid or missing form fields.
+
+  /api/policies/delete:
+    post:
+      operationId: deletePolicy
+      summary: Delete an approval policy
+      tags: [Policies]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, csrf_token, csrf_ts, policy_name]
+              properties:
+                username:
+                  type: string
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+                policy_name:
+                  type: string
+                  description: Name of the policy to delete.
+      responses:
+        "303":
+          description: Redirect to approval policies page.
+        "404":
+          description: Policy not found.
 
   # ── SSE Events ──────────────────────────────────────────────────────────
 

@@ -133,9 +133,18 @@ The following features are on the roadmap but not yet implemented. Do not rely o
 
 | Feature | Status |
 |---|---|
-| SAML 2.0 identity provider support | Not implemented |
-| mTLS client certificate authentication | Not implemented |
+| SAML 2.0 identity provider support | Implemented — configure via `IDENTREE_SAML_*` variables (see [deployment-modes.md](deployment-modes.md)) |
+| mTLS client certificate authentication | Implemented — configure via `IDENTREE_MTLS_*` variables (see [operations.md](operations.md)) |
 | Per-admin notification preferences (granular routing) | Implemented — configure via **Admin > Notifications** (`/admin/notifications`) |
 | Approval policies (time windows, host-specific rules, step-up auth) | Implemented — configure via **Admin > Policies** (`/admin/policies`) |
+
+### New SAML and mTLS configuration variables
+
+If upgrading from a version before SAML 2.0 and mTLS support, note the following new environment variables:
+
+- **SAML 2.0:** `IDENTREE_SAML_IDP_METADATA_URL`, `IDENTREE_SAML_ENTITY_ID`, `IDENTREE_SAML_CERTIFICATE`, `IDENTREE_SAML_PRIVATE_KEY`. Set these to enable SAML-based authentication in bridge mode as an alternative to OIDC.
+- **mTLS:** `IDENTREE_MTLS_ENABLED`, `IDENTREE_MTLS_CA_CERT`, `IDENTREE_MTLS_CLIENT_CERT`, `IDENTREE_MTLS_CLIENT_KEY`. Set these to require mutual TLS client certificate authentication for API and PAM client connections.
+
+These variables are optional and have no effect if left unset. Existing OIDC-only deployments continue to work without changes.
 
 Check the [GitHub issues](https://github.com/rinseaid/identree/issues) for the latest status and to add your vote or comments.

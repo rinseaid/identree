@@ -137,6 +137,8 @@ identree stores the following in Redis. All keys are prefixed with `IDENTREE_RED
 | Rate limiters | String (counter) | Sliding window | Per-user and per-host rate limit counters with TTL-based sliding windows. |
 | Session nonces | String (key) | Short TTL | One-time nonces used during the OIDC callback flow to prevent replay. |
 | Escrow records | Hash | None | Encrypted break-glass password escrow data (local backend only). |
+| Notification config | Hash | None | Notification channels and routes (`{prefix}notify:config`). Synced across instances on write. |
+| Admin notification prefs | Hash | None | Per-admin notification preferences (`{prefix}notify:prefs`). |
 | SSE pub/sub | Pub/Sub channel | N/A | Cross-instance event propagation for real-time dashboard updates. |
 
 ---

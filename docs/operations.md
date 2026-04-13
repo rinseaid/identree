@@ -200,6 +200,8 @@ scrape_configs:
 | `identree_ldap_sync_failures_total` | Counter | Any increase | PocketID API unreachable or returning errors |
 | `identree_registered_hosts` | Gauge | Unexpected decrease | Hosts may have been removed |
 | `identree_oidc_exchange_duration_seconds` | Histogram | p95 > 5s | OIDC provider is slow |
+| `identree_notifications_total{status,channel}` | Counter | Spike in `status="failed"` | Notification delivery failures by channel |
+| `identree_notification_delivery_duration_seconds{channel}` | Histogram | p95 > 10s | Notification delivery latency by channel |
 
 ### Grafana dashboards
 

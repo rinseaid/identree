@@ -45,6 +45,7 @@ All notable changes to identree will be documented in this file.
 
 #### Admin UI
 - Sessions page with active session display and inline bar approval
+- Session highlight animation after inline bar approval
 - Access management with filter controls and pending approval modal
 - History page with user filtering, reason column, and pagination
 - Host, user, group, and sudo rule management
@@ -58,6 +59,8 @@ All notable changes to identree will be documented in this file.
 #### Infrastructure
 - Redis/Valkey state backend for multi-instance high availability
 - Redis pub/sub cluster control channel for cross-instance state sync
+- SSE Redis pub/sub reconnection with exponential backoff
+- Notification config and admin preferences stored in Redis for HA
 - Kubernetes Helm chart with PDB, NetworkPolicy, and resource defaults
 - Multi-arch Docker images (linux/amd64, linux/arm64)
 - Grafana dashboard JSON templates for monitoring

@@ -57,6 +57,32 @@ config:
     # -- (required) OIDC client ID.
     clientId: ""
 
+  # -- Authentication protocol
+  auth:
+    # -- Authentication protocol: "oidc" or "saml".
+    authProtocol: "oidc"
+
+  # -- SAML 2.0 SP configuration (used when authProtocol=saml)
+  saml:
+    idpMetadataURL: ""
+    entityID: ""
+    certFile: ""
+    keyFile: ""
+    groupsAttr: "groups"
+    usernameAttr: ""
+    displayNameAttr: "displayName"
+
+  # -- TLS termination (direct TLS mode, not behind a reverse proxy)
+  tls:
+    certFile: ""
+    keyFile: ""
+
+  # -- mTLS client certificate CA (embedded CA for PAM client auth)
+  mtls:
+    caCert: ""
+    caKey: ""
+    certTTL: "8760h"
+
   # -- PocketID API (full mode only; omit apiKey to run in bridge mode)
   pocketid:
     # -- PocketID admin API URL (defaults to oidc.issuerUrl if empty).
@@ -123,6 +149,8 @@ config:
     splunkHecUrl: ""
     lokiUrl: ""
     bufferSize: "4096"
+    logMaxSize: ""
+    logMaxFiles: ""
 
   # -- Break-glass escrow
   escrow:
@@ -146,7 +174,7 @@ config:
     tokenCacheEnabled: "true"
 
   # -- UI
-  defaultPageSize: "10"
+  defaultPageSize: "15"
 
 # ── State backend (HA) ────────────────────────────────────────────────────
 # Set to "redis" to enable multi-instance HA with a shared Redis/Valkey/Dragonfly.

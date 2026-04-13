@@ -5,6 +5,53 @@ metadata:
   labels:
     {{- include "identree.labels" . | nindent 4 }}
 data:
+  # ── Auth protocol ────────────────────────────────────────────────────────
+  {{- if .Values.config.auth.authProtocol }}
+  IDENTREE_AUTH_PROTOCOL: {{ .Values.config.auth.authProtocol | quote }}
+  {{- end }}
+
+  # ── SAML ────────────────────────────────────────────────────────────────
+  {{- if .Values.config.saml.idpMetadataURL }}
+  IDENTREE_SAML_IDP_METADATA_URL: {{ .Values.config.saml.idpMetadataURL | quote }}
+  {{- end }}
+  {{- if .Values.config.saml.entityID }}
+  IDENTREE_SAML_ENTITY_ID: {{ .Values.config.saml.entityID | quote }}
+  {{- end }}
+  {{- if .Values.config.saml.certFile }}
+  IDENTREE_SAML_CERT_FILE: {{ .Values.config.saml.certFile | quote }}
+  {{- end }}
+  {{- if .Values.config.saml.keyFile }}
+  IDENTREE_SAML_KEY_FILE: {{ .Values.config.saml.keyFile | quote }}
+  {{- end }}
+  {{- if .Values.config.saml.groupsAttr }}
+  IDENTREE_SAML_GROUPS_ATTR: {{ .Values.config.saml.groupsAttr | quote }}
+  {{- end }}
+  {{- if .Values.config.saml.usernameAttr }}
+  IDENTREE_SAML_USERNAME_ATTR: {{ .Values.config.saml.usernameAttr | quote }}
+  {{- end }}
+  {{- if .Values.config.saml.displayNameAttr }}
+  IDENTREE_SAML_DISPLAY_NAME_ATTR: {{ .Values.config.saml.displayNameAttr | quote }}
+  {{- end }}
+
+  # ── TLS ─────────────────────────────────────────────────────────────────
+  {{- if .Values.config.tls.certFile }}
+  IDENTREE_TLS_CERT_FILE: {{ .Values.config.tls.certFile | quote }}
+  {{- end }}
+  {{- if .Values.config.tls.keyFile }}
+  IDENTREE_TLS_KEY_FILE: {{ .Values.config.tls.keyFile | quote }}
+  {{- end }}
+
+  # ── mTLS ────────────────────────────────────────────────────────────────
+  {{- if .Values.config.mtls.caCert }}
+  IDENTREE_MTLS_CA_CERT: {{ .Values.config.mtls.caCert | quote }}
+  {{- end }}
+  {{- if .Values.config.mtls.caKey }}
+  IDENTREE_MTLS_CA_KEY: {{ .Values.config.mtls.caKey | quote }}
+  {{- end }}
+  {{- if .Values.config.mtls.certTTL }}
+  IDENTREE_MTLS_CERT_TTL: {{ .Values.config.mtls.certTTL | quote }}
+  {{- end }}
+
   # ── OIDC ──────────────────────────────────────────────────────────────────
   {{- if .Values.config.oidc.issuerUrl }}
   IDENTREE_OIDC_ISSUER_URL: {{ .Values.config.oidc.issuerUrl | quote }}
@@ -98,6 +145,12 @@ data:
   IDENTREE_AUDIT_LOKI_URL: {{ .Values.config.audit.lokiUrl | quote }}
   {{- end }}
   IDENTREE_AUDIT_BUFFER_SIZE: {{ .Values.config.audit.bufferSize | quote }}
+  {{- if .Values.config.audit.logMaxSize }}
+  IDENTREE_AUDIT_LOG_MAX_SIZE: {{ .Values.config.audit.logMaxSize | quote }}
+  {{- end }}
+  {{- if .Values.config.audit.logMaxFiles }}
+  IDENTREE_AUDIT_LOG_MAX_FILES: {{ .Values.config.audit.logMaxFiles | quote }}
+  {{- end }}
 
   # ── Break-glass escrow ────────────────────────────────────────────────────
   {{- if .Values.config.escrow.backend }}

@@ -91,7 +91,7 @@ UIDs and GIDs are stable, never reused, and persisted to `/config/uidmap.json`.
 
 **Use this if you already have an LDAP server (Authentik, Kanidm, lldap, OpenLDAP, etc.).**
 
-Your existing LDAP handles user and group resolution. identree adds only the passkey-gated PAM approval flow on top. Any OIDC-compliant IdP can be used for authentication — PocketID is not required.
+Your existing LDAP handles user and group resolution. identree adds only the passkey-gated PAM approval flow on top. Any OIDC or SAML 2.0 IdP can be used for authentication — PocketID is not required.
 
 ```
 Authentik / Kanidm / any IdP ──► LDAP (posixAccount, posixGroup)
@@ -104,7 +104,7 @@ Managed hosts still point sssd at **your existing LDAP** for user/group resoluti
 
 Optionally, identree can also serve `ou=sudoers` — managed via its admin UI — so you get fine-grained sudo policy without adding `sudoRole` attributes to your primary LDAP.
 
-**Requirements:** Any OIDC-compliant IdP. An existing LDAP server for user/group resolution.
+**Requirements:** Any OIDC-compliant or SAML 2.0 IdP. An existing LDAP server for user/group resolution.
 
 ### Key settings
 
@@ -186,3 +186,4 @@ IDENTREE_OIDC_CLIENT_SECRET=your-client-secret
 | Admin UI: user management | Yes | No |
 | Admin UI: sudo rules editor | No (via PocketID claims) | Yes |
 | Any OIDC IdP | No (PocketID only) | Yes |
+| SAML 2.0 IdP | No | Yes |
