@@ -127,14 +127,42 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Approve the challenge
-	if err := s.store.Approve(challengeID, username); err != nil {
-		if errors.Is(err, challpkg.ErrDiskWriteFailed) {
-			apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
+	// Multi-approval: if the challenge requires more than 1 approval, use AddApproval
+	// instead of the single-shot Approve method.
+	if challenge.RequiredApprovals > 1 {
+		fullyApproved, err := s.store.AddApproval(challengeID, username, challenge.RequiredApprovals)
+		if err != nil {
+			if errors.Is(err, challpkg.ErrDuplicateApprover) {
+				revokeErrorPage(w, r, http.StatusConflict, "already_approved_by_you", "already_approved_by_you")
+				return
+			}
+			if errors.Is(err, challpkg.ErrDiskWriteFailed) {
+				apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
+				return
+			}
+			revokeErrorPage(w, r, http.StatusInternalServerError, "approval_failed", "approval_failed_message")
 			return
 		}
-		revokeErrorPage(w, r, http.StatusInternalServerError, "approval_failed", "approval_failed_message")
-		return
+		if !fullyApproved {
+			// Partial approval — redirect back to dashboard with flash
+			currentCount := len(challenge.Approvals) + 1 // the one we just added
+			slog.Info("PARTIAL_APPROVAL", "user", challenge.Username, "approver", username, "host", challenge.Hostname, "challenge", challengeID[:8], "approvals", currentCount, "required", challenge.RequiredApprovals, "remote_addr", remoteAddr(r))
+			s.sseBroadcaster.Broadcast(challenge.Username, "challenge_updated")
+			s.setFlashCookie(w, fmt.Sprintf("partial_approve:%s:%d:%d", challenge.UserCode, currentCount, challenge.RequiredApprovals))
+			http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
+			return
+		}
+		// Fall through to the existing post-approval logic (grace session, notification, etc.)
+	} else {
+		// Single-approval path
+		if err := s.store.Approve(challengeID, username); err != nil {
+			if errors.Is(err, challpkg.ErrDiskWriteFailed) {
+				apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
+				return
+			}
+			revokeErrorPage(w, r, http.StatusInternalServerError, "approval_failed", "approval_failed_message")
+			return
+		}
 	}
 
 	challengesApproved.Inc()
@@ -445,16 +473,46 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// OIDC is fresh — atomically consume the single-use token and approve the challenge
-	// under a single lock to eliminate the TOCTOU window where another goroutine could
-	// approve the same challenge between ConsumeOneTap and Approve.
-	if err := s.store.ConsumeAndApprove(challengeID, approver); err != nil {
-		if errors.Is(err, challpkg.ErrDiskWriteFailed) {
-			apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
+	// Multi-approval: for challenges requiring >1 approval, one-tap records a
+	// partial approval and shows a "waiting for more approvers" page instead of
+	// fully approving. The one-tap token is still consumed to prevent replay.
+	if challenge.RequiredApprovals > 1 {
+		// Consume the one-tap token first to prevent replay.
+		if err := s.store.ConsumeOneTap(challengeID); err != nil {
+			revokeErrorPage(w, r, http.StatusConflict, "challenge_expired_or_resolved", "challenge_expired_or_resolved")
 			return
 		}
-		revokeErrorPage(w, r, http.StatusConflict, "challenge_expired_or_resolved", "challenge_expired_or_resolved")
-		return
+		fullyApproved, err := s.store.AddApproval(challengeID, approver, challenge.RequiredApprovals)
+		if err != nil {
+			if errors.Is(err, challpkg.ErrDuplicateApprover) {
+				revokeErrorPage(w, r, http.StatusConflict, "already_approved_by_you", "already_approved_by_you")
+				return
+			}
+			revokeErrorPage(w, r, http.StatusInternalServerError, "approval_failed", "approval_failed_message")
+			return
+		}
+		if !fullyApproved {
+			currentCount := len(challenge.Approvals) + 1
+			slog.Info("ONETAP_PARTIAL_APPROVAL", "user", challenge.Username, "approver", approver, "host", hostname, "challenge", challengeID[:8], "approvals", currentCount, "required", challenge.RequiredApprovals, "remote_addr", remoteAddr(r))
+			s.sseBroadcaster.Broadcast(challenge.Username, "challenge_updated")
+			// Redirect to dashboard with partial approval flash
+			s.setFlashCookie(w, fmt.Sprintf("partial_approve:%s:%d:%d", challenge.UserCode, currentCount, challenge.RequiredApprovals))
+			http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
+			return
+		}
+		// Fall through to full-approval success rendering below.
+	} else {
+		// OIDC is fresh — atomically consume the single-use token and approve the challenge
+		// under a single lock to eliminate the TOCTOU window where another goroutine could
+		// approve the same challenge between ConsumeOneTap and Approve.
+		if err := s.store.ConsumeAndApprove(challengeID, approver); err != nil {
+			if errors.Is(err, challpkg.ErrDiskWriteFailed) {
+				apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
+				return
+			}
+			revokeErrorPage(w, r, http.StatusConflict, "challenge_expired_or_resolved", "challenge_expired_or_resolved")
+			return
+		}
 	}
 
 	challengesApproved.Inc()
@@ -604,28 +662,56 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("APPROVAL_REJECTED account disabled", "user", c.Username, "host", c.Hostname, "remote_addr", remoteAddr(r))
 			continue
 		}
-		if err := s.store.Approve(c.ID, username); err == nil {
-			challengesApproved.Inc()
-			challpkg.ActiveChallenges.Dec()
-			challengeDuration.Observe(time.Since(c.CreatedAt).Seconds())
-			hostname := c.Hostname
-			if hostname == "" {
-				hostname = "(unknown)"
+		// Multi-approval: use AddApproval for challenges requiring >1 approval.
+		// Skip challenges the user has already partially approved.
+		if c.RequiredApprovals > 1 {
+			// Check if this user already approved this challenge.
+			alreadyApproved := false
+			for _, a := range c.Approvals {
+				if a.Approver == username {
+					alreadyApproved = true
+					break
+				}
 			}
-			s.store.LogActionWithReason(username, challpkg.ActionApproved, hostname, c.UserCode, username, c.Reason)
-			count++
-			slog.Info("BULK_APPROVE_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
-			s.dispatchNotification(notify.WebhookData{
-				Event:      "challenge_approved",
-				Username:   c.Username,
-				Hostname:   hostname,
-				UserCode:   c.UserCode,
-				Timestamp:  time.Now().UTC().Format(time.RFC3339),
-				Reason:     c.Reason,
-				Actor:      username,
-				RemoteAddr: remoteAddr(r),
-			})
+			if alreadyApproved {
+				continue
+			}
+			fullyApproved, err := s.store.AddApproval(c.ID, username, c.RequiredApprovals)
+			if err != nil {
+				continue // skip on error (duplicate, expired, etc.)
+			}
+			if !fullyApproved {
+				// Partial approval recorded; don't count as fully approved.
+				slog.Info("BULK_APPROVE_ALL_PARTIAL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "approver", username, "remote_addr", remoteAddr(r))
+				s.sseBroadcaster.Broadcast(c.Username, "challenge_updated")
+				count++
+				continue
+			}
+			// Fall through to full approval logging below.
+		} else if err := s.store.Approve(c.ID, username); err != nil {
+			continue
 		}
+
+		challengesApproved.Inc()
+		challpkg.ActiveChallenges.Dec()
+		challengeDuration.Observe(time.Since(c.CreatedAt).Seconds())
+		hostname := c.Hostname
+		if hostname == "" {
+			hostname = "(unknown)"
+		}
+		s.store.LogActionWithReason(username, challpkg.ActionApproved, hostname, c.UserCode, username, c.Reason)
+		count++
+		slog.Info("BULK_APPROVE_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
+		s.dispatchNotification(notify.WebhookData{
+			Event:      "challenge_approved",
+			Username:   c.Username,
+			Hostname:   hostname,
+			UserCode:   c.UserCode,
+			Timestamp:  time.Now().UTC().Format(time.RFC3339),
+			Reason:     c.Reason,
+			Actor:      username,
+			RemoteAddr: remoteAddr(r),
+		})
 	}
 
 	s.sseBroadcaster.Broadcast(username, "challenge_resolved")

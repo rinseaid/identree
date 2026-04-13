@@ -115,7 +115,7 @@ func (s *Server) handleAdminPolicies(w http.ResponseWriter, r *http.Request) {
 		"Policies":             policies,
 		"HostGroups":           hostGroups,
 		"ChannelNames":         channelNames,
-		"Pending":              s.buildAllPendingViews(lang),
+		"Pending":              s.buildAllPendingViews(username, lang),
 		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
 		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"CSRFToken":            csrfToken,

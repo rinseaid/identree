@@ -759,7 +759,13 @@ const pendingBarHTML = `{{if .Pending}}
         <input type="hidden" class="just-val" name="reason" value="">
       </span>
       {{end}}
+      {{if gt .RequiredApprovals 1}}
+      <span class="pill" style="font-size:0.75rem;padding:2px 6px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px">{{.CurrentApprovals}}/{{.RequiredApprovals}}</span>
+      <button type="submit" class="btn btn-success btn-sm"{{if .AlreadyApprovedByMe}} disabled title="{{call $.T "already_approved_by_you"}}"{{end}}>{{call $.T "approve"}}</button>
+      {{if .AlreadyApprovedByMe}}<span style="font-size:0.6875rem;color:var(--text-2)">{{call $.T "already_approved_by_you"}}</span>{{end}}
+      {{else}}
       <button type="submit" class="btn btn-success btn-sm">{{call $.T "approve"}}</button>
+      {{end}}
     </form>
     {{end}}
     <span class="reject-inline">
@@ -822,7 +828,13 @@ const pendingBarHTML = `{{if .Pending}}
         </div>
         <div class="gtcol pending-table-actions" role="cell">
           {{if or (not .AdminRequired) $.IsAdmin}}
+          {{if gt .RequiredApprovals 1}}
+          <span class="pill" style="font-size:0.6875rem;padding:1px 5px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px">{{.CurrentApprovals}}/{{.RequiredApprovals}}</span>
+          <button type="button" class="btn btn-success btn-sm pending-row-approve" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}"{{if .AlreadyApprovedByMe}} disabled title="{{call $.T "already_approved_by_you"}}"{{end}}>{{call $.T "approve"}}</button>
+          {{if .ApproverNames}}<div style="font-size:0.6875rem;color:var(--text-2)">{{range $i, $n := .ApproverNames}}{{if $i}}, {{end}}{{$n}}{{end}}</div>{{end}}
+          {{else}}
           <button type="button" class="btn btn-success btn-sm pending-row-approve" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "approve"}}</button>
+          {{end}}
           {{end}}
           <span class="reject-inline">
             <button type="button" class="btn btn-danger btn-sm reject-toggle-btn">{{call $.T "reject"}}</button>

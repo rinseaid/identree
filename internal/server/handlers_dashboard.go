@@ -193,13 +193,17 @@ func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
 // GET /
 // pendingView is the template representation of a pending sudo challenge.
 type pendingView struct {
-	ID            string
-	Username      string
-	Hostname      string
-	Code          string
-	ExpiresIn     string
-	AdminRequired bool
-	Reason        string
+	ID                  string
+	Username            string
+	Hostname            string
+	Code                string
+	ExpiresIn           string
+	AdminRequired       bool
+	Reason              string
+	RequiredApprovals   int
+	CurrentApprovals    int
+	ApproverNames       []string
+	AlreadyApprovedByMe bool
 }
 
 // buildPendingViews fetches pending challenges for username and converts them
@@ -216,14 +220,26 @@ func (s *Server) buildPendingViews(username, lang string) []pendingView {
 		if hostname == "" {
 			hostname = t("unknown_host")
 		}
+		var approverNames []string
+		alreadyByMe := false
+		for _, a := range c.Approvals {
+			approverNames = append(approverNames, a.Approver)
+			if a.Approver == username {
+				alreadyByMe = true
+			}
+		}
 		views = append(views, pendingView{
-			ID:            c.ID,
-			Username:      c.Username,
-			Hostname:      hostname,
-			Code:          c.UserCode,
-			ExpiresIn:     formatDuration(t, time.Until(c.ExpiresAt)),
-			AdminRequired: c.RequireAdmin,
-			Reason:        c.Reason,
+			ID:                  c.ID,
+			Username:            c.Username,
+			Hostname:            hostname,
+			Code:                c.UserCode,
+			ExpiresIn:           formatDuration(t, time.Until(c.ExpiresAt)),
+			AdminRequired:       c.RequireAdmin,
+			Reason:              c.Reason,
+			RequiredApprovals:   c.RequiredApprovals,
+			CurrentApprovals:    len(c.Approvals),
+			ApproverNames:       approverNames,
+			AlreadyApprovedByMe: alreadyByMe,
 		})
 	}
 	return views
@@ -235,7 +251,7 @@ func (s *Server) buildPendingViews(username, lang string) []pendingView {
 // by the admin overlay present on all admin pages. Each call site is in a
 // separate request handler, so this is computed once per request — no
 // intra-handler caching is needed.
-func (s *Server) buildAllPendingViews(lang string) []pendingView {
+func (s *Server) buildAllPendingViews(viewerUsername, lang string) []pendingView {
 	t := T(lang)
 	pending := s.store.AllPendingChallenges()
 	sort.Slice(pending, func(i, j int) bool {
@@ -247,14 +263,26 @@ func (s *Server) buildAllPendingViews(lang string) []pendingView {
 		if hostname == "" {
 			hostname = t("unknown_host")
 		}
+		var approverNames []string
+		alreadyByMe := false
+		for _, a := range c.Approvals {
+			approverNames = append(approverNames, a.Approver)
+			if a.Approver == viewerUsername {
+				alreadyByMe = true
+			}
+		}
 		views = append(views, pendingView{
-			ID:            c.ID,
-			Username:      c.Username,
-			Hostname:      hostname,
-			Code:          c.UserCode,
-			ExpiresIn:     formatDuration(t, time.Until(c.ExpiresAt)),
-			AdminRequired: c.RequireAdmin,
-			Reason:        c.Reason,
+			ID:                  c.ID,
+			Username:            c.Username,
+			Hostname:            hostname,
+			Code:                c.UserCode,
+			ExpiresIn:           formatDuration(t, time.Until(c.ExpiresAt)),
+			AdminRequired:       c.RequireAdmin,
+			Reason:              c.Reason,
+			RequiredApprovals:   c.RequiredApprovals,
+			CurrentApprovals:    len(c.Approvals),
+			ApproverNames:       approverNames,
+			AlreadyApprovedByMe: alreadyByMe,
 		})
 	}
 	return views
@@ -263,7 +291,7 @@ func (s *Server) buildAllPendingViews(lang string) []pendingView {
 // pendingViewsFor returns all pending views for admins, or only the user's own for regular users.
 func (s *Server) pendingViewsFor(username, lang string, isAdmin bool) []pendingView {
 	if isAdmin {
-		return s.buildAllPendingViews(lang)
+		return s.buildAllPendingViews(username, lang)
 	}
 	return s.buildPendingViews(username, lang)
 }
@@ -350,6 +378,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					msg += " " + t("until") + " " + formatFlashTime(parts[2])
 				}
 				flashes = append(flashes, msg)
+			case "partial_approve":
+				// partial_approve:code:current:required
+				if len(parts) == 4 {
+					flashes = append(flashes, fmt.Sprintf(t("partial_approval_recorded"), atoi(parts[2]), atoi(parts[3])))
+				} else {
+					flashes = append(flashes, t("partial_approval_recorded"))
+				}
 			case "expired":
 				flashes = append(flashes, t("session_expired_sign_in"))
 			case "highlight":
