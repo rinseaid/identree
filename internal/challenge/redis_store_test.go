@@ -579,3 +579,145 @@ func TestRedisStore_OIDCAuth(t *testing.T) {
 		t.Fatal("expected zero LastOIDCAuth for unknown user")
 	}
 }
+
+func TestRedisStore_AddApproval_SingleApprover(t *testing.T) {
+	store, _ := newTestRedisStore(t)
+
+	c, err := store.Create("alice", "host1", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	fullyApproved, err := store.AddApproval(c.ID, "admin1", 1)
+	if err != nil {
+		t.Fatalf("AddApproval: %v", err)
+	}
+	if !fullyApproved {
+		t.Fatal("expected fullyApproved=true with threshold=1")
+	}
+
+	got, ok := store.Get(c.ID)
+	if !ok {
+		t.Fatal("Get after AddApproval returned not found")
+	}
+	if got.Status != StatusApproved {
+		t.Fatalf("expected approved, got %s", got.Status)
+	}
+	if got.ApprovedBy != "admin1" {
+		t.Fatalf("expected approvedBy admin1, got %q", got.ApprovedBy)
+	}
+	if len(got.Approvals) != 1 {
+		t.Fatalf("expected 1 approval record, got %d", len(got.Approvals))
+	}
+}
+
+func TestRedisStore_AddApproval_MultiApprover(t *testing.T) {
+	store, _ := newTestRedisStore(t)
+
+	c, err := store.Create("alice", "host1", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// First approval — partial.
+	fullyApproved, err := store.AddApproval(c.ID, "admin1", 2)
+	if err != nil {
+		t.Fatalf("AddApproval(admin1): %v", err)
+	}
+	if fullyApproved {
+		t.Fatal("expected fullyApproved=false after first of two required approvals")
+	}
+
+	got, ok := store.Get(c.ID)
+	if !ok {
+		t.Fatal("Get after first AddApproval returned not found")
+	}
+	if got.Status != StatusPending {
+		t.Fatalf("expected pending after first approval, got %s", got.Status)
+	}
+	if len(got.Approvals) != 1 {
+		t.Fatalf("expected 1 approval record, got %d", len(got.Approvals))
+	}
+
+	// Second approval — meets threshold.
+	fullyApproved, err = store.AddApproval(c.ID, "admin2", 2)
+	if err != nil {
+		t.Fatalf("AddApproval(admin2): %v", err)
+	}
+	if !fullyApproved {
+		t.Fatal("expected fullyApproved=true after second approval")
+	}
+
+	got, ok = store.Get(c.ID)
+	if !ok {
+		t.Fatal("Get after second AddApproval returned not found")
+	}
+	if got.Status != StatusApproved {
+		t.Fatalf("expected approved, got %s", got.Status)
+	}
+	if got.ApprovedBy != "admin2" {
+		t.Fatalf("expected approvedBy admin2, got %q", got.ApprovedBy)
+	}
+	if len(got.Approvals) != 2 {
+		t.Fatalf("expected 2 approval records, got %d", len(got.Approvals))
+	}
+}
+
+func TestRedisStore_AddApproval_DuplicateApprover(t *testing.T) {
+	store, _ := newTestRedisStore(t)
+
+	c, err := store.Create("alice", "host1", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	_, err = store.AddApproval(c.ID, "admin1", 2)
+	if err != nil {
+		t.Fatalf("first AddApproval: %v", err)
+	}
+
+	_, err = store.AddApproval(c.ID, "admin1", 2)
+	if err == nil {
+		t.Fatal("expected error on duplicate approver, got nil")
+	}
+	if err != ErrDuplicateApprover {
+		t.Fatalf("expected ErrDuplicateApprover, got: %v", err)
+	}
+}
+
+func TestRedisStore_AddApproval_ExpiredChallenge(t *testing.T) {
+	store, mr := newTestRedisStore(t)
+
+	c, err := store.Create("alice", "host1", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Fast-forward past the full Redis key TTL (30s challenge + 60s buffer = 90s)
+	// so the key is completely gone from Redis.
+	mr.FastForward(2 * time.Minute)
+
+	_, err = store.AddApproval(c.ID, "admin1", 1)
+	if err == nil {
+		t.Fatal("expected error for expired challenge, got nil")
+	}
+}
+
+func TestRedisStore_AddApproval_AlreadyResolved(t *testing.T) {
+	store, _ := newTestRedisStore(t)
+
+	c, err := store.Create("alice", "host1", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Approve via the normal path first.
+	if err := store.Approve(c.ID, "admin1"); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+
+	_, err = store.AddApproval(c.ID, "admin2", 1)
+	if err == nil {
+		t.Fatal("expected error for already resolved challenge, got nil")
+	}
+}

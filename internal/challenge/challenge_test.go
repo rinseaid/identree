@@ -1337,3 +1337,133 @@ func TestPersistStateVersionCompat(t *testing.T) {
 		}
 	})
 }
+
+// TestAddApproval verifies the multi-approval AddApproval method on ChallengeStore.
+func TestAddApproval(t *testing.T) {
+	t.Run("SingleApprover", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		c, err := s.Create("alice", "host1", "", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		fullyApproved, err := s.AddApproval(c.ID, "admin1", 1)
+		if err != nil {
+			t.Fatalf("AddApproval: %v", err)
+		}
+		if !fullyApproved {
+			t.Fatal("expected fullyApproved=true with threshold=1")
+		}
+		// Verify challenge state.
+		s.mu.RLock()
+		ch := s.challenges[c.ID]
+		s.mu.RUnlock()
+		if ch.Status != StatusApproved {
+			t.Errorf("expected status %q, got %q", StatusApproved, ch.Status)
+		}
+		if ch.ApprovedBy != "admin1" {
+			t.Errorf("expected ApprovedBy=admin1, got %q", ch.ApprovedBy)
+		}
+		if len(ch.Approvals) != 1 {
+			t.Fatalf("expected 1 approval record, got %d", len(ch.Approvals))
+		}
+		if ch.Approvals[0].Approver != "admin1" {
+			t.Errorf("expected approver=admin1, got %q", ch.Approvals[0].Approver)
+		}
+	})
+
+	t.Run("MultiApprover", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 10*time.Minute)
+		c, err := s.Create("alice", "host1", "", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// First approval — not yet fully approved.
+		fullyApproved, err := s.AddApproval(c.ID, "admin1", 2)
+		if err != nil {
+			t.Fatalf("AddApproval(admin1): %v", err)
+		}
+		if fullyApproved {
+			t.Fatal("expected fullyApproved=false after first of two required approvals")
+		}
+		s.mu.RLock()
+		ch := s.challenges[c.ID]
+		status1 := ch.Status
+		approvals1 := len(ch.Approvals)
+		s.mu.RUnlock()
+		if status1 != StatusPending {
+			t.Errorf("expected status pending after first approval, got %q", status1)
+		}
+		if approvals1 != 1 {
+			t.Errorf("expected 1 approval record, got %d", approvals1)
+		}
+
+		// Second approval — meets threshold.
+		fullyApproved, err = s.AddApproval(c.ID, "admin2", 2)
+		if err != nil {
+			t.Fatalf("AddApproval(admin2): %v", err)
+		}
+		if !fullyApproved {
+			t.Fatal("expected fullyApproved=true after second approval")
+		}
+		s.mu.RLock()
+		ch = s.challenges[c.ID]
+		s.mu.RUnlock()
+		if ch.Status != StatusApproved {
+			t.Errorf("expected approved, got %q", ch.Status)
+		}
+		if ch.ApprovedBy != "admin2" {
+			t.Errorf("expected ApprovedBy=admin2, got %q", ch.ApprovedBy)
+		}
+		if len(ch.Approvals) != 2 {
+			t.Errorf("expected 2 approval records, got %d", len(ch.Approvals))
+		}
+	})
+
+	t.Run("DuplicateApprover", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		_, err = s.AddApproval(c.ID, "admin1", 2)
+		if err != nil {
+			t.Fatalf("first AddApproval: %v", err)
+		}
+		_, err = s.AddApproval(c.ID, "admin1", 2)
+		if err == nil {
+			t.Fatal("expected error on duplicate approver, got nil")
+		}
+		if !errors.Is(err, ErrDuplicateApprover) {
+			t.Errorf("expected ErrDuplicateApprover, got: %v", err)
+		}
+	})
+
+	t.Run("ExpiredChallenge", func(t *testing.T) {
+		s := newTestStore(1*time.Millisecond, 0)
+		c, err := s.Create("alice", "host1", "", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+		_, err = s.AddApproval(c.ID, "admin1", 1)
+		if err == nil {
+			t.Fatal("expected error for expired challenge, got nil")
+		}
+	})
+
+	t.Run("AlreadyResolved", func(t *testing.T) {
+		s := newTestStore(5*time.Minute, 0)
+		c, err := s.Create("alice", "host1", "", "")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// Approve via the normal path first.
+		if err := s.Approve(c.ID, "admin1"); err != nil {
+			t.Fatalf("Approve: %v", err)
+		}
+		_, err = s.AddApproval(c.ID, "admin2", 1)
+		if err == nil {
+			t.Fatal("expected error for already resolved challenge, got nil")
+		}
+	})
+}

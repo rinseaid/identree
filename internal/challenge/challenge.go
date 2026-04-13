@@ -78,6 +78,8 @@ var (
 	// durably persist the approval to disk. Callers should propagate this as a
 	// 503 so the PAM client retries rather than caching a potentially lost approval.
 	ErrDiskWriteFailed = errors.New("challenge: disk write failed, please retry")
+	// ErrDuplicateApprover is returned when the same approver tries to approve twice.
+	ErrDuplicateApprover = errors.New("approver has already approved this challenge")
 )
 
 // ChallengeStatus represents the state of a sudo challenge.
@@ -98,6 +100,12 @@ const (
 	// maxTotalChallenges is an absolute cap on total challenges in the store.
 	maxTotalChallenges = 10000
 )
+
+// ApprovalRecord tracks a single approver's decision in multi-approval flows.
+type ApprovalRecord struct {
+	Approver   string    `json:"approver"`
+	ApprovedAt time.Time `json:"approved_at"`
+}
 
 // GraceSession represents an active grace period session for a specific host.
 type GraceSession struct {
@@ -152,6 +160,10 @@ type Challenge struct {
 	// Set after OIDC callback confirms identity
 	ApprovedBy string    `json:"-"`
 	ApprovedAt time.Time `json:"-"`
+
+	// Approvals tracks all approvers for multi-approval challenges.
+	// For single-approval (RequiredApprovals <= 1), this has at most one entry.
+	Approvals []ApprovalRecord `json:"approvals,omitempty"`
 
 	// RawIDToken stores the OIDC id_token after approval, for forwarding to
 	// the PAM client's token cache. Not serialized to JSON.
@@ -502,6 +514,66 @@ func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 		return ErrDiskWriteFailed
 	}
 	return nil
+}
+
+// AddApproval records a partial approval for multi-approval challenges.
+// Returns true if this approval met the threshold (challenge is now fully approved).
+func (s *ChallengeStore) AddApproval(id string, approver string, requiredApprovals int) (bool, error) {
+	now := time.Now()
+	s.mu.Lock()
+	c, ok := s.challenges[id]
+	if !ok {
+		s.mu.Unlock()
+		return false, fmt.Errorf("challenge not found")
+	}
+	if now.After(c.ExpiresAt) {
+		s.mu.Unlock()
+		return false, fmt.Errorf("challenge expired")
+	}
+	if c.Status != StatusPending {
+		s.mu.Unlock()
+		return false, fmt.Errorf("challenge already resolved")
+	}
+	// If the user's session was revoked after this challenge was created,
+	// treat the challenge as expired.
+	if revokeTs, ok := s.revokeTokensBefore[c.Username]; ok && revokeTs.After(c.CreatedAt) {
+		s.mu.Unlock()
+		return false, fmt.Errorf("challenge superseded by session revocation")
+	}
+	// Check for duplicate approver.
+	for _, a := range c.Approvals {
+		if a.Approver == approver {
+			s.mu.Unlock()
+			return false, ErrDuplicateApprover
+		}
+	}
+	c.Approvals = append(c.Approvals, ApprovalRecord{
+		Approver:   approver,
+		ApprovedAt: now,
+	})
+	fullyApproved := len(c.Approvals) >= requiredApprovals
+	if fullyApproved {
+		c.Status = StatusApproved
+		c.ApprovedBy = approver
+		c.ApprovedAt = now
+		if s.gracePeriod > 0 {
+			key := graceKey(c.Username, c.Hostname)
+			graceDur := c.RequestedGrace
+			if graceDur == 0 {
+				graceDur = s.gracePeriod
+			}
+			s.lastApproval[key] = now.Add(graceDur)
+		}
+		graceSessions.Set(float64(len(s.lastApproval)))
+		s.decPending(c.Username)
+	}
+	data, rotate := s.marshalStateLocked()
+	s.mu.Unlock()
+	if !s.writeStateToDisk(data, rotate) {
+		s.dirty.Store(true)
+		return false, ErrDiskWriteFailed
+	}
+	return fullyApproved, nil
 }
 
 // Deny marks a challenge as denied, with an optional reason.

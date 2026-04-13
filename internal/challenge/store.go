@@ -16,6 +16,12 @@ type Store interface {
 	SetNonce(id string, nonce string) error
 	SetRequestedGrace(id string, d time.Duration)
 	Approve(id string, approvedBy string) error
+	// AddApproval records a partial approval for multi-approval challenges.
+	// Returns true if this approval met the threshold (challenge is now fully approved).
+	// Returns false if more approvals are still needed.
+	// Returns error if the challenge doesn't exist, is not pending, the approver
+	// already approved, or the challenge is expired.
+	AddApproval(id string, approver string, requiredApprovals int) (fullyApproved bool, err error)
 	Deny(id, reason string) error
 	AutoApprove(id string) error
 	AutoApproveIfWithinGracePeriod(username, hostname, id string) bool

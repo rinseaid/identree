@@ -275,31 +275,89 @@ if totalPending < 0 then redis.call('SET', KEYS[4], '0') end
 return 'ok'
 `)
 
+// luaAddApproval atomically adds a partial approval for multi-approval challenges.
+// KEYS[1]=challenge:{id} KEYS[2]=pending:{user} KEYS[3]=pending:total KEYS[4]=grace:{key}
+// ARGV[1]=approver ARGV[2]=now_unix ARGV[3]=required_approvals
+// ARGV[4]=grace_expiry_unix (0 = no grace) ARGV[5]=grace_ttl_seconds
+// ARGV[6]=revokeTokensBefore_unix (0 = not set)
+// Returns: JSON array [challenge_json, "0"|"1"] where "1" means fully approved.
+var luaAddApproval = redis.NewScript(`
+local data = redis.call('GET', KEYS[1])
+if not data then return redis.error_reply('not_found') end
+local c = cjson.decode(data)
+if c.status ~= 'pending' then return redis.error_reply('already_resolved') end
+local now = tonumber(ARGV[2])
+if now > tonumber(c.expires_at_unix) then return redis.error_reply('expired') end
+local revokeTs = tonumber(ARGV[6])
+if revokeTs > 0 and revokeTs > tonumber(c.created_at_unix) then return redis.error_reply('revoked') end
+local approver = ARGV[1]
+if not c.approvals then c.approvals = {} end
+for _, a in ipairs(c.approvals) do
+  if a.approver == approver then return redis.error_reply('duplicate_approver') end
+end
+table.insert(c.approvals, {approver = approver, approved_at_unix = tostring(now)})
+local required = tonumber(ARGV[3])
+local fully = '0'
+if #c.approvals >= required then
+  c.status = 'approved'
+  c.approved_by = approver
+  c.approved_at_unix = tostring(now)
+  fully = '1'
+  local userPending = redis.call('DECR', KEYS[2])
+  if userPending < 0 then redis.call('SET', KEYS[2], '0') end
+  local totalPending = redis.call('DECR', KEYS[3])
+  if totalPending < 0 then redis.call('SET', KEYS[3], '0') end
+  local graceExpiry = tonumber(ARGV[4])
+  if graceExpiry > 0 then
+    local graceTTL = tonumber(ARGV[5])
+    redis.call('SET', KEYS[4], tostring(graceExpiry), 'EX', graceTTL)
+  end
+end
+local ttl = redis.call('TTL', KEYS[1])
+if ttl < 1 then ttl = 60 end
+redis.call('SET', KEYS[1], cjson.encode(c), 'EX', ttl)
+return cjson.encode({cjson.encode(c), fully})
+`)
+
 // ── redisChallenge is the Redis-serializable form of Challenge ───────────
 
+// redisApprovalRecord is the Redis-serializable form of ApprovalRecord.
+type redisApprovalRecord struct {
+	Approver      string `json:"approver"`
+	ApprovedAtUnix string `json:"approved_at_unix"`
+}
+
 type redisChallenge struct {
-	ID                     string `json:"id"`
-	UserCode               string `json:"user_code"`
-	Username               string `json:"username"`
-	Status                 string `json:"status"`
-	CreatedAtUnix          string `json:"created_at_unix"`
-	ExpiresAtUnix          string `json:"expires_at_unix"`
-	Nonce                  string `json:"nonce,omitempty"`
-	Hostname               string `json:"hostname,omitempty"`
-	Reason                 string `json:"reason,omitempty"`
-	DenyReason             string `json:"deny_reason,omitempty"`
-	PolicyName             string `json:"policy_name,omitempty"`
-	RequiredApprovals      int    `json:"required_approvals,omitempty"`
-	RequireAdmin           bool   `json:"require_admin,omitempty"`
-	BreakglassRotateBefore string `json:"breakglass_rotate_before,omitempty"`
-	RequestedGraceSec      int64  `json:"requested_grace_sec,omitempty"`
-	RevokeTokensBefore     string `json:"revoke_tokens_before,omitempty"`
-	ApprovedBy             string `json:"approved_by,omitempty"`
-	ApprovedAtUnix         string `json:"approved_at_unix,omitempty"`
-	RawIDToken             string `json:"raw_id_token,omitempty"`
+	ID                     string                `json:"id"`
+	UserCode               string                `json:"user_code"`
+	Username               string                `json:"username"`
+	Status                 string                `json:"status"`
+	CreatedAtUnix          string                `json:"created_at_unix"`
+	ExpiresAtUnix          string                `json:"expires_at_unix"`
+	Nonce                  string                `json:"nonce,omitempty"`
+	Hostname               string                `json:"hostname,omitempty"`
+	Reason                 string                `json:"reason,omitempty"`
+	DenyReason             string                `json:"deny_reason,omitempty"`
+	PolicyName             string                `json:"policy_name,omitempty"`
+	RequiredApprovals      int                   `json:"required_approvals,omitempty"`
+	RequireAdmin           bool                  `json:"require_admin,omitempty"`
+	BreakglassRotateBefore string                `json:"breakglass_rotate_before,omitempty"`
+	RequestedGraceSec      int64                 `json:"requested_grace_sec,omitempty"`
+	RevokeTokensBefore     string                `json:"revoke_tokens_before,omitempty"`
+	ApprovedBy             string                `json:"approved_by,omitempty"`
+	ApprovedAtUnix         string                `json:"approved_at_unix,omitempty"`
+	Approvals              []redisApprovalRecord `json:"approvals,omitempty"`
+	RawIDToken             string                `json:"raw_id_token,omitempty"`
 }
 
 func challengeToRedis(c *Challenge) redisChallenge {
+	var approvals []redisApprovalRecord
+	for _, a := range c.Approvals {
+		approvals = append(approvals, redisApprovalRecord{
+			Approver:       a.Approver,
+			ApprovedAtUnix: strconv.FormatInt(a.ApprovedAt.Unix(), 10),
+		})
+	}
 	return redisChallenge{
 		ID:                     c.ID,
 		UserCode:               c.UserCode,
@@ -319,6 +377,7 @@ func challengeToRedis(c *Challenge) redisChallenge {
 		RevokeTokensBefore:     c.RevokeTokensBefore,
 		ApprovedBy:             c.ApprovedBy,
 		ApprovedAtUnix:         formatUnixOptional(c.ApprovedAt),
+		Approvals:              approvals,
 		RawIDToken:             c.RawIDToken,
 	}
 }
@@ -342,6 +401,13 @@ func redisToChallenge(rc redisChallenge) Challenge {
 	createdAt := parseUnixTime(rc.CreatedAtUnix)
 	expiresAt := parseUnixTime(rc.ExpiresAtUnix)
 	approvedAt := parseUnixTime(rc.ApprovedAtUnix)
+	var approvals []ApprovalRecord
+	for _, ra := range rc.Approvals {
+		approvals = append(approvals, ApprovalRecord{
+			Approver:   ra.Approver,
+			ApprovedAt: parseUnixTime(ra.ApprovedAtUnix),
+		})
+	}
 	return Challenge{
 		ID:                     rc.ID,
 		UserCode:               rc.UserCode,
@@ -361,6 +427,7 @@ func redisToChallenge(rc redisChallenge) Challenge {
 		RevokeTokensBefore:     rc.RevokeTokensBefore,
 		ApprovedBy:             rc.ApprovedBy,
 		ApprovedAt:             approvedAt,
+		Approvals:              approvals,
 		RawIDToken:             rc.RawIDToken,
 	}
 }
@@ -607,6 +674,84 @@ func (s *RedisStore) Approve(id string, approvedBy string) error {
 
 	s.updateGraceGauge()
 	return nil
+}
+
+func (s *RedisStore) AddApproval(id string, approver string, requiredApprovals int) (bool, error) {
+	c, ok := s.Get(id)
+	if !ok {
+		return false, fmt.Errorf("challenge not found")
+	}
+
+	now := time.Now()
+
+	// Determine grace settings.
+	var graceExpiryUnix int64
+	var graceTTLSec int64
+	if s.gracePeriod > 0 {
+		graceDur := time.Duration(c.RequestedGrace)
+		if graceDur == 0 {
+			graceDur = s.gracePeriod
+		}
+		graceExpiry := now.Add(graceDur)
+		graceExpiryUnix = graceExpiry.Unix()
+		graceTTLSec = int64(graceDur.Seconds()) + 60
+	}
+
+	// Get revokeTokensBefore for this user.
+	var revokeUnix int64
+	if v, err := s.client.Get(s.ctx(), s.revokeTokensKey(c.Username)).Result(); err == nil {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			revokeUnix = t.Unix()
+		}
+	}
+
+	grKey := s.graceKey(c.Username, c.Hostname)
+
+	result, err := luaAddApproval.Run(s.ctx(), s.client,
+		[]string{
+			s.challengeKey(id),
+			s.pendingUserKey(c.Username),
+			s.pendingTotalKey(),
+			grKey,
+		},
+		approver,
+		now.Unix(),
+		requiredApprovals,
+		graceExpiryUnix,
+		graceTTLSec,
+		revokeUnix,
+	).Result()
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "not_found") {
+			return false, fmt.Errorf("challenge not found")
+		}
+		if strings.Contains(msg, "expired") {
+			return false, fmt.Errorf("challenge expired")
+		}
+		if strings.Contains(msg, "already_resolved") {
+			return false, fmt.Errorf("challenge already resolved")
+		}
+		if strings.Contains(msg, "revoked") {
+			return false, fmt.Errorf("challenge superseded by session revocation")
+		}
+		if strings.Contains(msg, "duplicate_approver") {
+			return false, ErrDuplicateApprover
+		}
+		return false, fmt.Errorf("redis AddApproval: %w", err)
+	}
+
+	// Parse the result: JSON array [challenge_json, "0"|"1"]
+	var arr []string
+	if err := json.Unmarshal([]byte(result.(string)), &arr); err != nil {
+		return false, fmt.Errorf("redis AddApproval: failed to parse result: %w", err)
+	}
+	fullyApproved := len(arr) >= 2 && arr[1] == "1"
+
+	if fullyApproved {
+		s.updateGraceGauge()
+	}
+	return fullyApproved, nil
 }
 
 func (s *RedisStore) Deny(id, reason string) error {
