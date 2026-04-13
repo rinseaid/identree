@@ -431,6 +431,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	challenge.RequiredApprovals = policyResult.MinApprovals
 	challenge.RequireAdmin = policyResult.RequireAdmin
 	challenge.GraceEligible = policyResult.GraceEligible
+	challenge.BreakglassBypassAllowed = policyResult.BreakglassBypass
 
 	challengesCreated.Inc()
 	challpkg.ActiveChallenges.Inc()

@@ -22,6 +22,7 @@ type Store interface {
 	// Returns error if the challenge doesn't exist, is not pending, the approver
 	// already approved, or the challenge is expired.
 	AddApproval(id string, approver string, requiredApprovals int) (fullyApproved bool, err error)
+	SetBreakglassOverride(id string)
 	Deny(id, reason string) error
 	AutoApprove(id string) error
 	AutoApproveIfWithinGracePeriod(username, hostname, id string) bool

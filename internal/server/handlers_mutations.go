@@ -206,6 +206,87 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
 }
 
+// handleBreakglassOverride force-approves a pending challenge, bypassing all
+// policy checks (time window, multi-approval count, step-up auth). This is
+// intended for emergency use by admins when normal approval flow is blocked.
+// POST /api/challenges/override
+func (s *Server) handleBreakglassOverride(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	username := s.verifyFormAuth(w, r)
+	if username == "" {
+		return
+	}
+
+	// Only admins may use break-glass override.
+	if s.getSessionRole(r) != "admin" {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "admin_approval_required")
+		return
+	}
+
+	challengeID := r.FormValue("challenge_id")
+	if challengeID == "" || len(challengeID) != 32 || !isHex(challengeID) {
+		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "missing_fields")
+		return
+	}
+
+	ch, ok := s.store.Get(challengeID)
+	if !ok || ch.Status != challpkg.StatusPending {
+		revokeErrorPage(w, r, http.StatusNotFound, "challenge_not_found", "challenge_expired_or_resolved")
+		return
+	}
+
+	// Verify the matching policy allows break-glass bypass.
+	if !ch.BreakglassBypassAllowed {
+		revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "break_glass_override_not_allowed")
+		return
+	}
+
+	// Mark as break-glass override before approval for audit trail.
+	s.store.SetBreakglassOverride(challengeID)
+
+	// Force-approve: bypass time window, multi-approval, step-up auth.
+	if err := s.store.Approve(challengeID, username); err != nil {
+		if errors.Is(err, challpkg.ErrDiskWriteFailed) {
+			apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
+			return
+		}
+		revokeErrorPage(w, r, http.StatusInternalServerError, "approval_failed", "approval_failed_message")
+		return
+	}
+
+	challengesApproved.Inc()
+	challpkg.ActiveChallenges.Dec()
+	challengeDuration.Observe(time.Since(ch.CreatedAt).Seconds())
+
+	hostname := ch.Hostname
+	if hostname == "" {
+		hostname = "(unknown)"
+	}
+	slog.Warn("BREAK_GLASS_OVERRIDE", "admin", username, "user", ch.Username, "host", hostname, "challenge", challengeID[:8], "policy", ch.PolicyName, "remote_addr", remoteAddr(r))
+
+	// Log the override action.
+	s.store.LogAction(ch.Username, challpkg.ActionBreakglassOverride, hostname, ch.UserCode, username)
+	s.sseBroadcaster.Broadcast(ch.Username, "challenge_resolved")
+
+	// Dispatch audit event with distinct event type.
+	s.dispatchNotification(notify.WebhookData{
+		Event:      "break_glass_policy_override",
+		Username:   ch.Username,
+		Hostname:   hostname,
+		UserCode:   ch.UserCode,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		Actor:      username,
+		RemoteAddr: remoteAddr(r),
+	})
+
+	s.setFlashCookie(w, fmt.Sprintf("break_glass_override:%s:%s", hostname, ch.Username))
+	http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
+}
+
 // handleOneTap processes a one-tap approval link from a notification.
 // GET /api/onetap/{token}  — renders a confirmation page showing username/hostname.
 // POST /api/onetap/{token} — performs the actual approval (submitted from the confirmation form).

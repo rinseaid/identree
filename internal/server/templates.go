@@ -768,6 +768,15 @@ const pendingBarHTML = `{{if .Pending}}
       {{end}}
     </form>
     {{end}}
+    {{if and $.IsAdmin .BreakglassBypassAllowed}}
+    <form method="POST" action="/api/challenges/override" style="display:inline">
+      <input type="hidden" name="challenge_id" value="{{.ID}}">
+      <input type="hidden" name="username" value="{{$.Username}}">
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+      <button type="submit" class="btn btn-danger btn-sm saction-confirm" data-confirm="{{call $.T "break_glass_override_confirm"}}">{{call $.T "break_glass_override"}}</button>
+    </form>
+    {{end}}
     <span class="reject-inline">
       <button type="button" class="btn btn-danger btn-sm reject-toggle-btn">{{call $.T "reject"}}</button>
       <form method="POST" action="/api/challenges/reject" class="reject-inline-form" style="display:none">
@@ -835,6 +844,15 @@ const pendingBarHTML = `{{if .Pending}}
           {{else}}
           <button type="button" class="btn btn-success btn-sm pending-row-approve" data-id="{{.ID}}" data-username="{{$.Username}}" data-csrf="{{$.CSRFToken}}" data-csrf-ts="{{$.CSRFTs}}">{{call $.T "approve"}}</button>
           {{end}}
+          {{end}}
+          {{if and $.IsAdmin .BreakglassBypassAllowed}}
+          <form method="POST" action="/api/challenges/override" style="display:inline">
+            <input type="hidden" name="challenge_id" value="{{.ID}}">
+            <input type="hidden" name="username" value="{{$.Username}}">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+            <button type="submit" class="btn btn-danger btn-sm saction-confirm" data-confirm="{{call $.T "break_glass_override_confirm"}}">{{call $.T "break_glass_override"}}</button>
+          </form>
           {{end}}
           <span class="reject-inline">
             <button type="button" class="btn btn-danger btn-sm reject-toggle-btn">{{call $.T "reject"}}</button>
@@ -3463,6 +3481,7 @@ const adminPageHTML = `<!DOCTYPE html>
             <th>{{call .T "policy_match_users"}}</th>
             <th>{{call .T "policy_require_admin"}}</th>
             <th>{{call .T "policy_grace"}}</th>
+            <th>{{call .T "policy_break_glass"}}</th>
             <th>{{call .T "policy_time_window"}}</th>
             <th></th>
           </tr>
@@ -3476,6 +3495,7 @@ const adminPageHTML = `<!DOCTYPE html>
             <td>{{if .MatchUsers}}{{range $i, $u := .MatchUsers}}{{if $i}}, {{end}}<code>{{$u}}</code>{{end}}{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
             <td>{{if .RequireAdmin}}<span style="color:var(--danger)">Yes</span>{{else}}No{{end}}</td>
             <td>{{if .AutoApproveGrace}}<span style="color:var(--success)">Yes</span>{{else}}No{{end}}</td>
+            <td>{{if .BreakglassBypass}}<span style="color:var(--warning)">Yes</span>{{else}}No{{end}}</td>
             <td>{{if or .AllowedHours .AllowedDays}}{{.AllowedHours}} {{.AllowedDays}}{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
             <td>
               <form method="POST" action="/api/policies/delete" style="display:inline">
@@ -3527,6 +3547,10 @@ const adminPageHTML = `<!DOCTYPE html>
           <tr>
             <td class="info-label"><label for="policy-grace">{{call .T "policy_grace"}}</label></td>
             <td><input type="checkbox" id="policy-grace" name="auto_approve_grace" value="on" checked></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="policy-break-glass">{{call .T "policy_break_glass"}}</label></td>
+            <td><input type="checkbox" id="policy-break-glass" name="break_glass_bypass" value="on"></td>
           </tr>
           <tr>
             <td class="info-label"><label for="policy-hours">{{call .T "policy_allowed_hours"}}</label></td>

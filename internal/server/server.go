@@ -687,6 +687,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/challenge/", s.handlePollChallenge)
 	s.mux.HandleFunc("/api/challenges/approve", s.handleBulkApprove)
 	s.mux.HandleFunc("/api/challenges/approve-all", s.handleBulkApproveAll)
+	s.mux.HandleFunc("/api/challenges/override", s.handleBreakglassOverride)
 	s.mux.HandleFunc("/api/challenges/reject", s.handleRejectChallenge)
 	s.mux.HandleFunc("/api/challenges/reject-all", s.handleRejectAll)
 	s.mux.HandleFunc("/api/grace-status", s.handleGraceStatus)

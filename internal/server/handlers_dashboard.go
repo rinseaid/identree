@@ -203,7 +203,8 @@ type pendingView struct {
 	RequiredApprovals   int
 	CurrentApprovals    int
 	ApproverNames       []string
-	AlreadyApprovedByMe bool
+	AlreadyApprovedByMe     bool
+	BreakglassBypassAllowed bool
 }
 
 // buildPendingViews fetches pending challenges for username and converts them
@@ -229,17 +230,18 @@ func (s *Server) buildPendingViews(username, lang string) []pendingView {
 			}
 		}
 		views = append(views, pendingView{
-			ID:                  c.ID,
-			Username:            c.Username,
-			Hostname:            hostname,
-			Code:                c.UserCode,
-			ExpiresIn:           formatDuration(t, time.Until(c.ExpiresAt)),
-			AdminRequired:       c.RequireAdmin,
-			Reason:              c.Reason,
-			RequiredApprovals:   c.RequiredApprovals,
-			CurrentApprovals:    len(c.Approvals),
-			ApproverNames:       approverNames,
-			AlreadyApprovedByMe: alreadyByMe,
+			ID:                      c.ID,
+			Username:                c.Username,
+			Hostname:                hostname,
+			Code:                    c.UserCode,
+			ExpiresIn:               formatDuration(t, time.Until(c.ExpiresAt)),
+			AdminRequired:           c.RequireAdmin,
+			Reason:                  c.Reason,
+			RequiredApprovals:       c.RequiredApprovals,
+			CurrentApprovals:        len(c.Approvals),
+			ApproverNames:           approverNames,
+			AlreadyApprovedByMe:     alreadyByMe,
+			BreakglassBypassAllowed: c.BreakglassBypassAllowed,
 		})
 	}
 	return views
@@ -272,17 +274,18 @@ func (s *Server) buildAllPendingViews(viewerUsername, lang string) []pendingView
 			}
 		}
 		views = append(views, pendingView{
-			ID:                  c.ID,
-			Username:            c.Username,
-			Hostname:            hostname,
-			Code:                c.UserCode,
-			ExpiresIn:           formatDuration(t, time.Until(c.ExpiresAt)),
-			AdminRequired:       c.RequireAdmin,
-			Reason:              c.Reason,
-			RequiredApprovals:   c.RequiredApprovals,
-			CurrentApprovals:    len(c.Approvals),
-			ApproverNames:       approverNames,
-			AlreadyApprovedByMe: alreadyByMe,
+			ID:                      c.ID,
+			Username:                c.Username,
+			Hostname:                hostname,
+			Code:                    c.UserCode,
+			ExpiresIn:               formatDuration(t, time.Until(c.ExpiresAt)),
+			AdminRequired:           c.RequireAdmin,
+			Reason:                  c.Reason,
+			RequiredApprovals:       c.RequiredApprovals,
+			CurrentApprovals:        len(c.Approvals),
+			ApproverNames:           approverNames,
+			AlreadyApprovedByMe:     alreadyByMe,
+			BreakglassBypassAllowed: c.BreakglassBypassAllowed,
 		})
 	}
 	return views
@@ -384,6 +387,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					flashes = append(flashes, fmt.Sprintf(t("partial_approval_recorded"), atoi(parts[2]), atoi(parts[3])))
 				} else {
 					flashes = append(flashes, t("partial_approval_recorded"))
+				}
+			case "break_glass_override":
+				// break_glass_override:hostname:username
+				if len(parts) >= 3 {
+					flashes = append(flashes, t("break_glass_override_recorded")+" "+parts[1]+" ("+parts[2]+")")
+				} else {
+					flashes = append(flashes, t("break_glass_override_recorded"))
 				}
 			case "expired":
 				flashes = append(flashes, t("session_expired_sign_in"))

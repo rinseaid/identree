@@ -41,10 +41,11 @@ const (
 	ActionRemovedUser        = "user_removed"
 	ActionRotationRequested  = "rotation_requested"
 	ActionDeployed           = "deployed"
-	ActionConfigChanged      = "config_changed"
-	ActionSudoRuleModified   = "sudo_rule_modified"
-	ActionClaimsUpdated      = "claims_updated"
-	ActionServerRestarted    = "server_restarted"
+	ActionConfigChanged          = "config_changed"
+	ActionSudoRuleModified       = "sudo_rule_modified"
+	ActionClaimsUpdated          = "claims_updated"
+	ActionServerRestarted        = "server_restarted"
+	ActionBreakglassOverride     = "breakglass_override"
 )
 
 var (
@@ -153,6 +154,13 @@ type Challenge struct {
 	RequiredApprovals int    `json:"required_approvals,omitempty"`
 	RequireAdmin      bool   `json:"require_admin,omitempty"`
 	GraceEligible     bool   `json:"-"` // evaluated at creation, not persisted
+
+	// BreakglassOverride indicates this challenge was force-approved via break-glass policy override.
+	BreakglassOverride bool `json:"breakglass_override,omitempty"`
+
+	// BreakglassBypassAllowed is set at challenge creation from the matching policy.
+	// When true, an admin may use the break-glass override button.
+	BreakglassBypassAllowed bool `json:"-"`
 
 	// DenyReason is an optional explanation provided by the admin when rejecting.
 	DenyReason string `json:"deny_reason,omitempty"`
@@ -460,6 +468,15 @@ func (s *ChallengeStore) SetNonce(id string, nonce string) error {
 	}
 	c.Nonce = nonce
 	return nil
+}
+
+// SetBreakglassOverride marks the challenge as having been force-approved via break-glass override.
+func (s *ChallengeStore) SetBreakglassOverride(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.challenges[id]; ok {
+		c.BreakglassOverride = true
+	}
 }
 
 // SetRequestedGrace sets the per-challenge grace duration selected on the approval page.

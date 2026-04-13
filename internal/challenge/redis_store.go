@@ -346,6 +346,8 @@ type redisChallenge struct {
 	RevokeTokensBefore     string                `json:"revoke_tokens_before,omitempty"`
 	ApprovedBy             string                `json:"approved_by,omitempty"`
 	ApprovedAtUnix         string                `json:"approved_at_unix,omitempty"`
+	BreakglassOverride     bool                  `json:"breakglass_override,omitempty"`
+	BreakglassBypassAllowed bool                 `json:"breakglass_bypass_allowed,omitempty"`
 	Approvals              []redisApprovalRecord `json:"approvals,omitempty"`
 	RawIDToken             string                `json:"raw_id_token,omitempty"`
 }
@@ -372,9 +374,11 @@ func challengeToRedis(c *Challenge) redisChallenge {
 		PolicyName:             c.PolicyName,
 		RequiredApprovals:      c.RequiredApprovals,
 		RequireAdmin:           c.RequireAdmin,
-		BreakglassRotateBefore: c.BreakglassRotateBefore,
-		RequestedGraceSec:      int64(c.RequestedGrace.Seconds()),
-		RevokeTokensBefore:     c.RevokeTokensBefore,
+		BreakglassRotateBefore:  c.BreakglassRotateBefore,
+		RequestedGraceSec:       int64(c.RequestedGrace.Seconds()),
+		RevokeTokensBefore:      c.RevokeTokensBefore,
+		BreakglassOverride:      c.BreakglassOverride,
+		BreakglassBypassAllowed: c.BreakglassBypassAllowed,
 		ApprovedBy:             c.ApprovedBy,
 		ApprovedAtUnix:         formatUnixOptional(c.ApprovedAt),
 		Approvals:              approvals,
@@ -422,9 +426,11 @@ func redisToChallenge(rc redisChallenge) Challenge {
 		PolicyName:             rc.PolicyName,
 		RequiredApprovals:      rc.RequiredApprovals,
 		RequireAdmin:           rc.RequireAdmin,
-		BreakglassRotateBefore: rc.BreakglassRotateBefore,
-		RequestedGrace:         time.Duration(rc.RequestedGraceSec) * time.Second,
-		RevokeTokensBefore:     rc.RevokeTokensBefore,
+		BreakglassRotateBefore:  rc.BreakglassRotateBefore,
+		RequestedGrace:          time.Duration(rc.RequestedGraceSec) * time.Second,
+		RevokeTokensBefore:      rc.RevokeTokensBefore,
+		BreakglassOverride:      rc.BreakglassOverride,
+		BreakglassBypassAllowed: rc.BreakglassBypassAllowed,
 		ApprovedBy:             rc.ApprovedBy,
 		ApprovedAt:             approvedAt,
 		Approvals:              approvals,
@@ -610,6 +616,27 @@ func (s *RedisStore) SetRequestedGrace(id string, d time.Duration) {
 		if !strings.Contains(err.Error(), "not_found") {
 			slog.Error("redis: SetRequestedGrace", "id", id, "err", err)
 		}
+	}
+}
+
+// SetBreakglassOverride marks the challenge as having been force-approved via break-glass override.
+func (s *RedisStore) SetBreakglassOverride(id string) {
+	c, ok := s.Get(id)
+	if !ok {
+		return
+	}
+	c.BreakglassOverride = true
+	data, err := json.Marshal(challengeToRedis(&c))
+	if err != nil {
+		slog.Error("redis: SetBreakglassOverride marshal", "id", id, "err", err)
+		return
+	}
+	ttl := time.Until(c.ExpiresAt)
+	if ttl <= 0 {
+		return
+	}
+	if err := s.client.Set(s.ctx(), s.challengeKey(id), data, ttl).Err(); err != nil {
+		slog.Error("redis: SetBreakglassOverride set", "id", id, "err", err)
 	}
 }
 

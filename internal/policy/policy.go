@@ -25,6 +25,7 @@ type Policy struct {
 	AllowedDays      string   `json:"allowed_days,omitempty"`       // "Mon-Fri"
 	NotifyChannels   []string `json:"notify_channels,omitempty"`
 	RequireFreshOIDC string   `json:"require_fresh_oidc,omitempty"` // Go duration string (e.g. "5m", "1h")
+	BreakglassBypass bool     `json:"break_glass_bypass,omitempty"` // allow admin break-glass override
 }
 
 // EvalResult is the outcome of evaluating policies for a given request.
@@ -36,7 +37,8 @@ type EvalResult struct {
 	TimeWindowOK   bool
 	AllowedWindow  string
 	NotifyChannels   []string
-	RequireFreshOIDC time.Duration
+	RequireFreshOIDC   time.Duration
+	BreakglassBypass   bool
 }
 
 // Engine evaluates approval policies against incoming challenge requests.
@@ -200,6 +202,7 @@ func buildResult(p Policy, now time.Time) EvalResult {
 		AllowedWindow:    window,
 		NotifyChannels:   p.NotifyChannels,
 		RequireFreshOIDC: freshOIDC,
+		BreakglassBypass: p.BreakglassBypass,
 	}
 }
 

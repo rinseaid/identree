@@ -185,6 +185,7 @@ func (s *Server) handlePolicyAdd(w http.ResponseWriter, r *http.Request) {
 		AllowedHours:     strings.TrimSpace(r.FormValue("allowed_hours")),
 		AllowedDays:      strings.TrimSpace(r.FormValue("allowed_days")),
 		NotifyChannels:   splitTrimmed(r.FormValue("notify_channels")),
+		BreakglassBypass: r.FormValue("break_glass_bypass") == "on" || r.FormValue("break_glass_bypass") == "true",
 	}
 
 	// Check for duplicate name.
