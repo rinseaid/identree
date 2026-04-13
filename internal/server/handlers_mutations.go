@@ -96,6 +96,17 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 			revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "outside_approval_window")
 			return
 		}
+
+		// Enforce step-up authentication: the approver must have authenticated
+		// via OIDC within the duration specified by the policy.
+		if policyResult.RequireFreshOIDC > 0 {
+			lastAuth := s.store.LastOIDCAuth(username)
+			if lastAuth.IsZero() || time.Since(lastAuth) > policyResult.RequireFreshOIDC {
+				slog.Warn("APPROVAL_REJECTED stale OIDC auth", "approver", username, "host", challenge.Hostname, "policy", challenge.PolicyName, "require_fresh", policyResult.RequireFreshOIDC)
+				revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "oidc_reauth_required")
+				return
+			}
+		}
 	}
 
 	// Reject approval if the requesting user's account is disabled.

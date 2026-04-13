@@ -24,6 +24,7 @@ type Policy struct {
 	AllowedHours     string   `json:"allowed_hours,omitempty"`      // "HH:MM-HH:MM" UTC
 	AllowedDays      string   `json:"allowed_days,omitempty"`       // "Mon-Fri"
 	NotifyChannels   []string `json:"notify_channels,omitempty"`
+	RequireFreshOIDC string   `json:"require_fresh_oidc,omitempty"` // Go duration string (e.g. "5m", "1h")
 }
 
 // EvalResult is the outcome of evaluating policies for a given request.
@@ -34,7 +35,8 @@ type EvalResult struct {
 	GraceEligible  bool
 	TimeWindowOK   bool
 	AllowedWindow  string
-	NotifyChannels []string
+	NotifyChannels   []string
+	RequireFreshOIDC time.Duration
 }
 
 // Engine evaluates approval policies against incoming challenge requests.
@@ -178,14 +180,26 @@ func buildResult(p Policy, now time.Time) EvalResult {
 		minApprovals = 1
 	}
 	twOK, window := checkTimeWindow(p, now)
+
+	var freshOIDC time.Duration
+	if p.RequireFreshOIDC != "" {
+		d, err := time.ParseDuration(p.RequireFreshOIDC)
+		if err != nil {
+			slog.Warn("policy: invalid require_fresh_oidc duration", "value", p.RequireFreshOIDC, "err", err)
+		} else {
+			freshOIDC = d
+		}
+	}
+
 	return EvalResult{
-		PolicyName:     p.Name,
-		RequireAdmin:   p.RequireAdmin,
-		MinApprovals:   minApprovals,
-		GraceEligible:  p.AutoApproveGrace,
-		TimeWindowOK:   twOK,
-		AllowedWindow:  window,
-		NotifyChannels: p.NotifyChannels,
+		PolicyName:       p.Name,
+		RequireAdmin:     p.RequireAdmin,
+		MinApprovals:     minApprovals,
+		GraceEligible:    p.AutoApproveGrace,
+		TimeWindowOK:     twOK,
+		AllowedWindow:    window,
+		NotifyChannels:   p.NotifyChannels,
+		RequireFreshOIDC: freshOIDC,
 	}
 }
 

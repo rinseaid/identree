@@ -377,6 +377,91 @@ func TestAllowedWindowString(t *testing.T) {
 	}
 }
 
+func TestRequireFreshOIDCParsing(t *testing.T) {
+	policies := []Policy{
+		{
+			Name:             "strict",
+			MatchHosts:       []string{"*.prod"},
+			RequireFreshOIDC: "5m",
+		},
+	}
+	e := NewEngine(policies)
+
+	r := e.Evaluate("alice", "web1.prod", "")
+	if r.PolicyName != "strict" {
+		t.Fatalf("expected policy 'strict', got %q", r.PolicyName)
+	}
+	if r.RequireFreshOIDC != 5*time.Minute {
+		t.Errorf("expected RequireFreshOIDC=5m, got %v", r.RequireFreshOIDC)
+	}
+}
+
+func TestRequireFreshOIDCOneHour(t *testing.T) {
+	policies := []Policy{
+		{
+			Name:             "moderate",
+			MatchHosts:       []string{"*.staging"},
+			RequireFreshOIDC: "1h",
+		},
+	}
+	e := NewEngine(policies)
+
+	r := e.Evaluate("alice", "web1.staging", "")
+	if r.RequireFreshOIDC != time.Hour {
+		t.Errorf("expected RequireFreshOIDC=1h, got %v", r.RequireFreshOIDC)
+	}
+}
+
+func TestRequireFreshOIDCEmpty(t *testing.T) {
+	policies := []Policy{
+		{
+			Name:       "relaxed",
+			MatchHosts: []string{"*.dev"},
+		},
+	}
+	e := NewEngine(policies)
+
+	r := e.Evaluate("alice", "web1.dev", "")
+	if r.RequireFreshOIDC != 0 {
+		t.Errorf("expected RequireFreshOIDC=0 when not set, got %v", r.RequireFreshOIDC)
+	}
+}
+
+func TestRequireFreshOIDCInvalid(t *testing.T) {
+	policies := []Policy{
+		{
+			Name:             "bad-duration",
+			MatchHosts:       []string{"*.test"},
+			RequireFreshOIDC: "not-a-duration",
+		},
+	}
+	e := NewEngine(policies)
+
+	r := e.Evaluate("alice", "web1.test", "")
+	if r.RequireFreshOIDC != 0 {
+		t.Errorf("expected RequireFreshOIDC=0 for invalid duration, got %v", r.RequireFreshOIDC)
+	}
+}
+
+func TestRequireFreshOIDCDefaultPolicy(t *testing.T) {
+	policies := []Policy{
+		{
+			Name:             "default",
+			RequireFreshOIDC: "10m",
+			AutoApproveGrace: true,
+		},
+	}
+	e := NewEngine(policies)
+
+	r := e.Evaluate("alice", "unknown-host", "")
+	if r.PolicyName != "default" {
+		t.Fatalf("expected default policy, got %q", r.PolicyName)
+	}
+	if r.RequireFreshOIDC != 10*time.Minute {
+		t.Errorf("expected RequireFreshOIDC=10m from default, got %v", r.RequireFreshOIDC)
+	}
+}
+
 func TestEnginePolicesCopy(t *testing.T) {
 	policies := []Policy{
 		{Name: "prod", MatchHosts: []string{"*.prod"}},

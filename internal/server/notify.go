@@ -42,6 +42,14 @@ func (s *Server) dispatchNotification(d notify.WebhookData) {
 		}
 	}
 
+	// Collect channels from the matching approval policy (if any).
+	if d.Hostname != "" {
+		policyResult := s.evaluatePolicy(d.Username, d.Hostname)
+		for _, ch := range policyResult.NotifyChannels {
+			channels[ch] = true
+		}
+	}
+
 	if len(channels) == 0 {
 		return
 	}
