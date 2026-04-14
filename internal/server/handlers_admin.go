@@ -966,18 +966,6 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 
-	// Warn and remap deprecated key names before processing.
-	if v, ok := values["IDENTREE_SUDO_NO_AUTHENTICATE"]; ok && values["IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"] == "" {
-		slog.Warn("config: IDENTREE_SUDO_NO_AUTHENTICATE is deprecated, use IDENTREE_LDAP_SUDO_NO_AUTHENTICATE instead")
-		values["IDENTREE_LDAP_SUDO_NO_AUTHENTICATE"] = v
-		delete(values, "IDENTREE_SUDO_NO_AUTHENTICATE")
-	}
-	if v, ok := values["IDENTREE_HISTORY_PAGE_SIZE"]; ok && values["IDENTREE_DEFAULT_PAGE_SIZE"] == "" {
-		slog.Warn("config: IDENTREE_HISTORY_PAGE_SIZE is deprecated, use IDENTREE_DEFAULT_PAGE_SIZE instead")
-		values["IDENTREE_DEFAULT_PAGE_SIZE"] = v
-		delete(values, "IDENTREE_HISTORY_PAGE_SIZE")
-	}
-
 	parseDur := func(key string, def time.Duration) time.Duration {
 		if v := values[key]; v != "" {
 			if d, err := time.ParseDuration(v); err == nil {

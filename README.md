@@ -419,8 +419,6 @@ Only two values need to be set locally. Everything else is pushed by the server 
 
 Server-pushed values are sent in the challenge response on every `sudo` invocation and apply for that session. They override the local config without modifying the file. Configure them centrally in the admin UI under **Configuration → Client Defaults**.
 
-> Legacy `PAM_POCKETID_*` env vars and `/etc/pam-pocketid.conf` are still read as fallbacks.
-
 ---
 
 ## CLI reference
@@ -472,28 +470,6 @@ go build -trimpath \
   -ldflags "-X main.version=v0.1.0 -X main.commit=$(git rev-parse HEAD)" \
   -o identree ./cmd/identree/
 ```
-
----
-
-## Upgrading
-
-See [docs/upgrading.md](docs/upgrading.md) for:
-
-- Backup and rollback procedures
-- Config variable renames and deprecations
-- Breaking changes (escrow HKDF salt, etc.)
-- Known limitations
-
----
-
-## Migrating from pam-pocketid + glauth-pocketid
-
-identree replaces both. Migration is non-breaking.
-
-1. Export `uidmap.json` from glauth-pocketid and copy it to `/config/uidmap.json`.
-2. Replace `pam-pocketid` with `identree` in `/etc/pam.d/sudo`.
-3. `PAM_POCKETID_*` env vars and `/etc/pam-pocketid.conf` are still read as fallbacks.
-4. Move sudo policy from group naming conventions to [custom claims](docs/deployment-modes.md#sudo-policy-full-mode).
 
 ---
 

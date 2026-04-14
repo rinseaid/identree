@@ -105,7 +105,7 @@ identree stores all persistent state as JSON files in `/config/` (or wherever th
 | `/config/hosts.json` | Registered host registry | Hosts must re-register |
 | `/config/sudorules.json` | Sudo rules (bridge mode) | Sudo policies must be recreated |
 
-**`uidmap.json` is the most critical file.** If lost, identree assigns new UIDs to existing users, which breaks file ownership on every managed host. Back this up before every upgrade.
+**`uidmap.json` is the most critical file.** If lost, identree assigns new UIDs to existing users, which breaks file ownership on every managed host. Back this up regularly.
 
 ### Other files to back up
 

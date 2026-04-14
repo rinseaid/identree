@@ -254,9 +254,7 @@ type ChallengeStore struct {
 // persistedState is the JSON-serializable snapshot of grace sessions, revocation timestamps,
 // action log entries, and escrowed host records.
 type persistedState struct {
-	// Version is the schema version for this state file.
-	// Version 0 (absent) is the legacy format and is loaded as-is for backward compatibility.
-	// Version 1 is the current format.
+	// Version is the schema version for this state file. Current version is 1.
 	Version                int                         `json:"version"`
 	GraceSessions          map[string]time.Time        `json:"grace_sessions"`
 	RevokeTokensBefore     map[string]time.Time        `json:"revoke_tokens_before"`
@@ -1648,45 +1646,20 @@ func (s *ChallengeStore) loadState() {
 		slog.Warn("cannot read session state file — starting fresh", "path", s.persistPath, "err", err)
 		return
 	}
-	// First pass: try to migrate old escrowed_hosts format (map[string]time.Time)
-	// before the main unmarshal, which would fail on type mismatch.
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err == nil {
-		if eh, ok := raw["escrowed_hosts"]; ok {
-			var oldFormat map[string]time.Time
-			if json.Unmarshal(eh, &oldFormat) == nil && len(oldFormat) > 0 {
-				// Old format detected — convert in-place to new format
-				newFormat := make(map[string]EscrowRecord, len(oldFormat))
-				for host, ts := range oldFormat {
-					newFormat[host] = EscrowRecord{Timestamp: ts}
-				}
-				if converted, err := json.Marshal(newFormat); err == nil {
-					raw["escrowed_hosts"] = converted
-					if migrated, merr := json.Marshal(raw); merr == nil {
-						data = migrated
-						slog.Info("migrated escrowed_hosts entries to new format", "count", len(oldFormat))
-					}
-				}
-			}
-		}
-	}
-
 	var state persistedState
 	if err := json.Unmarshal(data, &state); err != nil {
 		slog.Warn("corrupt session state file — starting fresh", "path", s.persistPath, "err", err)
 		return
 	}
-	// Version migration check (Fix 3 / C4).
-	switch {
-	case state.Version == 0:
-		// Legacy file written before versioning was introduced — compatible as-is.
-		slog.Info("challenge: loaded legacy v0 state, upgrading to v1")
-	case state.Version > 1:
+	// Version check: require version 1. Treat version 0 (absent) as empty/fresh.
+	if state.Version == 0 {
+		slog.Info("challenge: state file has no version — treating as fresh")
+		return
+	}
+	if state.Version > 1 {
 		// File was written by a newer identree binary. Load it anyway but warn.
 		slog.Warn("challenge: state file is from a newer version", "version", state.Version)
 	}
-	// Normalise version so the next write upgrades the on-disk format.
-	state.Version = 1
 
 	const maxStateMapEntries = 100_000
 	const maxGraceSessionTTL = 90 * 24 * time.Hour   // grace sessions > 90 days in future are suspect

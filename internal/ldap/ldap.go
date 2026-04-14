@@ -772,7 +772,7 @@ func (s *LDAPServer) searchGroups(w *gldap.ResponseWriter, req *gldap.Request, f
 //	sudoOptions    — comma-separated extra sudo options (validated against blocklist)
 //
 // A group is emitted only if it has at least one sudo-related claim and all
-// required fields pass validation. Security validation mirrors glauth-pocketid.
+// required fields pass validation.
 // requestedAttrs is the client's Attributes list from the search message; used
 // to filter the response via filterAttrs.
 // Returns true if the result set was truncated by limit.

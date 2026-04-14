@@ -121,7 +121,7 @@ type ServerConfig struct {
 	LDAPUIDMapFile     string        // path to UID/GID persistence file
 
 	// LDAPSudoNoAuthenticate controls the !authenticate sudoOption in generated sudoRole entries.
-	//   "false"  (default) — !authenticate never added; sudo invokes PAM (passkey auth via pam-pocketid).
+	//   "false"  (default) — !authenticate never added; sudo invokes PAM (passkey auth via identree).
 	//   "true"   — !authenticate added to all sudo rules; PAM is never invoked.
 	//   "claims" — per-group: IDP admins set sudoOptions=!authenticate on specific groups.
 	LDAPSudoNoAuthenticate SudoNoAuthenticate
@@ -556,20 +556,6 @@ func LoadServerConfig() (*ServerConfig, error) {
 		RedisWriteTimeout:   getDuration("IDENTREE_REDIS_WRITE_TIMEOUT", 3*time.Second),
 	}
 
-	// Backward compatibility: accept old env var names with deprecation warnings.
-	if cfg.LDAPSudoNoAuthenticate == SudoNoAuthenticate("false") {
-		if v := get("IDENTREE_SUDO_NO_AUTHENTICATE"); v != "" && get("IDENTREE_LDAP_SUDO_NO_AUTHENTICATE") == "" {
-			slog.Warn("config: IDENTREE_SUDO_NO_AUTHENTICATE is deprecated, use IDENTREE_LDAP_SUDO_NO_AUTHENTICATE instead")
-			cfg.LDAPSudoNoAuthenticate = SudoNoAuthenticate(v)
-		}
-	}
-	if cfg.DefaultPageSize == 15 {
-		if v := get("IDENTREE_HISTORY_PAGE_SIZE"); v != "" && get("IDENTREE_DEFAULT_PAGE_SIZE") == "" {
-			slog.Warn("config: IDENTREE_HISTORY_PAGE_SIZE is deprecated, use IDENTREE_DEFAULT_PAGE_SIZE instead")
-			cfg.DefaultPageSize = getInt("IDENTREE_HISTORY_PAGE_SIZE", 15)
-		}
-	}
-
 	// Warn if SessionStateFile is unset — grace sessions, revocations, and audit log will not persist.
 	if cfg.SessionStateFile == "" {
 		slog.Warn("IDENTREE_SESSION_STATE_FILE is not set — grace sessions, revocations, and audit log will be lost on restart")
@@ -649,8 +635,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 		cfg.ChallengeTTL = 86400 * time.Second
 	}
 
-	// Normalize LDAPUIDBase/GIDBase: 0 means "unset" (e.g. stored in a legacy TOML
-	// config from when the default was 0); reset to the safe default of 200000.
+	// Normalize LDAPUIDBase/GIDBase: 0 means "unset"; reset to the safe default of 200000.
 	if cfg.LDAPUIDBase <= 0 {
 		cfg.LDAPUIDBase = 200000
 	}
@@ -724,8 +709,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 	}
 
 	// Enable mTLS when CA cert/key paths are configured (or default them).
-	// Also accept the legacy IDENTREE_MTLS_MODE=embedded as a trigger.
-	if cfg.MTLSCACert != "" || cfg.MTLSCAKey != "" || get("IDENTREE_MTLS_MODE") == "embedded" {
+	if cfg.MTLSCACert != "" || cfg.MTLSCAKey != "" {
 		cfg.MTLSEnabled = true
 		if cfg.MTLSCACert == "" {
 			cfg.MTLSCACert = "/config/mtls-ca.crt"
@@ -954,10 +938,6 @@ func LoadServerConfig() (*ServerConfig, error) {
 // local-only operations like rotate-breakglass).
 func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 	env, err := loadConfigFile(DefaultClientConfigPath)
-	if os.IsNotExist(err) {
-		// Also try the legacy pam-pocketid path
-		env, err = loadConfigFile("/etc/pam-pocketid.conf")
-	}
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -1004,27 +984,26 @@ func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 	}
 
 	cfg := &ClientConfig{
-		// Accept both new and legacy env var names
-		ServerURL:    get("IDENTREE_SERVER_URL", "PAM_POCKETID_SERVER_URL"),
-		SharedSecret: get("IDENTREE_SHARED_SECRET", "PAM_POCKETID_SHARED_SECRET"),
-		PollInterval: getDuration(2*time.Second, "IDENTREE_POLL_INTERVAL", "PAM_POCKETID_POLL_INTERVAL"),
-		Timeout:      getDuration(120*time.Second, "IDENTREE_TIMEOUT", "PAM_POCKETID_TIMEOUT"),
+		ServerURL:    get("IDENTREE_SERVER_URL"),
+		SharedSecret: get("IDENTREE_SHARED_SECRET"),
+		PollInterval: getDuration(2*time.Second, "IDENTREE_POLL_INTERVAL"),
+		Timeout:      getDuration(120*time.Second, "IDENTREE_TIMEOUT"),
 
 		ClientCert: get("IDENTREE_CLIENT_CERT"),
 		ClientKey:  get("IDENTREE_CLIENT_KEY"),
 		CACert:     get("IDENTREE_CA_CERT"),
 
-		BreakglassEnabled:       getBool(true, "IDENTREE_BREAKGLASS_ENABLED", "PAM_POCKETID_BREAKGLASS_ENABLED"),
-		BreakglassFile:          stringDefault(get("IDENTREE_BREAKGLASS_FILE", "PAM_POCKETID_BREAKGLASS_FILE"), "/etc/identree-breakglass"),
-		BreakglassRotationDays:  getInt(90, "IDENTREE_BREAKGLASS_ROTATION_DAYS", "PAM_POCKETID_BREAKGLASS_ROTATION_DAYS"),
-		BreakglassPasswordType:  stringDefault(get("IDENTREE_BREAKGLASS_PASSWORD_TYPE", "PAM_POCKETID_BREAKGLASS_PASSWORD_TYPE"), "random"),
+		BreakglassEnabled:       getBool(true, "IDENTREE_BREAKGLASS_ENABLED"),
+		BreakglassFile:          stringDefault(get("IDENTREE_BREAKGLASS_FILE"), "/etc/identree-breakglass"),
+		BreakglassRotationDays:  getInt(90, "IDENTREE_BREAKGLASS_ROTATION_DAYS"),
+		BreakglassPasswordType:  stringDefault(get("IDENTREE_BREAKGLASS_PASSWORD_TYPE"), "random"),
 		BreakglassBcryptCost:    getInt(12, "IDENTREE_BREAKGLASS_BCRYPT_COST"),
 		InsecureAllowHTTPEscrow: getBool(false, "IDENTREE_INSECURE_ALLOW_HTTP_ESCROW"),
 
-		TokenCacheEnabled:  getBool(true, "IDENTREE_TOKEN_CACHE_ENABLED", "PAM_POCKETID_TOKEN_CACHE_ENABLED"),
-		TokenCacheDir:      stringDefault(get("IDENTREE_TOKEN_CACHE_DIR", "PAM_POCKETID_TOKEN_CACHE_DIR"), "/run/identree"),
-		TokenCacheIssuer:   get("IDENTREE_TOKEN_CACHE_ISSUER", "PAM_POCKETID_TOKEN_CACHE_ISSUER"),
-		TokenCacheClientID: get("IDENTREE_TOKEN_CACHE_CLIENT_ID", "PAM_POCKETID_TOKEN_CACHE_CLIENT_ID"),
+		TokenCacheEnabled:  getBool(true, "IDENTREE_TOKEN_CACHE_ENABLED"),
+		TokenCacheDir:      stringDefault(get("IDENTREE_TOKEN_CACHE_DIR"), "/run/identree"),
+		TokenCacheIssuer:   get("IDENTREE_TOKEN_CACHE_ISSUER"),
+		TokenCacheClientID: get("IDENTREE_TOKEN_CACHE_CLIENT_ID"),
 	}
 
 	if !allowNoServer && cfg.ServerURL == "" {

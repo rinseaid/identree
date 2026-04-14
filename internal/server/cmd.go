@@ -151,7 +151,7 @@ Global flags:
 
 Config file locations:
   Server: /etc/identree/identree.conf
-  Client: /etc/identree/client.conf (falls back to /etc/pam-pocketid.conf)
+  Client: /etc/identree/client.conf
 `)
 }
 
@@ -873,7 +873,7 @@ func runSetup() {
 // or redirect network traffic — called before loading client config.
 func stripSensitiveEnv() {
 	for _, env := range os.Environ() {
-		for _, prefix := range []string{"IDENTREE_", "PAM_POCKETID_"} {
+		for _, prefix := range []string{"IDENTREE_"} {
 			if strings.HasPrefix(env, prefix) {
 				key, _, _ := strings.Cut(env, "=")
 				os.Unsetenv(key)
