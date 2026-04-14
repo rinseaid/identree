@@ -137,6 +137,9 @@ The following features are on the roadmap but not yet implemented. Do not rely o
 | mTLS client certificate authentication | Implemented — configure via `IDENTREE_MTLS_*` variables (see [operations.md](operations.md)) |
 | Per-admin notification preferences (granular routing) | Implemented — configure via **Admin > Notifications** (`/admin/notifications`) |
 | Approval policies (time windows, host-specific rules, step-up auth) | Implemented — configure via **Admin > Policies** (`/admin/policies`) |
+| Multi-approval workflows (N-of-M quorum with partial tracking) | Implemented — set `min_approvals` in policy |
+| Break-glass policy override for emergency access | Implemented — set `break_glass_bypass` in policy; uses `/api/challenges/override` |
+| Per-policy notification channels | Implemented — set `notify_channels` in policy |
 
 ### New SAML and mTLS configuration variables
 

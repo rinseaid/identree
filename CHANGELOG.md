@@ -42,6 +42,10 @@ All notable changes to identree will be documented in this file.
 - Policy engine replacing the simple AdminApprovalHosts allowlist
 - Time-of-day scheduling constraints
 - Host group targeting
+- Multi-approval (N-of-M quorum with partial approval tracking)
+- Step-up OIDC re-authentication (`require_fresh_oidc`)
+- Break-glass policy override for emergency access
+- Per-policy notification channel routing
 
 #### Admin UI
 - Sessions page with active session display and inline bar approval

@@ -268,6 +268,13 @@ See [docs/justification.md](docs/justification.md) for full details including th
 
 Approval policies let you define per-host, per-user, and per-group rules that override the global challenge/session defaults. Policies can require additional approvers, enforce justification, set custom TTLs, or auto-approve/deny specific combinations. See [docs/approval-policies.md](docs/approval-policies.md) for schema and examples.
 
+Key policy features:
+
+- **Multi-approval**: Set the `min_approvals` field (e.g. `3`) to require N-of-M quorum. Each approval is tracked individually; the challenge resolves only when the threshold is met. Partial approvals are visible in the dashboard.
+- **Step-up auth**: Set `require_fresh_oidc` (e.g. `"5m"`) to force the approver to have authenticated via OIDC within the given duration before their approval is accepted.
+- **Break-glass override**: Set `break_glass_bypass` to `true` to allow admins to force-approve challenges matching this policy via `/api/challenges/override`, bypassing all policy checks. All overrides are audited.
+- **Policy notification channels**: Set `notify_channels` to a list of channel names (from `notification-channels.json`) to route notifications for events matching this policy to specific channels instead of (or in addition to) the global defaults.
+
 #### LDAP server
 
 | Variable | Default | Description |

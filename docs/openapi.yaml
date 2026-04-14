@@ -318,6 +318,62 @@ components:
         error:
           type: string
 
+    Policy:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Unique policy name.
+        match_hosts:
+          type: array
+          items:
+            type: string
+          description: Hostname glob patterns to match.
+        match_host_groups:
+          type: array
+          items:
+            type: string
+          description: Host registry group labels to match.
+        match_users:
+          type: array
+          items:
+            type: string
+          description: Username patterns to match.
+        require_admin:
+          type: boolean
+          description: Require the approver to be an admin.
+        min_approvals:
+          type: integer
+          description: >
+            Number of approvals required before the challenge resolves (N-of-M quorum).
+            0 or 1 means single approval. Values > 1 enable partial approval tracking.
+        auto_approve_grace:
+          type: boolean
+          description: Allow grace-period auto-approval for matching challenges.
+        allowed_hours:
+          type: string
+          description: "Time-of-day window in UTC (e.g. \"09:00-17:00\"). Supports wrap-around."
+        allowed_days:
+          type: string
+          description: "Day-of-week constraint (e.g. \"Mon-Fri\" or \"Mon,Wed,Fri\")."
+        require_fresh_oidc:
+          type: string
+          description: >
+            Go duration string (e.g. "5m", "1h"). Approver must have authenticated
+            via OIDC within this duration for their approval to be accepted.
+        break_glass_bypass:
+          type: boolean
+          description: >
+            When true, admins can force-approve challenges matching this policy via
+            /api/challenges/override, bypassing all policy checks. All overrides are audited.
+        notify_channels:
+          type: array
+          items:
+            type: string
+          description: >
+            Channel names (from notification-channels.json) that receive notifications
+            for events matching this policy.
+
 # ---------------------------------------------------------------------------
 # Tags
 # ---------------------------------------------------------------------------
@@ -712,6 +768,42 @@ paths:
       responses:
         "303":
           description: Redirect to dashboard with flash message.
+
+  /api/challenges/override:
+    post:
+      operationId: overrideChallenge
+      summary: Break-glass override — force-approve a challenge bypassing policy checks
+      description: >
+        Allows an admin to force-approve a pending challenge when the matching
+        policy has `break_glass_bypass` enabled. All overrides are audited.
+      tags: [Challenges]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [challenge_id, username, csrf_token, csrf_ts]
+              properties:
+                challenge_id:
+                  type: string
+                  description: ID of the pending challenge to override.
+                username:
+                  type: string
+                  description: Username of the admin performing the override.
+                csrf_token:
+                  type: string
+                csrf_ts:
+                  type: string
+      responses:
+        "303":
+          description: Redirect to dashboard on successful override.
+        "403":
+          description: >
+            Caller is not an admin, the matching policy does not have
+            `break_glass_bypass` enabled, or the challenge does not allow override.
 
   /api/onetap/{token}:
     get:
@@ -1606,6 +1698,19 @@ paths:
                 schedule:
                   type: string
                   description: Time-of-day constraint (e.g. "09:00-17:00").
+                min_approvals:
+                  type: integer
+                  description: Number of approvals required (N-of-M quorum). 0 or 1 = single approval.
+                require_fresh_oidc:
+                  type: string
+                  description: "Go duration (e.g. \"5m\"). Approver must have OIDC-authenticated within this window."
+                break_glass_bypass:
+                  type: string
+                  enum: ["true", "false"]
+                  description: Allow admin break-glass override for challenges matching this policy.
+                notify_channels:
+                  type: string
+                  description: Comma-separated channel names for per-policy notification routing.
       responses:
         "303":
           description: Redirect to approval policies page.

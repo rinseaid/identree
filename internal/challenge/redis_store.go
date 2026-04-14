@@ -276,6 +276,7 @@ return 'ok'
 `)
 
 // luaAddApproval atomically adds a partial approval for multi-approval challenges.
+// Runs as a single EVAL to prevent TOCTOU races between reading and modifying the approvals array.
 // KEYS[1]=challenge:{id} KEYS[2]=pending:{user} KEYS[3]=pending:total KEYS[4]=grace:{key}
 // ARGV[1]=approver ARGV[2]=now_unix ARGV[3]=required_approvals
 // ARGV[4]=grace_expiry_unix (0 = no grace) ARGV[5]=grace_ttl_seconds

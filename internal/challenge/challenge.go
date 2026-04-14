@@ -534,7 +534,11 @@ func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 }
 
 // AddApproval records a partial approval for multi-approval challenges.
-// Returns true if this approval met the threshold (challenge is now fully approved).
+// Returns (true, nil) when this approval meets the threshold (challenge fully approved).
+// Returns (false, nil) when more approvals are still needed.
+// Returns (false, ErrDuplicateApprover) if approver already approved this challenge.
+// Returns (false, err) for: not found, expired, already resolved, revoked.
+// On full approval, creates a grace session as a side effect.
 func (s *ChallengeStore) AddApproval(id string, approver string, requiredApprovals int) (bool, error) {
 	now := time.Now()
 	s.mu.Lock()
