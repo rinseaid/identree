@@ -44,6 +44,9 @@ concurrency:
   group: integration-tests-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # ── PocketID full-mode + embedded LDAP + SSSD auto-provisioning ──────────────
   full-mode:
