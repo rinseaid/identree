@@ -68,6 +68,84 @@ func createPendingChallenge(t *testing.T, s *Server, username, hostname string) 
 	return c
 }
 
+// ── safeRedirectDest tests ────────────────────────────────────────────────────
+
+func TestSafeRedirectDest(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty", "", "/"},
+		{"slash", "/", "/"},
+		{"valid path", "/admin/config", "/admin/config"},
+		{"double slash", "//evil.com", "/"},
+		{"with query", "/path?q=1", "/"},
+		{"with hash", "/path#frag", "/"},
+		{"with backslash", "/path\\foo", "/"},
+		{"no leading slash", "evil.com", "/"},
+		{"encoded double slash", "%2f%2fevil.com", "/"},
+		{"control chars stripped", "/path\x00hidden", "/pathhidden"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := safeRedirectDest(tc.input)
+			if got != tc.want {
+				t.Errorf("safeRedirectDest(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// ── handleRevokeSession tests ────────────────────────────────────────────────
+
+func TestHandleRevokeSession_Success(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	// Create a grace session to revoke.
+	s.store.CreateGraceSession("alice", "web01", 10*time.Minute)
+
+	form := url.Values{
+		"hostname": {"web01"},
+	}
+	r := buildFormRequest(secret, "alice", "user", "/api/sessions/revoke", form)
+	w := httptest.NewRecorder()
+	s.handleRevokeSession(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRevokeSession_MissingHostname(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	form := url.Values{}
+	r := buildFormRequest(secret, "alice", "user", "/api/sessions/revoke", form)
+	w := httptest.NewRecorder()
+	s.handleRevokeSession(w, r)
+
+	// Missing hostname should be an error.
+	if w.Code == http.StatusSeeOther {
+		t.Error("expected error for missing hostname, got redirect")
+	}
+}
+
+func TestHandleRevokeSession_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/sessions/revoke", nil)
+	w := httptest.NewRecorder()
+	s.handleRevokeSession(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
 // ── handleBulkApprove tests ──────────────────────────────────────────────────
 
 func TestHandleBulkApprove_NonExistentChallenge(t *testing.T) {
@@ -285,6 +363,91 @@ func TestHandleBulkApprove_MultiApproval_Full(t *testing.T) {
 }
 
 // ── Break-glass override tests ───────────────────────────────────────────────
+
+// ── handleBulkApprove single challenge tests ─────────────────────────────────
+
+func TestHandleBulkApprove_SingleApproval(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	// Create a challenge via store directly (no policy).
+	c := createPendingChallenge(t, s, "alice", "web01")
+
+	form := url.Values{
+		"challenge_id": {c.ID},
+	}
+	r := buildFormRequest(secret, "admin-user", "admin", "/api/challenges/approve", form)
+	w := httptest.NewRecorder()
+	s.handleBulkApprove(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify challenge is approved.
+	ch, ok := s.store.Get(c.ID)
+	if !ok {
+		t.Fatal("challenge not found")
+	}
+	if ch.Status != challpkg.StatusApproved {
+		t.Errorf("expected approved, got %q", ch.Status)
+	}
+}
+
+func TestHandleBulkApprove_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/challenges/approve", nil)
+	w := httptest.NewRecorder()
+	s.handleBulkApprove(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleRejectChallenge_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/challenges/reject", nil)
+	w := httptest.NewRecorder()
+	s.handleRejectChallenge(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleRejectChallenge_NonExistent(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	form := url.Values{
+		"challenge_id": {"deadbeefdeadbeefdeadbeefdeadbeef"},
+	}
+	r := buildFormRequest(secret, "alice", "user", "/api/challenges/reject", form)
+	w := httptest.NewRecorder()
+	s.handleRejectChallenge(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleBreakglassOverride_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/challenges/override", nil)
+	w := httptest.NewRecorder()
+	s.handleBreakglassOverride(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
 
 func TestHandleBreakglassOverride_Allowed(t *testing.T) {
 	const secret = "test-secret"

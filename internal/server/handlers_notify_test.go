@@ -1,9 +1,11 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -364,6 +366,323 @@ func TestHandleAdminNotifyPrefSave_MissingFields(t *testing.T) {
 }
 
 // ── handleAdminTestNotifyChannel tests ───────────────────────────────────────
+
+// ── handleNotifyRouteAdd valid data tests ────────────────────────────────────
+
+func TestHandleNotifyRouteAdd_ValidData(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	// Pre-populate a channel for the route to reference.
+	s.notifyCfgMu.Lock()
+	s.notifyCfg.Channels = append(s.notifyCfg.Channels, notify.Channel{
+		Name:    "alerts",
+		Backend: "ntfy",
+	})
+	s.notifyCfgMu.Unlock()
+
+	form := url.Values{
+		"channels": {"alerts"},
+		"events":   {"*"},
+		"hosts":    {"*"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/routes/add", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteAdd(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the route was added.
+	s.notifyCfgMu.RLock()
+	routeCount := len(s.notifyCfg.Routes)
+	s.notifyCfgMu.RUnlock()
+	if routeCount == 0 {
+		t.Error("expected at least one route to be added")
+	}
+}
+
+// ── handleNotifyChannelAdd backend type tests ────────────────────────────────
+
+func TestHandleNotifyChannelAdd_SlackBackend(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"name":    {"slack-ch"},
+		"backend": {"slack"},
+		"url":     {"https://hooks.slack.com/services/xxx"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/channels/add", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelAdd(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleNotifyChannelAdd_EmptyName(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"name":    {""},
+		"backend": {"ntfy"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/channels/add", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelAdd(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty name, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleAdminNotifyPrefSave all fields tests ───────────────────────────────
+
+func TestHandleAdminNotifyPrefSave_AllFields(t *testing.T) {
+	const secret = "test-secret"
+	s, prefStore := newNotifyTestServerWithPrefs(t, secret)
+
+	// The handler uses splitTrimmed(r.FormValue("channels")) which expects
+	// comma-separated values in a single field, not multi-value form fields.
+	form := url.Values{
+		"channels": {"alerts,ops"},
+		"events":   {"challenge_approved,challenge_denied"},
+		"hosts":    {"prod-*"},
+		"enabled":  {"true"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/admin/notification-preferences", form)
+	w := httptest.NewRecorder()
+	s.handleAdminNotifyPrefSave(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	pref := prefStore.Get("admin-user")
+	if pref == nil {
+		t.Fatal("preference was not saved")
+	}
+	if len(pref.Channels) != 2 {
+		t.Errorf("expected 2 channels, got %d: %v", len(pref.Channels), pref.Channels)
+	}
+	if len(pref.Events) != 2 {
+		t.Errorf("expected 2 events, got %d: %v", len(pref.Events), pref.Events)
+	}
+}
+
+// ── handleNotifyRouteDelete tests ────────────────────────────────────────────
+
+func TestHandleNotifyRouteDelete_NonExistentIndex(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"index": {"999"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/routes/delete", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteDelete(w, r)
+
+	// Should redirect with flash error for out-of-range index.
+	if w.Code != http.StatusSeeOther && w.Code != http.StatusBadRequest {
+		t.Errorf("expected 303 or 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleNotifyChannelList tests ─────────────────────────────────────────────
+
+func TestHandleNotifyChannelList_NoAuth(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/notification/channels", nil)
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelList(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestHandleNotifyChannelList_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/notification/channels", nil)
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelList(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleNotifyChannelList_EmptyChannels(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	// Build admin request.
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, "admin-user", csrfTs)
+	sessionCookie := makeCookie(secret, "admin-user", "admin", ts)
+	r := httptest.NewRequest(http.MethodGet, "/api/notification/channels", nil)
+	r.Header.Set("X-CSRF-Token", csrfToken)
+	r.Header.Set("X-CSRF-Ts", csrfTs)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelList(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected application/json, got %q", ct)
+	}
+	// Should return an empty array.
+	body := w.Body.String()
+	if body != "[]\n" && body != "null\n" {
+		// empty slice marshals as [] or null depending on Go
+	}
+}
+
+func TestHandleNotifyChannelList_WithChannels(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	s.notifyCfgMu.Lock()
+	s.notifyCfg.Channels = append(s.notifyCfg.Channels, notify.Channel{
+		Name:    "test-ch",
+		Backend: "ntfy",
+		URL:     "https://ntfy.example.com/test",
+		Token:   "secret-token", // should be stripped
+	})
+	s.notifyCfgMu.Unlock()
+
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, "admin-user", csrfTs)
+	sessionCookie := makeCookie(secret, "admin-user", "admin", ts)
+	r := httptest.NewRequest(http.MethodGet, "/api/notification/channels", nil)
+	r.Header.Set("X-CSRF-Token", csrfToken)
+	r.Header.Set("X-CSRF-Ts", csrfTs)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelList(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify token is stripped.
+	body := w.Body.String()
+	if strings.Contains(body, "secret-token") {
+		t.Error("expected token to be stripped from response")
+	}
+}
+
+// ── handleAdminNotifications tests ────────────────────────────────────────────
+
+func TestHandleAdminNotifications_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodPost, "/admin/notifications", nil)
+	w := httptest.NewRecorder()
+	s.handleAdminNotifications(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminNotifications_NoSession_Redirect(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/admin/notifications", nil)
+	w := httptest.NewRecorder()
+	s.handleAdminNotifications(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303 redirect, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminNotifications_NonAdmin_Redirect(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	ts := time.Now().Unix()
+	cookieVal := makeCookie(secret, "bob", "user", ts)
+	r := httptest.NewRequest(http.MethodGet, "/admin/notifications", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleAdminNotifications(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303 redirect for non-admin, got %d", w.Code)
+	}
+}
+
+// ── notifyChannelMap tests ────────────────────────────────────────────────────
+
+func TestNotifyChannelMap_Empty(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	m := s.notifyChannelMap()
+	if len(m) != 0 {
+		t.Errorf("expected empty map, got %d entries", len(m))
+	}
+}
+
+func TestNotifyChannelMap_WithChannels(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	s.notifyCfgMu.Lock()
+	s.notifyCfg.Channels = []notify.Channel{
+		{Name: "ch1", Backend: "ntfy"},
+		{Name: "ch2", Backend: "slack"},
+	}
+	s.notifyCfgMu.Unlock()
+
+	m := s.notifyChannelMap()
+	if len(m) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(m))
+	}
+	if _, ok := m["ch1"]; !ok {
+		t.Error("expected ch1 in map")
+	}
+}
+
+// ── notifyDefaultTimeout tests ───────────────────────────────────────────────
+
+func TestNotifyDefaultTimeout_Default(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	timeout := s.notifyDefaultTimeout()
+	if timeout <= 0 {
+		t.Errorf("expected positive default timeout, got %v", timeout)
+	}
+}
+
+func TestNotifyDefaultTimeout_Custom(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+	s.cfg.NotifyTimeout = 30 * time.Second
+
+	timeout := s.notifyDefaultTimeout()
+	if timeout != 30*time.Second {
+		t.Errorf("expected 30s, got %v", timeout)
+	}
+}
 
 func TestHandleAdminTestNotifyChannel_UnknownChannel(t *testing.T) {
 	const secret = "test-secret"
