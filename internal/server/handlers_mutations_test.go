@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ import (
 // tests with a working session/CSRF system.
 func newMutationTestServer(t *testing.T, secret string) *Server {
 	t.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, t.TempDir())
+	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
 	return &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret: secret,
@@ -183,5 +184,218 @@ func TestHandleRejectChallenge_WithoutReason(t *testing.T) {
 	}
 	if ch.DenyReason != "" {
 		t.Errorf("expected empty deny reason, got %q", ch.DenyReason)
+	}
+}
+
+// ── Multi-approval tests ─────────────────────────────────────────────────────
+
+func TestHandleBulkApprove_MultiApproval_Partial(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	// Set a policy that requires 2 approvals.
+	s.policyEngine = policy.NewEngine([]policy.Policy{
+		{Name: "dual", MatchHosts: []string{"prod-*"}, RequireAdmin: false, MinApprovals: 2},
+	})
+
+	// Create challenge via API so policy is applied.
+	cw := postChallenge(s, map[string]string{
+		"username": "bob",
+		"hostname": "prod-web",
+	}, secret)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("setup: expected 201, got %d; body: %s", cw.Code, cw.Body.String())
+	}
+	var createResp map[string]interface{}
+	if err := json.NewDecoder(cw.Body).Decode(&createResp); err != nil {
+		t.Fatal(err)
+	}
+	challengeID := createResp["challenge_id"].(string)
+
+	// First admin approves → partial (should redirect 303 with partial_approve flash).
+	form := url.Values{
+		"challenge_id": {challengeID},
+	}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/challenges/approve", form)
+	w := httptest.NewRecorder()
+	s.handleBulkApprove(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("first approval: expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify challenge is still pending.
+	ch, ok := s.store.Get(challengeID)
+	if !ok {
+		t.Fatal("challenge not found after partial approval")
+	}
+	if ch.Status != challpkg.StatusPending {
+		t.Errorf("after first approval: expected pending, got %q", ch.Status)
+	}
+	if len(ch.Approvals) != 1 {
+		t.Errorf("expected 1 approval record, got %d", len(ch.Approvals))
+	}
+}
+
+func TestHandleBulkApprove_MultiApproval_Full(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	s.policyEngine = policy.NewEngine([]policy.Policy{
+		{Name: "dual", MatchHosts: []string{"prod-*"}, RequireAdmin: false, MinApprovals: 2},
+	})
+
+	cw := postChallenge(s, map[string]string{
+		"username": "bob",
+		"hostname": "prod-web",
+	}, secret)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("setup: expected 201, got %d; body: %s", cw.Code, cw.Body.String())
+	}
+	var createResp map[string]interface{}
+	json.NewDecoder(cw.Body).Decode(&createResp)
+	challengeID := createResp["challenge_id"].(string)
+
+	// First approval (partial).
+	form1 := url.Values{"challenge_id": {challengeID}}
+	r1 := buildFormRequest(secret, "admin1", "admin", "/api/challenges/approve", form1)
+	w1 := httptest.NewRecorder()
+	s.handleBulkApprove(w1, r1)
+	if w1.Code != http.StatusSeeOther {
+		t.Fatalf("first approval: expected 303, got %d", w1.Code)
+	}
+
+	// Second approval by a different admin → fully approved.
+	form2 := url.Values{"challenge_id": {challengeID}}
+	r2 := buildFormRequest(secret, "admin2", "admin", "/api/challenges/approve", form2)
+	w2 := httptest.NewRecorder()
+	s.handleBulkApprove(w2, r2)
+	if w2.Code != http.StatusSeeOther {
+		t.Fatalf("second approval: expected 303, got %d; body: %s", w2.Code, w2.Body.String())
+	}
+
+	// Verify challenge is now approved.
+	ch, ok := s.store.Get(challengeID)
+	if !ok {
+		t.Fatal("challenge not found after full approval")
+	}
+	if ch.Status != challpkg.StatusApproved {
+		t.Errorf("after second approval: expected approved, got %q", ch.Status)
+	}
+}
+
+// ── Break-glass override tests ───────────────────────────────────────────────
+
+func TestHandleBreakglassOverride_Allowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	// Set a policy with break-glass bypass allowed.
+	s.policyEngine = policy.NewEngine([]policy.Policy{
+		{Name: "critical", MatchHosts: []string{"critical-*"}, RequireAdmin: true, BreakglassBypass: true},
+	})
+
+	// Create challenge via API so policy fields are populated.
+	cw := postChallenge(s, map[string]string{
+		"username": "bob",
+		"hostname": "critical-db",
+	}, secret)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("setup: expected 201, got %d; body: %s", cw.Code, cw.Body.String())
+	}
+	var createResp map[string]interface{}
+	json.NewDecoder(cw.Body).Decode(&createResp)
+	challengeID := createResp["challenge_id"].(string)
+
+	// Admin uses break-glass override.
+	form := url.Values{"challenge_id": {challengeID}}
+	r := buildFormRequest(secret, "admin-user", "admin", "/api/challenges/override", form)
+	w := httptest.NewRecorder()
+	s.handleBreakglassOverride(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the challenge is approved and marked as break-glass override.
+	ch, ok := s.store.Get(challengeID)
+	if !ok {
+		t.Fatal("challenge not found after override")
+	}
+	if ch.Status != challpkg.StatusApproved {
+		t.Errorf("expected approved, got %q", ch.Status)
+	}
+	if !ch.BreakglassOverride {
+		t.Error("expected BreakglassOverride to be true")
+	}
+}
+
+func TestHandleBreakglassOverride_NotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	// Set a policy WITHOUT break-glass bypass.
+	s.policyEngine = policy.NewEngine([]policy.Policy{
+		{Name: "prod", MatchHosts: []string{"prod-*"}, RequireAdmin: true, BreakglassBypass: false},
+	})
+
+	cw := postChallenge(s, map[string]string{
+		"username": "bob",
+		"hostname": "prod-web",
+	}, secret)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("setup: expected 201, got %d; body: %s", cw.Code, cw.Body.String())
+	}
+	var createResp map[string]interface{}
+	json.NewDecoder(cw.Body).Decode(&createResp)
+	challengeID := createResp["challenge_id"].(string)
+
+	// Admin tries break-glass override → should be rejected.
+	form := url.Values{"challenge_id": {challengeID}}
+	r := buildFormRequest(secret, "admin-user", "admin", "/api/challenges/override", form)
+	w := httptest.NewRecorder()
+	s.handleBreakglassOverride(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify challenge is still pending.
+	ch, ok := s.store.Get(challengeID)
+	if !ok {
+		t.Fatal("challenge not found")
+	}
+	if ch.Status != challpkg.StatusPending {
+		t.Errorf("expected pending, got %q", ch.Status)
+	}
+}
+
+func TestHandleBreakglassOverride_NonAdmin(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+
+	s.policyEngine = policy.NewEngine([]policy.Policy{
+		{Name: "critical", MatchHosts: []string{"critical-*"}, RequireAdmin: true, BreakglassBypass: true},
+	})
+
+	cw := postChallenge(s, map[string]string{
+		"username": "bob",
+		"hostname": "critical-db",
+	}, secret)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("setup: expected 201, got %d", cw.Code)
+	}
+	var createResp map[string]interface{}
+	json.NewDecoder(cw.Body).Decode(&createResp)
+	challengeID := createResp["challenge_id"].(string)
+
+	// Non-admin tries break-glass → should be rejected.
+	form := url.Values{"challenge_id": {challengeID}}
+	r := buildFormRequest(secret, "regular-user", "user", "/api/challenges/override", form)
+	w := httptest.NewRecorder()
+	s.handleBreakglassOverride(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
 	}
 }
