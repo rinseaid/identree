@@ -596,7 +596,7 @@ func (s *RedisStore) SetNonce(id string, nonce string) error {
 		case "expired":
 			return fmt.Errorf("challenge expired")
 		case "already_resolved":
-			return fmt.Errorf("challenge already resolved")
+			return ErrAlreadyResolved
 		case "nonce_already_set":
 			return fmt.Errorf("nonce already set (login already initiated)")
 		}
@@ -692,7 +692,7 @@ func (s *RedisStore) Approve(id string, approvedBy string) error {
 		case "expired":
 			return fmt.Errorf("challenge expired")
 		case "already_resolved":
-			return fmt.Errorf("challenge already resolved")
+			return ErrAlreadyResolved
 		case "revoked":
 			return fmt.Errorf("challenge superseded by session revocation")
 		}
@@ -803,7 +803,7 @@ func (s *RedisStore) Deny(id, reason string) error {
 		case "expired":
 			return fmt.Errorf("challenge expired")
 		case "already_resolved":
-			return fmt.Errorf("challenge already resolved")
+			return ErrAlreadyResolved
 		}
 		return fmt.Errorf("redis Deny: %w", err)
 	}
@@ -838,7 +838,7 @@ func (s *RedisStore) AutoApprove(id string) error {
 		case "expired":
 			return fmt.Errorf("challenge expired")
 		case "already_resolved":
-			return fmt.Errorf("challenge already resolved")
+			return ErrAlreadyResolved
 		}
 		return fmt.Errorf("redis AutoApprove: %w", err)
 	}
@@ -936,7 +936,7 @@ func (s *RedisStore) ConsumeAndApprove(challengeID, approvedBy string) error {
 		case "already_used":
 			return fmt.Errorf("one-tap already used")
 		case "already_resolved":
-			return fmt.Errorf("challenge already resolved")
+			return ErrAlreadyResolved
 		case "revoked":
 			return fmt.Errorf("challenge superseded by session revocation")
 		}

@@ -160,6 +160,10 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 				apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
 				return
 			}
+			if errors.Is(err, challpkg.ErrAlreadyResolved) {
+				revokeErrorPage(w, r, http.StatusNotFound, "challenge_expired_or_resolved", "challenge_expired_or_resolved_message")
+				return
+			}
 			revokeErrorPage(w, r, http.StatusInternalServerError, "approval_failed", "approval_failed_message")
 			return
 		}
@@ -252,6 +256,10 @@ func (s *Server) handleBreakglassOverride(w http.ResponseWriter, r *http.Request
 	if err := s.store.Approve(challengeID, username); err != nil {
 		if errors.Is(err, challpkg.ErrDiskWriteFailed) {
 			apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
+			return
+		}
+		if errors.Is(err, challpkg.ErrAlreadyResolved) {
+			revokeErrorPage(w, r, http.StatusNotFound, "challenge_expired_or_resolved", "challenge_expired_or_resolved_message")
 			return
 		}
 		revokeErrorPage(w, r, http.StatusInternalServerError, "approval_failed", "approval_failed_message")

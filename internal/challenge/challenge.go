@@ -81,6 +81,9 @@ var (
 	ErrDiskWriteFailed = errors.New("challenge: disk write failed, please retry")
 	// ErrDuplicateApprover is returned when the same approver tries to approve twice.
 	ErrDuplicateApprover = errors.New("approver has already approved this challenge")
+	// ErrAlreadyResolved is returned when an operation targets a challenge that
+	// is no longer pending (already approved, denied, or expired).
+	ErrAlreadyResolved = errors.New("challenge already resolved")
 )
 
 // ChallengeStatus represents the state of a sudo challenge.
@@ -459,7 +462,7 @@ func (s *ChallengeStore) SetNonce(id string, nonce string) error {
 		return fmt.Errorf("challenge expired")
 	}
 	if c.Status != StatusPending {
-		return fmt.Errorf("challenge already resolved")
+		return ErrAlreadyResolved
 	}
 	if c.Nonce != "" {
 		return fmt.Errorf("nonce already set (login already initiated)")
@@ -501,7 +504,7 @@ func (s *ChallengeStore) Approve(id string, approvedBy string) error {
 	}
 	if c.Status != StatusPending {
 		s.mu.Unlock()
-		return fmt.Errorf("challenge already resolved")
+		return ErrAlreadyResolved
 	}
 	// If the user's session was revoked after this challenge was created,
 	// treat the challenge as expired to prevent approval of a stale challenge.
@@ -551,7 +554,7 @@ func (s *ChallengeStore) AddApproval(id string, approver string, requiredApprova
 	}
 	if c.Status != StatusPending {
 		s.mu.Unlock()
-		return false, fmt.Errorf("challenge already resolved")
+		return false, ErrAlreadyResolved
 	}
 	// If the user's session was revoked after this challenge was created,
 	// treat the challenge as expired.
@@ -607,7 +610,7 @@ func (s *ChallengeStore) Deny(id, reason string) error {
 		return fmt.Errorf("challenge expired")
 	}
 	if c.Status != StatusPending {
-		return fmt.Errorf("challenge already resolved")
+		return ErrAlreadyResolved
 	}
 	c.Status = StatusDenied
 	c.DenyReason = reason
@@ -678,7 +681,7 @@ func (s *ChallengeStore) AutoApprove(id string) error {
 		return fmt.Errorf("challenge expired")
 	}
 	if c.Status != StatusPending {
-		return fmt.Errorf("challenge already resolved")
+		return ErrAlreadyResolved
 	}
 	c.Status = StatusApproved
 	c.ApprovedBy = c.Username
@@ -1225,7 +1228,7 @@ func (s *ChallengeStore) ConsumeAndApprove(challengeID, approvedBy string) error
 	}
 	if c.Status != StatusPending {
 		s.mu.Unlock()
-		return fmt.Errorf("challenge already resolved")
+		return ErrAlreadyResolved
 	}
 	// If the user's session was revoked after this challenge was created,
 	// treat the challenge as expired to prevent approval of a stale challenge.
