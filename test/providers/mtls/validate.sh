@@ -175,6 +175,57 @@ check "client key file exists" \
 check "CA cert file exists" \
     docker exec "$CLIENT" test -f /etc/identree/ca.crt
 
+# ── 9. LDAPS connectivity with mTLS client cert ─────────────────────────────
+echo ""
+echo "  -- LDAPS/mTLS --"
+
+# Test LDAPS search using the client certificate (from inside testclient).
+# The testclient has openldap-utils (ldapsearch) and the client cert installed.
+# Use LDAPTLS_CERT/KEY/CACERT to pass the mTLS client cert to ldapsearch.
+LDAPS_SEARCH_RC=$(docker exec "$CLIENT" bash -c '
+    LDAPTLS_CERT=/etc/identree/client.crt \
+    LDAPTLS_KEY=/etc/identree/client.key \
+    LDAPTLS_CACERT=/etc/identree/server-ca.crt \
+    ldapsearch -x \
+        -H ldaps://identree:3636 \
+        -D "uid=mtls-test-host-01,ou=identree-hosts,dc=test,dc=local" \
+        -w unused \
+        -b "dc=test,dc=local" \
+        -s base "(objectClass=*)" dn 2>&1
+' && echo "OK" || echo "FAIL")
+
+if echo "$LDAPS_SEARCH_RC" | grep -q "OK\|dn:"; then
+    echo "  PASS  LDAPS search with mTLS client cert"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL  LDAPS search with mTLS client cert (output: ${LDAPS_SEARCH_RC:0:200})"
+    FAIL=$((FAIL+1))
+fi
+
+# ── 10. LDAPS rejects connections without client cert ────────────────────────
+LDAPS_NOCERT_RC=$(docker exec "$CLIENT" bash -c '
+    LDAPTLS_CACERT=/etc/identree/server-ca.crt \
+    LDAPTLS_REQCERT=allow \
+    ldapsearch -x \
+        -H ldaps://identree:3636 \
+        -D "uid=mtls-test-host-01,ou=identree-hosts,dc=test,dc=local" \
+        -w unused \
+        -b "dc=test,dc=local" \
+        -s base "(objectClass=*)" dn 2>&1
+' && echo "OK" || echo "FAIL")
+
+if echo "$LDAPS_NOCERT_RC" | grep -qiE "FAIL|error|Can.t contact"; then
+    echo "  PASS  LDAPS rejects connection without client cert"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL  LDAPS should reject no-cert connection (output: ${LDAPS_NOCERT_RC:0:200})"
+    FAIL=$((FAIL+1))
+fi
+
+# ── 11. Provision returns ldaps:// URL ──────────────────────────────────────
+check_output "provision returns ldaps:// URL" "ldaps://" \
+    echo "$PROV_JSON"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo "================================================================"
 echo "  ${PASS} passed  /  ${FAIL} failed"

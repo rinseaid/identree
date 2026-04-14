@@ -114,6 +114,7 @@ type ServerConfig struct {
 	// ── LDAP server ───────────────────────────────────────────────────────────
 	LDAPEnabled        bool          // whether to start the embedded LDAP server
 	LDAPListenAddr     string        // default ":389"
+	LDAPTLSListenAddr  string        // LDAPS listen address when mTLS is enabled (default ":636")
 	LDAPBaseDN         string        // e.g. "dc=example,dc=com"
 	LDAPBindDN         string        // service-account DN for read-only bind (optional)
 	LDAPBindPassword   string        // service-account password (optional)
@@ -472,6 +473,7 @@ func LoadServerConfig() (*ServerConfig, error) {
 
 		LDAPEnabled:            getBool("IDENTREE_LDAP_ENABLED", true),
 		LDAPListenAddr:         stringDefault(get("IDENTREE_LDAP_LISTEN_ADDR"), ":389"),
+		LDAPTLSListenAddr:      stringDefault(get("IDENTREE_LDAP_TLS_LISTEN_ADDR"), ":636"),
 		LDAPBaseDN:             get("IDENTREE_LDAP_BASE_DN"),
 		LDAPBindDN:             get("IDENTREE_LDAP_BIND_DN"),
 		LDAPBindPassword:       get("IDENTREE_LDAP_BIND_PASSWORD"),

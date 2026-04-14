@@ -144,8 +144,9 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 }
 
 // ldapProvisionURL returns the LDAP URL to include in provision responses.
-// Uses IDENTREE_LDAP_EXTERNAL_URL if set; otherwise derives ldap://<host>:389
-// from the server's ExternalURL.
+// Uses IDENTREE_LDAP_EXTERNAL_URL if set; otherwise derives the URL from
+// ExternalURL. When mTLS is enabled, returns ldaps:// on port 636 (or the
+// configured LDAPTLSListenAddr port); otherwise returns ldap:// on port 389.
 func (s *Server) ldapProvisionURL() string {
 	if s.cfg.LDAPExternalURL != "" {
 		return s.cfg.LDAPExternalURL
@@ -168,6 +169,18 @@ func (s *Server) ldapProvisionURL() string {
 	if h, _, err := net.SplitHostPort(u); err == nil {
 		host = h
 	}
+
+	// When mTLS is active and we have a TLS cert, use LDAPS.
+	if s.cfg.MTLSEnabled && s.mtlsCACert != nil && s.cfg.TLSCertFile != "" {
+		port := "636"
+		if s.cfg.LDAPTLSListenAddr != "" {
+			if _, p, err := net.SplitHostPort(s.cfg.LDAPTLSListenAddr); err == nil && p != "" && p != "636" {
+				port = p
+			}
+		}
+		return fmt.Sprintf("ldaps://%s:%s", host, port)
+	}
+
 	// Use LDAP listen port if configured and non-standard, otherwise 389.
 	port := "389"
 	if s.cfg.LDAPListenAddr != "" {

@@ -289,7 +289,23 @@ func runServer() {
 			slog.Error("uid map load error", "err", err)
 			os.Exit(1)
 		}
-		ldapSrv, err := ldapserver.NewLDAPServer(cfg, um, rulesStore)
+		// When mTLS is enabled and we have a TLS server cert, configure LDAPS
+		// with mutual TLS client certificate authentication.
+		var ldapTLSCfg *ldapserver.LDAPTLSConfig
+		if cfg.MTLSEnabled && srv.mtlsCACert != nil && cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+			serverCert, tlsErr := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+			if tlsErr != nil {
+				slog.Error("ldap: failed to load TLS server cert for LDAPS", "err", tlsErr)
+				os.Exit(1)
+			}
+			ldapTLSCfg = &ldapserver.LDAPTLSConfig{
+				ServerCert: serverCert,
+				CACert:     srv.mtlsCACert,
+			}
+			slog.Info("ldap: LDAPS/mTLS configured", "tls_listen", cfg.LDAPTLSListenAddr)
+		}
+
+		ldapSrv, err := ldapserver.NewLDAPServer(cfg, um, rulesStore, ldapTLSCfg)
 		if err != nil {
 			slog.Error("ldap server init error", "err", err)
 			os.Exit(1)

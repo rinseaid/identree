@@ -1,13 +1,28 @@
 package ldap
 
 import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/rinseaid/identree/internal/config"
+	"github.com/rinseaid/identree/internal/mtls"
 	"github.com/rinseaid/identree/internal/pocketid"
 	"github.com/rinseaid/identree/internal/sudorules"
 	"github.com/rinseaid/identree/internal/uidmap"
+
+	ldapclient "github.com/go-ldap/ldap/v3"
 )
 
 // ── isValidGroupName ──────────────────────────────────────────────────────────
@@ -604,7 +619,7 @@ func TestNewLDAPServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewLDAPServer(cfg, um, nil)
+	srv, err := NewLDAPServer(cfg, um, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -624,7 +639,7 @@ func TestRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewLDAPServer(cfg, um, nil)
+	srv, err := NewLDAPServer(cfg, um, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +676,7 @@ func TestNewLDAPServer_BridgeMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewLDAPServer(cfg, um, store)
+	srv, err := NewLDAPServer(cfg, um, store, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -682,7 +697,7 @@ func TestParseProvisionBindDN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewLDAPServer(cfg, um, nil)
+	srv, err := NewLDAPServer(cfg, um, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -737,4 +752,410 @@ func TestParseProvisionBindDN(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ── LDAPS mTLS integration tests ─────────────────────────────────────────────
+
+// TestLDAPS_mTLSBindAcceptsValidCert verifies that when LDAPS is configured
+// with mTLS, a client presenting a valid client certificate can bind using
+// a provisioned host DN (password is ignored — the cert is the credential).
+func TestLDAPS_mTLSBindAcceptsValidCert(t *testing.T) {
+	// Generate a CA and issue a server cert + client cert.
+	caCertPEM, caKeyPEM, err := mtls.GenerateCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPair, err := tls.X509KeyPair(caCertPEM, caKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caLeaf, err := x509.ParseCertificate(caPair.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPair.Leaf = caLeaf
+
+	// Issue a server certificate (the LDAP server's TLS cert).
+	// Re-use the CA as a self-signed server cert for simplicity; in practice
+	// you'd issue a separate server cert with SAN=localhost.
+	serverCertPEM, serverKeyPEM, err := issueServerCert(caPair, "localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverPair, err := tls.X509KeyPair(serverCertPEM, serverKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Issue a client certificate for hostname "testhost-01".
+	clientHostname := "testhost-01"
+	clientCertPEM, clientKeyPEM, err := mtls.IssueCert(caPair, clientHostname, 1*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientPair, err := tls.X509KeyPair(clientCertPEM, clientKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Find a free port.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	baseDN := "dc=test,dc=local"
+	cfg := &config.ServerConfig{
+		LDAPBaseDN:           baseDN,
+		LDAPListenAddr:       addr,
+		LDAPTLSListenAddr:    addr,
+		LDAPProvisionEnabled: true,
+		LDAPAllowAnonymous:   false,
+		MTLSEnabled:          true,
+	}
+	um, err := uidmap.NewUIDMap(t.TempDir()+"/uidmap.json", 200000, 200000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tlsCfg := &LDAPTLSConfig{
+		ServerCert: serverPair,
+		CACert:     caLeaf,
+	}
+	srv, err := NewLDAPServer(cfg, um, nil, tlsCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed a minimal directory so searches can succeed.
+	var users []pocketid.PocketIDAdminUser
+	_ = json.Unmarshal([]byte(`[{"id":"u1","username":"alice"}]`), &users)
+	var groups []pocketid.PocketIDAdminGroup
+	_ = json.Unmarshal([]byte(`[{"id":"g1","name":"sysadmins","customClaims":[],"members":[{"id":"u1"}]}]`), &groups)
+	srv.Refresh(pocketid.NewUserDirectory(users, groups), "", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	// Wait for the server to start accepting connections.
+	if !waitForPort(t, addr, 5*time.Second) {
+		t.Fatal("LDAP server did not start in time")
+	}
+
+	// ── Test 1: bind with valid client cert succeeds ────────────────────
+	caPool := x509.NewCertPool()
+	caPool.AddCert(caLeaf)
+	clientTLS := &tls.Config{
+		Certificates: []tls.Certificate{clientPair},
+		RootCAs:      caPool,
+		ServerName:   "localhost",
+	}
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldaps://%s", addr), ldapclient.DialWithTLSConfig(clientTLS))
+	if err != nil {
+		t.Fatalf("dial LDAPS: %v", err)
+	}
+	defer conn.Close()
+
+	bindDN := fmt.Sprintf("uid=%s,ou=identree-hosts,%s", clientHostname, baseDN)
+	err = conn.Bind(bindDN, "ignored-password")
+	if err != nil {
+		t.Fatalf("mTLS bind should succeed, got: %v", err)
+	}
+	t.Log("PASS: mTLS bind with valid client cert succeeded")
+
+	// ── Test 2: search after bind succeeds ──────────────────────────────
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     baseDN,
+		Scope:      ldapclient.ScopeBaseObject,
+		Filter:     "(objectClass=*)",
+		Attributes: []string{"dn"},
+	})
+	if err != nil {
+		t.Fatalf("search after mTLS bind failed: %v", err)
+	}
+	if len(sr.Entries) == 0 {
+		t.Error("expected at least one search result")
+	}
+	t.Log("PASS: search after mTLS bind succeeded")
+
+	cancel()
+}
+
+// TestLDAPS_mTLSRejectsWithoutCert verifies that when LDAPS with mTLS is
+// configured, a connection without a client certificate is rejected.
+// The rejection may happen at the TLS handshake or on the first LDAP operation.
+func TestLDAPS_mTLSRejectsWithoutCert(t *testing.T) {
+	caCertPEM, caKeyPEM, err := mtls.GenerateCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPair, err := tls.X509KeyPair(caCertPEM, caKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caLeaf, err := x509.ParseCertificate(caPair.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPair.Leaf = caLeaf
+
+	serverCertPEM, serverKeyPEM, err := issueServerCert(caPair, "localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverPair, err := tls.X509KeyPair(serverCertPEM, serverKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	cfg := &config.ServerConfig{
+		LDAPBaseDN:           "dc=test,dc=local",
+		LDAPListenAddr:       addr,
+		LDAPTLSListenAddr:    addr,
+		LDAPProvisionEnabled: true,
+		LDAPAllowAnonymous:   false,
+		MTLSEnabled:          true,
+	}
+	um, err := uidmap.NewUIDMap(t.TempDir()+"/uidmap.json", 200000, 200000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tlsCfg := &LDAPTLSConfig{
+		ServerCert: serverPair,
+		CACert:     caLeaf,
+	}
+	srv, err := NewLDAPServer(cfg, um, nil, tlsCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = srv.Start(ctx) }()
+
+	if !waitForPort(t, addr, 5*time.Second) {
+		t.Fatal("LDAP server did not start in time")
+	}
+
+	// Connect WITHOUT a client certificate — should fail at TLS handshake
+	// or on the first LDAP operation (depending on Go TLS lazy handshake).
+	caPool := x509.NewCertPool()
+	caPool.AddCert(caLeaf)
+	noCertTLS := &tls.Config{
+		RootCAs:    caPool,
+		ServerName: "localhost",
+	}
+	conn, dialErr := ldapclient.DialURL(fmt.Sprintf("ldaps://%s", addr), ldapclient.DialWithTLSConfig(noCertTLS))
+	if dialErr != nil {
+		// Handshake failed at dial time — expected.
+		t.Logf("PASS: dial without client cert rejected: %v", dialErr)
+		cancel()
+		return
+	}
+	defer conn.Close()
+
+	// If dial succeeded (lazy TLS), the first operation should fail.
+	bindErr := conn.Bind("uid=test,ou=identree-hosts,dc=test,dc=local", "test")
+	if bindErr == nil {
+		t.Fatal("expected bind to fail without client cert, but it succeeded")
+	}
+	t.Logf("PASS: operation without client cert rejected: %v", bindErr)
+
+	cancel()
+}
+
+// TestLDAPS_mTLSCertFromWrongCA verifies that a client presenting a cert
+// signed by a different CA is rejected at the TLS handshake level.
+func TestLDAPS_mTLSCertFromWrongCA(t *testing.T) {
+	// Generate the server's mTLS CA.
+	caCertPEM, caKeyPEM, err := mtls.GenerateCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPair, err := tls.X509KeyPair(caCertPEM, caKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caLeaf, err := x509.ParseCertificate(caPair.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPair.Leaf = caLeaf
+
+	serverCertPEM, serverKeyPEM, err := issueServerCert(caPair, "localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverPair, err := tls.X509KeyPair(serverCertPEM, serverKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Generate a DIFFERENT CA and issue a client cert from it.
+	wrongCACertPEM, wrongCAKeyPEM, err := mtls.GenerateCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongCAPair, err := tls.X509KeyPair(wrongCACertPEM, wrongCAKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongCALeaf, err := x509.ParseCertificate(wrongCAPair.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongCAPair.Leaf = wrongCALeaf
+
+	clientCertPEM, clientKeyPEM, err := mtls.IssueCert(wrongCAPair, "testhost-01", 1*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientPair, err := tls.X509KeyPair(clientCertPEM, clientKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	cfg := &config.ServerConfig{
+		LDAPBaseDN:           "dc=test,dc=local",
+		LDAPListenAddr:       addr,
+		LDAPTLSListenAddr:    addr,
+		LDAPProvisionEnabled: true,
+		LDAPAllowAnonymous:   false,
+		MTLSEnabled:          true,
+	}
+	um, err := uidmap.NewUIDMap(t.TempDir()+"/uidmap.json", 200000, 200000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tlsCfg := &LDAPTLSConfig{
+		ServerCert: serverPair,
+		CACert:     caLeaf, // server trusts the original CA, NOT the wrong CA
+	}
+	srv, err := NewLDAPServer(cfg, um, nil, tlsCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = srv.Start(ctx) }()
+
+	if !waitForPort(t, addr, 5*time.Second) {
+		t.Fatal("LDAP server did not start in time")
+	}
+
+	// Use the wrong CA's cert as the client cert — server should reject.
+	caPool := x509.NewCertPool()
+	caPool.AddCert(caLeaf)
+	// Also add the wrong CA so the client trusts the server (for TLS root validation).
+	clientTLS := &tls.Config{
+		Certificates: []tls.Certificate{clientPair},
+		RootCAs:      caPool,
+		ServerName:   "localhost",
+	}
+	conn, dialErr := ldapclient.DialURL(fmt.Sprintf("ldaps://%s", addr), ldapclient.DialWithTLSConfig(clientTLS))
+	if dialErr != nil {
+		t.Logf("PASS: dial with wrong CA cert rejected: %v", dialErr)
+		cancel()
+		return
+	}
+	defer conn.Close()
+
+	// If dial succeeded (lazy TLS), the first operation should fail.
+	bindErr := conn.Bind("uid=testhost-01,ou=identree-hosts,dc=test,dc=local", "test")
+	if bindErr == nil {
+		t.Fatal("expected bind to fail with cert from wrong CA, but it succeeded")
+	}
+	t.Logf("PASS: bind with wrong CA cert rejected: %v", bindErr)
+
+	cancel()
+}
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+// waitForPort polls the given address until it accepts a TCP connection.
+func waitForPort(t *testing.T, addr string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+// issueServerCert creates a TLS server certificate signed by the given CA,
+// valid for the specified hostname. Used in tests to create a proper LDAPS
+// server cert (separate from the CA) with ExtKeyUsageServerAuth.
+func issueServerCert(ca tls.Certificate, hostname string) (certPEM, keyPEM []byte, err error) {
+	caLeaf := ca.Leaf
+	if caLeaf == nil {
+		caLeaf, err = x509.ParseCertificate(ca.Certificate[0])
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	serialMax := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialMax)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: hostname},
+		DNSNames:     []string{hostname},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		NotBefore:    now.Add(-5 * time.Minute),
+		NotAfter:     now.Add(1 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, caLeaf, &key.PublicKey, ca.PrivateKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM, nil
 }

@@ -54,10 +54,11 @@ services:
       IDENTREE_SHARED_SECRET: "mtls-test-shared-secret-1234567890abc"
       IDENTREE_LDAP_ENABLED: "true"
       IDENTREE_LDAP_LISTEN_ADDR: ":3389"
+      IDENTREE_LDAP_TLS_LISTEN_ADDR: ":3636"
       IDENTREE_LDAP_BASE_DN: "dc=test,dc=local"
       IDENTREE_LDAP_REFRESH_INTERVAL: "30s"
       IDENTREE_LDAP_PROVISION_ENABLED: "true"
-      IDENTREE_LDAP_EXTERNAL_URL: "ldap://identree:3389"
+      IDENTREE_LDAP_EXTERNAL_URL: "ldaps://identree:3636"
       IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
       IDENTREE_ESCROW_BACKEND: "local"
       IDENTREE_ESCROW_ENCRYPTION_KEY: "a15da2f0f3efd3feddd42a8fc8107cde5c1969593c4fd016069562a01dfd0f30"
@@ -81,6 +82,7 @@ services:
     ports:
       - "127.0.0.1:8094:8090"
       - "127.0.0.1:3394:3389"
+      - "127.0.0.1:3636:3636"
     healthcheck:
       # Server listens on HTTPS — use wget with --no-check-certificate
       test: ["CMD", "wget", "--spider", "-q", "--no-check-certificate", "https://localhost:8090/healthz"]
@@ -131,7 +133,7 @@ services:
       identree:
         condition: service_healthy
     environment:
-      LDAP_URI: "ldap://identree:3389"
+      LDAP_URI: "ldaps://identree:3636"
       LDAP_BASE: "dc=test,dc=local"
       # Initial provision uses HTTP to the provision endpoint (shared secret).
       # After setup.sh runs, the client switches to mTLS over HTTPS.

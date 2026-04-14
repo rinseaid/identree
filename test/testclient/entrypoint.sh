@@ -130,6 +130,18 @@ elif [ -n "$IDENTREE_SERVER_URL" ] && [ -n "$IDENTREE_SHARED_SECRET" ]; then
         PROV_BIND_DN=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('bind_dn',''))" 2>/dev/null || echo "")
         PROV_BIND_PW=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('bind_password',''))" 2>/dev/null || echo "")
         PROV_LDAP_URL=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ldap_url',''))" 2>/dev/null || echo "")
+        PROV_CA_CERT=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ca_cert',''))" 2>/dev/null || echo "")
+        PROV_CLIENT_CERT=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('client_cert',''))" 2>/dev/null || echo "")
+        PROV_CLIENT_KEY=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('client_key',''))" 2>/dev/null || echo "")
+        PROV_TLS_CA_CERT=$(printf '%s' "$PROV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tls_ca_cert',''))" 2>/dev/null || echo "")
+
+        # Override LDAP URI if provision returned one
+        if [ -n "$PROV_LDAP_URL" ]; then
+            echo "  ldap_url: ${PROV_LDAP_URL}"
+            # Rewrite ldap_uri in sssd.conf with provisioned URL
+            sed -i "s|^ldap_uri.*|ldap_uri               = ${PROV_LDAP_URL}|" /etc/sssd/sssd.conf
+        fi
+
         if [ -n "$PROV_BIND_DN" ]; then
             printf '\nldap_default_bind_dn      = %s\n' "$PROV_BIND_DN" >> /etc/sssd/sssd.conf
             printf 'ldap_default_authtok_type = password\n' >> /etc/sssd/sssd.conf
@@ -138,15 +150,52 @@ elif [ -n "$IDENTREE_SERVER_URL" ] && [ -n "$IDENTREE_SHARED_SECRET" ]; then
         else
             echo "WARNING: provision response missing bind_dn — SSSD may fail to authenticate"
         fi
+
+        # ── LDAPS/mTLS TLS configuration ─────────────────────────────────────
+        # When the provision response includes mTLS client cert and the LDAP URL
+        # uses ldaps://, configure SSSD for TLS with client certificate auth.
+        if [ -n "$PROV_CLIENT_CERT" ] && echo "$PROV_LDAP_URL" | grep -q '^ldaps://'; then
+            echo "  Configuring SSSD for LDAPS with mTLS client certificate..."
+            mkdir -p /etc/identree
+
+            # Write mTLS client cert + key for SSSD LDAP TLS client auth
+            printf '%s\n' "$PROV_CLIENT_CERT" > /etc/identree/ldap-client.crt
+            printf '%s\n' "$PROV_CLIENT_KEY" > /etc/identree/ldap-client.key
+            chmod 600 /etc/identree/ldap-client.key
+            chmod 644 /etc/identree/ldap-client.crt
+
+            # Build the CA bundle for verifying the LDAP server cert.
+            # Include both the mTLS CA (which signed the server cert in test
+            # environments) and any explicit TLS CA cert.
+            : > /etc/identree/ldap-ca-bundle.crt
+            [ -n "$PROV_CA_CERT" ] && printf '%s\n' "$PROV_CA_CERT" >> /etc/identree/ldap-ca-bundle.crt
+            [ -n "$PROV_TLS_CA_CERT" ] && printf '%s\n' "$PROV_TLS_CA_CERT" >> /etc/identree/ldap-ca-bundle.crt
+            # Also include the server's TLS cert if available (self-signed test envs)
+            [ -f /etc/identree/server-ca.crt ] && cat /etc/identree/server-ca.crt >> /etc/identree/ldap-ca-bundle.crt
+            chmod 644 /etc/identree/ldap-ca-bundle.crt
+
+            # Configure SSSD for LDAPS with mTLS
+            printf 'ldap_tls_cert     = /etc/identree/ldap-client.crt\n' >> /etc/sssd/sssd.conf
+            printf 'ldap_tls_key      = /etc/identree/ldap-client.key\n' >> /etc/sssd/sssd.conf
+            printf 'ldap_tls_cacert   = /etc/identree/ldap-ca-bundle.crt\n' >> /etc/sssd/sssd.conf
+            echo "  LDAPS mTLS configured."
+        fi
     else
         echo "WARNING: provision endpoint not available — SSSD will use anonymous bind"
     fi
 fi
 
+# Determine TLS verification mode: 'demand' when LDAPS is configured with a
+# CA bundle (mTLS), 'never' for plaintext LDAP (default/test environments).
+_TLS_REQCERT="never"
+if [ -f /etc/identree/ldap-ca-bundle.crt ] && [ -s /etc/identree/ldap-ca-bundle.crt ]; then
+    _TLS_REQCERT="demand"
+fi
+
 cat >> /etc/sssd/sssd.conf <<SSSD_REST
 
 ldap_id_use_start_tls = false
-ldap_tls_reqcert      = never
+ldap_tls_reqcert      = ${_TLS_REQCERT}
 enumerate             = false
 
 # Do not cache credentials — identree handles auth; stale LDAP data should

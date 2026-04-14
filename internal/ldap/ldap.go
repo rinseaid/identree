@@ -3,6 +3,8 @@ package ldap
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -73,17 +75,57 @@ type LDAPServer struct {
 	// authenticated bind. Used to enforce LDAPAllowAnonymous=false for searches.
 	authedConns sync.Map // map[int]struct{}
 
+	// tlsConfig is the TLS configuration for LDAPS (mTLS mode). nil = plaintext.
+	tlsConfig *tls.Config
+
+	// mtlsCACert is the parsed mTLS CA certificate for verifying client certs
+	// in the bind handler. nil when mTLS is not active.
+	mtlsCACert *x509.Certificate
+
+	// mtlsAllVerified is true when the LDAP server uses RequireAndVerifyClientCert
+	// TLS config, meaning every connection that reaches a handler has already been
+	// authenticated by the TLS stack against the mTLS CA. When true, the bind
+	// handler accepts provisioned host DNs without checking the password.
+	mtlsAllVerified bool
+
 	srv *gldap.Server
+}
+
+// LDAPTLSConfig holds the TLS parameters for enabling LDAPS with mTLS client
+// certificate authentication. Pass nil to NewLDAPServer for plaintext LDAP.
+type LDAPTLSConfig struct {
+	// ServerCert is the TLS server certificate presented to LDAP clients.
+	ServerCert tls.Certificate
+	// CACert is the mTLS CA certificate used to verify client certificates.
+	CACert *x509.Certificate
 }
 
 // NewLDAPServer creates (but does not start) the LDAP server.
 // Pass a non-nil store to run in bridge mode (sudoers-only LDAP).
-func NewLDAPServer(cfg *config.ServerConfig, um *uidmap.UIDMap, store *sudorules.Store) (*LDAPServer, error) {
-	return &LDAPServer{
+// Pass a non-nil tlsCfg to enable LDAPS with mTLS client certificate auth.
+func NewLDAPServer(cfg *config.ServerConfig, um *uidmap.UIDMap, store *sudorules.Store, tlsCfg *LDAPTLSConfig) (*LDAPServer, error) {
+	s := &LDAPServer{
 		cfg:       cfg,
 		uidmap:    um,
 		sudoRules: store,
-	}, nil
+	}
+
+	if tlsCfg != nil {
+		caPool := x509.NewCertPool()
+		caPool.AddCert(tlsCfg.CACert)
+
+		s.mtlsCACert = tlsCfg.CACert
+		s.mtlsAllVerified = true
+		s.tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{tlsCfg.ServerCert},
+			ClientAuth:   tls.RequireAndVerifyClientCert,
+			ClientCAs:    caPool,
+			MinVersion:   tls.VersionTLS12,
+		}
+		slog.Info("ldap: LDAPS with mTLS client certificate authentication enabled")
+	}
+
+	return s, nil
 }
 
 // Refresh replaces the cached directory snapshot atomically.
@@ -160,8 +202,21 @@ func (s *LDAPServer) Start(ctx context.Context) error {
 		srv.Stop()
 	}()
 
-	slog.Info("ldap: listening", "addr", s.cfg.LDAPListenAddr)
-	return srv.Run(s.cfg.LDAPListenAddr)
+	listenAddr := s.cfg.LDAPListenAddr
+
+	// When TLS is configured, use LDAPS with mTLS.
+	if s.tlsConfig != nil {
+		// Use LDAPTLSListenAddr if set, otherwise the standard LDAPS port.
+		if s.cfg.LDAPTLSListenAddr != "" {
+			listenAddr = s.cfg.LDAPTLSListenAddr
+		}
+
+		slog.Info("ldap: listening (LDAPS/mTLS)", "addr", listenAddr)
+		return srv.Run(listenAddr, gldap.WithTLSConfig(s.tlsConfig))
+	}
+
+	slog.Info("ldap: listening", "addr", listenAddr)
+	return srv.Run(listenAddr)
 }
 
 // ── Bind handler ─────────────────────────────────────────────────────────────
@@ -216,20 +271,39 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 	}
 
 	// Per-host provisioned bind — DN format: uid=<hostname>,ou=identree-hosts,<base_dn>
-	// Password is derived as HMAC(deriveSubkey(sharedSecret,"ldap-bind"), hostname).
-	// This allows auto-provisioned SSSD clients to bind without a shared static password.
-	if s.cfg.LDAPProvisionEnabled && s.cfg.SharedSecret != "" && s.cfg.LDAPBaseDN != "" {
+	//
+	// When mTLS is active (LDAPS with RequireAndVerifyClientCert), the TLS
+	// handshake already verified the client certificate against the mTLS CA.
+	// Every connection that reaches this handler has a valid cert — the bind
+	// succeeds without checking the password because the certificate IS the
+	// credential. The LDAP directory is read-only and does not filter results
+	// per-host, so all authenticated connections see the same data.
+	//
+	// When mTLS is NOT active, password-based auth continues: the password is
+	// derived as HMAC(deriveSubkey(sharedSecret,"ldap-bind"), hostname).
+	if s.cfg.LDAPProvisionEnabled && s.cfg.LDAPBaseDN != "" {
 		if hostname, ok := s.parseProvisionBindDN(msg.UserName); ok {
-			expected := config.DeriveLDAPBindPassword(s.cfg.SharedSecret, hostname)
-			if subtle.ConstantTimeCompare([]byte(msg.Password), []byte(expected)) == 1 {
+			// mTLS path: TLS layer already verified the client cert.
+			// Accept the bind — the cert is the credential.
+			if s.mtlsAllVerified {
 				s.authedConns.Store(req.ConnectionID(), struct{}{})
-				slog.Info("LDAP_BIND_OK provisioned host", "hostname", hostname, "conn", req.ConnectionID())
+				slog.Info("LDAP_BIND_OK mTLS provisioned host", "hostname", hostname, "conn", req.ConnectionID())
 				resp.SetResultCode(gldap.ResultSuccess)
-			} else {
-				slog.Warn("LDAP_BIND_REJECTED bad password for provisioned host", "hostname", hostname, "conn", req.ConnectionID())
-				ldapBindFailures.Inc()
+				return
 			}
-			return
+			// Password-based path (no mTLS).
+			if s.cfg.SharedSecret != "" {
+				expected := config.DeriveLDAPBindPassword(s.cfg.SharedSecret, hostname)
+				if subtle.ConstantTimeCompare([]byte(msg.Password), []byte(expected)) == 1 {
+					s.authedConns.Store(req.ConnectionID(), struct{}{})
+					slog.Info("LDAP_BIND_OK provisioned host", "hostname", hostname, "conn", req.ConnectionID())
+					resp.SetResultCode(gldap.ResultSuccess)
+				} else {
+					slog.Warn("LDAP_BIND_REJECTED bad password for provisioned host", "hostname", hostname, "conn", req.ConnectionID())
+					ldapBindFailures.Inc()
+				}
+				return
+			}
 		}
 	}
 
