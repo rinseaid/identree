@@ -140,6 +140,9 @@ func (s *Server) mtlsEnabled() bool {
 // verifyMTLSClient extracts and verifies the client certificate from the TLS
 // connection. Returns the verified hostname from the certificate, or an error.
 // When mTLS is not enabled, returns ("", nil) to signal fallback to shared-secret.
+// After cryptographic verification, checks the host registry to ensure
+// decommissioned hosts cannot use their old certs for API calls — this is
+// the revocation equivalent for the HTTP layer.
 func (s *Server) verifyMTLSClient(r *http.Request) (hostname string, err error) {
 	if !s.mtlsEnabled() || s.mtlsCACert == nil {
 		return "", nil
@@ -147,7 +150,18 @@ func (s *Server) verifyMTLSClient(r *http.Request) (hostname string, err error) 
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
 		return "", fmt.Errorf("no client certificate presented")
 	}
-	return mtls.VerifyClientCert(s.mtlsCACert, r.TLS.PeerCertificates)
+	hostname, err = mtls.VerifyClientCert(s.mtlsCACert, r.TLS.PeerCertificates)
+	if err != nil {
+		return "", err
+	}
+	// Check the host registry: if hosts are registered, only registered
+	// hostnames are allowed. This ensures decommissioned hosts whose certs
+	// are still cryptographically valid cannot access the API.
+	if s.hostRegistry.IsEnabled() && !s.hostRegistry.HasHost(hostname) {
+		slog.Warn("MTLS_REJECTED hostname not registered", "hostname", hostname)
+		return "", fmt.Errorf("hostname not registered in host registry")
+	}
+	return hostname, nil
 }
 
 // verifySharedSecret checks the X-Shared-Secret header using constant-time comparison

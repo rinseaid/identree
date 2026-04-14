@@ -75,6 +75,13 @@ type LDAPServer struct {
 	// authenticated bind. Used to enforce LDAPAllowAnonymous=false for searches.
 	authedConns sync.Map // map[int]struct{}
 
+	// mtlsKnownCNs tracks cert CNs seen during TLS handshakes (populated by
+	// the VerifyPeerCertificate callback). Used to cross-check bind DN
+	// hostnames: a host can only bind as a hostname for which a valid cert
+	// CN exists. This is the strongest check possible given that gldap does
+	// not expose per-connection TLS state to handlers.
+	mtlsKnownCNs sync.Map // map[string]struct{} — lowercase CN -> struct{}
+
 	// tlsConfig is the TLS configuration for LDAPS (mTLS mode). nil = plaintext.
 	tlsConfig *tls.Config
 
@@ -88,6 +95,11 @@ type LDAPServer struct {
 	// handler accepts provisioned host DNs without checking the password.
 	mtlsAllVerified bool
 
+	// hostChecker, when non-nil, verifies that a hostname is still registered
+	// in the host registry. Used to reject decommissioned hosts in the mTLS
+	// bind path even when their certs are still cryptographically valid.
+	hostChecker func(hostname string) bool
+
 	srv *gldap.Server
 }
 
@@ -98,6 +110,12 @@ type LDAPTLSConfig struct {
 	ServerCert tls.Certificate
 	// CACert is the mTLS CA certificate used to verify client certificates.
 	CACert *x509.Certificate
+	// HostChecker, when non-nil, is called with the hostname extracted from
+	// the bind DN to verify that the host is still registered. This is the
+	// revocation equivalent for the LDAP layer — decommissioned hosts whose
+	// certs are still cryptographically valid will be rejected.
+	// Returns true if the host is allowed.
+	HostChecker func(hostname string) bool
 }
 
 // NewLDAPServer creates (but does not start) the LDAP server.
@@ -116,11 +134,25 @@ func NewLDAPServer(cfg *config.ServerConfig, um *uidmap.UIDMap, store *sudorules
 
 		s.mtlsCACert = tlsCfg.CACert
 		s.mtlsAllVerified = true
+		s.hostChecker = tlsCfg.HostChecker
 		s.tlsConfig = &tls.Config{
 			Certificates: []tls.Certificate{tlsCfg.ServerCert},
 			ClientAuth:   tls.RequireAndVerifyClientCert,
 			ClientCAs:    caPool,
 			MinVersion:   tls.VersionTLS12,
+			// VerifyPeerCertificate captures the cert CN during TLS handshake
+			// so we can cross-check it against the bind DN hostname later.
+			// This runs after Go's built-in chain verification (RequireAndVerifyClientCert).
+			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+				if len(rawCerts) > 0 {
+					cert, err := x509.ParseCertificate(rawCerts[0])
+					if err == nil && cert.Subject.CommonName != "" {
+						cn := strings.ToLower(cert.Subject.CommonName)
+						s.mtlsKnownCNs.Store(cn, struct{}{})
+					}
+				}
+				return nil
+			},
 		}
 		slog.Info("ldap: LDAPS with mTLS client certificate authentication enabled")
 	}
@@ -286,6 +318,23 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 			// mTLS path: TLS layer already verified the client cert.
 			// Accept the bind — the cert is the credential.
 			if s.mtlsAllVerified {
+				// Check host registry: reject decommissioned hosts whose
+				// certs are still cryptographically valid.
+				if s.hostChecker != nil && !s.hostChecker(hostname) {
+					slog.Warn("LDAP_BIND_REJECTED mTLS hostname not registered", "hostname", hostname, "conn", req.ConnectionID())
+					ldapBindFailures.Inc()
+					return
+				}
+				// Cross-check: verify the bind DN hostname matches a cert CN
+				// we've seen during TLS handshake. This prevents a host with
+				// cert CN=hostA from binding as uid=hostB. Note: gldap does
+				// not expose per-connection TLS state, so we check against all
+				// known cert CNs — this is the strongest check possible.
+				if _, known := s.mtlsKnownCNs.Load(strings.ToLower(hostname)); !known {
+					slog.Warn("LDAP_BIND_REJECTED bind DN hostname has no matching cert CN", "hostname", hostname, "conn", req.ConnectionID())
+					ldapBindFailures.Inc()
+					return
+				}
 				s.authedConns.Store(req.ConnectionID(), struct{}{})
 				slog.Info("LDAP_BIND_OK mTLS provisioned host", "hostname", hostname, "conn", req.ConnectionID())
 				resp.SetResultCode(gldap.ResultSuccess)

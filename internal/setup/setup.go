@@ -6,9 +6,13 @@ package setup
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -341,12 +345,26 @@ func writeSSSDConfig(prov *provisionResponse, hostname string, dryRun, force boo
 	}
 
 	tlsReqcert := "never"
-	cacertLine := ""
+	extraTLSLines := ""
 	if prov.TLSCACert != "" {
 		tlsReqcert = "demand"
 		// Point SSSD explicitly at the cert file so it doesn't depend on the
 		// system trust store or update-ca-certificates having been run.
-		cacertLine = "ldap_tls_cacert = " + sssdCACertPath + "\n"
+		extraTLSLines = "ldap_tls_cacert = " + sssdCACertPath + "\n"
+	}
+	// When mTLS client certs are available and LDAP URL is ldaps://, configure
+	// SSSD for mutual TLS client certificate authentication. This matches the
+	// test client configuration in test/testclient/entrypoint.sh.
+	if prov.ClientCert != "" && prov.ClientKey != "" && strings.HasPrefix(prov.LDAPUrl, "ldaps://") {
+		tlsReqcert = "demand"
+		extraTLSLines += "ldap_tls_cert = " + mtlsClientCertPath + "\n"
+		extraTLSLines += "ldap_tls_key = " + mtlsClientKeyPath + "\n"
+		// Use the mTLS CA cert for LDAP TLS verification if no separate LDAP
+		// CA cert was provided (the mTLS CA typically signs both client and
+		// server certs in embedded CA mode).
+		if prov.TLSCACert == "" && prov.CACert != "" {
+			extraTLSLines += "ldap_tls_cacert = " + mtlsCACertPath + "\n"
+		}
 	}
 
 	content := fmt.Sprintf(sssdConfigTmpl,
@@ -355,7 +373,7 @@ func writeSSSDConfig(prov *provisionResponse, hostname string, dryRun, force boo
 		prov.BindDN,
 		prov.BindPassword,
 		tlsReqcert,
-		cacertLine,
+		extraTLSLines,
 	)
 
 	// Write the CA cert into the SSSD config directory alongside sssd.conf so
@@ -510,6 +528,113 @@ func appendMTLSConfig() error {
 		}
 	}
 	fmt.Printf("mTLS: updated %s with certificate paths\n", confPath)
+	return nil
+}
+
+// ── Certificate renewal ────────────────────────────────────────────────────────
+
+// RenewCert calls the provision endpoint to obtain a new mTLS client
+// certificate and overwrites the existing cert/key files. It authenticates
+// using the existing mTLS client certificate (if available) or the shared
+// secret from the client config.
+func RenewCert(serverURL, sharedSecret, clientCert, clientKey, caCert string) error {
+	if os.Getuid() != 0 {
+		return fmt.Errorf("must be run as root")
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("hostname: %w", err)
+	}
+
+	if serverURL == "" {
+		return fmt.Errorf("IDENTREE_SERVER_URL not configured in /etc/identree/client.conf")
+	}
+
+	// Build HTTP client with mTLS if existing cert is available.
+	transport := &http.Transport{
+		Proxy:       nil,
+		DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+	}
+	tlsCfg := &tls.Config{}
+	hasTLS := false
+	if clientCert != "" && clientKey != "" {
+		cert, tlsErr := tls.LoadX509KeyPair(clientCert, clientKey)
+		if tlsErr == nil {
+			tlsCfg.Certificates = []tls.Certificate{cert}
+			hasTLS = true
+			slog.Info("renew-cert: authenticating with existing mTLS client cert")
+		} else {
+			slog.Warn("renew-cert: could not load existing mTLS cert, falling back to shared secret", "err", tlsErr)
+		}
+	}
+	if caCert != "" {
+		pemData, caErr := os.ReadFile(caCert)
+		if caErr == nil {
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM(pemData) {
+				tlsCfg.RootCAs = pool
+				hasTLS = true
+			}
+		}
+	}
+	if hasTLS {
+		transport.TLSClientConfig = tlsCfg
+	}
+
+	client := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: transport,
+	}
+
+	url := strings.TrimRight(serverURL, "/") + "/api/client/provision"
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	if sharedSecret != "" {
+		req.Header.Set("X-Shared-Secret", sharedSecret)
+	}
+	req.Header.Set("X-Hostname", hostname)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("connecting to server: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var prov provisionResponse
+	if err := json.Unmarshal(body, &prov); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+
+	if prov.ClientCert == "" || prov.ClientKey == "" {
+		return fmt.Errorf("server did not return mTLS client certificate (mTLS may not be enabled)")
+	}
+
+	// Write new cert/key files.
+	if err := os.MkdirAll("/etc/identree", 0755); err != nil {
+		return fmt.Errorf("mkdir /etc/identree: %w", err)
+	}
+
+	if err := atomicWrite(mtlsClientCertPath, []byte(prov.ClientCert), 0644); err != nil {
+		return fmt.Errorf("write client cert: %w", err)
+	}
+	if err := atomicWrite(mtlsClientKeyPath, []byte(prov.ClientKey), 0600); err != nil {
+		return fmt.Errorf("write client key: %w", err)
+	}
+	if prov.CACert != "" {
+		if err := atomicWrite(mtlsCACertPath, []byte(prov.CACert), 0644); err != nil {
+			return fmt.Errorf("write CA cert: %w", err)
+		}
+	}
+
+	slog.Info("renew-cert: certificate renewed successfully", "hostname", hostname)
+	fmt.Printf("mTLS certificate renewed for %s\n", hostname)
 	return nil
 }
 

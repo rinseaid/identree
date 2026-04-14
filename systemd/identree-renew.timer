@@ -1,0 +1,11 @@
+[Unit]
+Description=identree monthly mTLS certificate renewal
+Requires=identree-renew.service
+
+[Timer]
+OnCalendar=monthly
+Persistent=true
+RandomizedDelaySec=86400
+
+[Install]
+WantedBy=timers.target

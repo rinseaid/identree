@@ -5,6 +5,8 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -519,6 +521,28 @@ func IsServerUnreachable(err error) bool {
 		}
 	}
 
+	// TLS certificate errors (expired cert, unknown CA, x509 validation
+	// failures) are NOT "server unreachable" — the server is reachable but
+	// the TLS handshake failed. Break-glass must not trigger for cert
+	// problems because that would let an attacker force offline auth by
+	// presenting an invalid cert or MITM-ing the connection.
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return false
+	}
+	var unknownAuthErr x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthErr) {
+		return false
+	}
+	var certInvalidErr x509.CertificateInvalidError
+	if errors.As(err, &certInvalidErr) {
+		return false
+	}
+	var hostnameErr x509.HostnameError
+	if errors.As(err, &hostnameErr) {
+		return false
+	}
+
 	// Check for typed network errors in the error chain.
 	// These are more robust than string matching, which could be spoofed
 	// by a malicious server's HTTP response body.
@@ -670,11 +694,40 @@ func EscrowPassword(cfg *config.ClientConfig, hostname, password string, quiet b
 		req.Header.Set("X-Escrow-Token", ComputeEscrowToken(cfg.SharedSecret, hostname, ts))
 	}
 
+	// Build TLS config, optionally loading mTLS client certificate and
+	// custom CA — mirrors the PAM client's TLS setup so that escrow
+	// requests use the same mTLS identity and trust chain.
+	transport := &http.Transport{
+		Proxy:       nil, // Never use proxy env vars
+		DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+	}
+	tlsCfg := &tls.Config{}
+	hasTLS := false
+	if cfg.ClientCert != "" && cfg.ClientKey != "" {
+		cert, tlsErr := tls.LoadX509KeyPair(cfg.ClientCert, cfg.ClientKey)
+		if tlsErr == nil {
+			tlsCfg.Certificates = []tls.Certificate{cert}
+			hasTLS = true
+		}
+		// Non-fatal: fall back to shared-secret-only auth if cert load fails.
+	}
+	if cfg.CACert != "" {
+		caCert, caErr := os.ReadFile(cfg.CACert)
+		if caErr == nil {
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM(caCert) {
+				tlsCfg.RootCAs = pool
+				hasTLS = true
+			}
+		}
+	}
+	if hasTLS {
+		transport.TLSClientConfig = tlsCfg
+	}
+
 	client := &http.Client{
-		Timeout: 5 * time.Second, // Short timeout — escrow is best-effort, don't block sudo sessions
-		Transport: &http.Transport{
-			Proxy: nil, // Never use proxy env vars
-		},
+		Timeout:   5 * time.Second, // Short timeout — escrow is best-effort, don't block sudo sessions
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

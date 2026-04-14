@@ -99,6 +99,9 @@ func Main() {
 		case "setup":
 			runSetup()
 			return
+		case "renew-cert":
+			runRenewCert()
+			return
 		}
 	}
 
@@ -110,7 +113,7 @@ func Main() {
 			"rotate-breakglass": true, "verify-breakglass": true,
 			"add-host": true, "remove-host": true, "list-hosts": true,
 			"rotate-host-secret": true,
-			"setup": true,
+			"setup": true, "renew-cert": true,
 		}
 		if !strings.HasPrefix(os.Args[1], "-") && !known[os.Args[1]] {
 			fmt.Fprintf(os.Stderr, "unknown command: %s\nRun 'identree --help' for usage.\n", os.Args[1])
@@ -144,6 +147,7 @@ Setup commands (run on managed hosts as root):
             [--hostname <name>]          Override hostname (default: os.Hostname)
             [--force]                    Overwrite existing config files
             [--dry-run]                  Print changes without applying them
+  identree renew-cert                    Renew mTLS client certificate from server
 
 Global flags:
   --version, -v                          Show version
@@ -301,6 +305,9 @@ func runServer() {
 			ldapTLSCfg = &ldapserver.LDAPTLSConfig{
 				ServerCert: serverCert,
 				CACert:     srv.mtlsCACert,
+				HostChecker: func(hostname string) bool {
+					return srv.hostRegistry.HasHost(hostname)
+				},
 			}
 			slog.Info("ldap: LDAPS/mTLS configured", "tls_listen", cfg.LDAPTLSListenAddr)
 		}
@@ -881,6 +888,29 @@ func runSetup() {
 		os.Exit(1)
 	}
 	fmt.Println("identree setup complete.")
+}
+
+// ── Renew cert ────────────────────────────────────────────────────────────
+
+func runRenewCert() {
+	stripSensitiveEnv()
+
+	clientCfg, err := config.LoadClientConfig(false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identree: load client config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := setup.RenewCert(
+		clientCfg.ServerURL,
+		clientCfg.SharedSecret,
+		clientCfg.ClientCert,
+		clientCfg.ClientKey,
+		clientCfg.CACert,
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "identree renew-cert: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
