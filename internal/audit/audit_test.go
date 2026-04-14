@@ -51,6 +51,34 @@ func (m *mockSink) Events() []Event {
 	return cp
 }
 
+// slowSink simulates a backend that takes time to process each event,
+// ensuring the streamer's buffered channel fills up and events are dropped.
+type slowSink struct {
+	mu     sync.Mutex
+	events []Event
+	delay  time.Duration
+}
+
+func (s *slowSink) Name() string { return "slow" }
+
+func (s *slowSink) Emit(e Event) error {
+	time.Sleep(s.delay)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, e)
+	return nil
+}
+
+func (s *slowSink) Close() error { return nil }
+
+func (s *slowSink) Events() []Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make([]Event, len(s.events))
+	copy(cp, s.events)
+	return cp
+}
+
 // ── Streamer tests ──────────────────────────────────────────────────────────
 
 func TestStreamer_EmitAndClose(t *testing.T) {
@@ -95,8 +123,13 @@ func TestStreamer_MultipleSinks(t *testing.T) {
 }
 
 func TestStreamer_NonBlocking(t *testing.T) {
-	sink := &mockSink{}
+	// Use a slow sink that holds the dispatch goroutine busy so the
+	// buffer (size 2) fills up and events get dropped.
+	sink := &slowSink{delay: 5 * time.Millisecond}
 	s := NewStreamer([]Sink{sink}, 2)
+
+	// Give the dispatch goroutine a moment to start blocking on the slow sink.
+	time.Sleep(time.Millisecond)
 
 	for i := 0; i < 100; i++ {
 		s.Emit(NewEvent("test", "user", "host", "", "", "", "", "dev"))
@@ -108,7 +141,7 @@ func TestStreamer_NonBlocking(t *testing.T) {
 		t.Error("expected at least some events to be delivered")
 	}
 	if len(events) == 100 {
-		t.Error("expected some events to be dropped with buffer size 2")
+		t.Errorf("expected some events to be dropped with buffer size 2, but all 100 were delivered")
 	}
 }
 
