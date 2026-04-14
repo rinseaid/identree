@@ -314,7 +314,6 @@
   "notify_users_label": "Users",
   "of": "von",
   "oidc_reauth_required": "Re-authentication required",
-  "oidc_reauth_required_message": "This host's approval policy requires a recent OIDC login. Please sign in again and retry.",
   "on": "auf",
   "onetap_max_age": "Ein-Klick max. Alter",
   "os_arch": "OS / Architektur",

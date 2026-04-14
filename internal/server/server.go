@@ -179,10 +179,6 @@ type Server struct {
 	// When OIDCInsecureSkipVerify is set it uses InsecureSkipVerify (test only).
 	oidcHTTPClient *http.Client
 
-	// webhookClient is kept for backward compat with test notification handler.
-	// TODO: remove once test notification uses dispatchNotification.
-	webhookClient *http.Client
-
 	// hashedAPIKeys and hashedMetricsToken are pre-computed at startup to avoid
 	// re-hashing on every request in verifyAPIKey / handleMetrics.
 	hashedAPIKeys      [][]byte
@@ -384,13 +380,6 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		oidcHTTPClient: oidcHTTPClient,
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
 		sudoRules:      store,
-		webhookClient: &http.Client{
-			Timeout:   cfg.NotifyTimeout,
-			Transport: &http.Transport{Proxy: nil},
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
 	}
 
 	// ── SAML SP initialization ──────────────────────────────────────────────

@@ -265,7 +265,6 @@
   "nonce_mismatch": "Token nonce mismatch. Please try signing in again.",
   "not_authorized": "Not authorized",
   "oidc_reauth_required": "Re-authentication required",
-  "oidc_reauth_required_message": "This host's approval policy requires a recent OIDC login. Please sign in again and retry.",
   "outside_approval_window": "This host can only be approved during the allowed time window.",
   "not_authorized_message": "You are not authorized to elevate on this host.",
   "not_configured": "Not configured",

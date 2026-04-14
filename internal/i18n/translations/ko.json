@@ -314,7 +314,6 @@
   "notify_users_label": "Users",
   "of": "/",
   "oidc_reauth_required": "Re-authentication required",
-  "oidc_reauth_required_message": "This host's approval policy requires a recent OIDC login. Please sign in again and retry.",
   "on": "의",
   "onetap_max_age": "원탭 최대 유효기간",
   "os_arch": "OS / 아키텍처",
