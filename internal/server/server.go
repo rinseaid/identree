@@ -759,6 +759,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/admin/policies", s.handleAdminPolicies)
 	s.mux.HandleFunc("/api/policies/add", s.handlePolicyAdd)
 	s.mux.HandleFunc("/api/policies/delete", s.handlePolicyDelete)
+	s.mux.HandleFunc("/api/policy/preview", s.handlePolicyPreview)
 
 	// Host management
 	s.mux.HandleFunc("/api/hosts/elevate", s.handleElevate)

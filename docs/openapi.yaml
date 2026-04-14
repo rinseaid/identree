@@ -620,6 +620,23 @@ paths:
                   grace_remaining:
                     type: integer
                     description: Grace period seconds remaining (approved only).
+                  required_approvals:
+                    type: integer
+                    description: >
+                      Total approvals required. Only present when the challenge
+                      requires more than one approval (multi-approval policy).
+                  current_approvals:
+                    type: integer
+                    description: >
+                      Number of approvals received so far. Only present when
+                      required_approvals is present.
+                  approvers:
+                    type: array
+                    items:
+                      type: string
+                    description: >
+                      Usernames of approvers who have approved so far. Only
+                      present when required_approvals is present.
         "400":
           description: Invalid challenge ID.
           content:
@@ -2847,3 +2864,84 @@ paths:
             text/html: {}
         "303":
           description: Redirect if not in bridge mode.
+
+  /api/policy/preview:
+    get:
+      operationId: policyPreview
+      summary: Dry-run policy evaluation
+      description: >
+        Evaluates the approval policy engine for a given host and user
+        without creating a challenge. Returns the effective policy settings
+        that would apply if the user requested sudo on the specified host.
+      tags: [Policies]
+      security:
+        - sessionCookie: []
+        - sharedSecret: []
+      parameters:
+        - name: host
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Target hostname to evaluate.
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Username requesting access.
+      responses:
+        "200":
+          description: Effective policy for the host/user combination.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policy_name:
+                    type: string
+                    description: Name of the matched policy, or empty string if default.
+                  require_admin:
+                    type: boolean
+                  min_approvals:
+                    type: integer
+                    description: Minimum number of approvals required.
+                  auto_approve_grace:
+                    type: boolean
+                    description: Whether grace-period auto-approve is eligible.
+                  time_window_ok:
+                    type: boolean
+                    description: Whether the current time falls within the allowed window.
+                  allowed_window:
+                    type: string
+                    description: >
+                      Human-readable allowed time window (e.g. "08:00-18:00 Mon-Fri").
+                      Only present when the policy defines time restrictions.
+                  require_fresh_oidc:
+                    type: string
+                    description: >
+                      Duration string (e.g. "5m") requiring recent OIDC authentication.
+                      Only present when set.
+                  break_glass_bypass:
+                    type: boolean
+                    description: Whether break-glass override is allowed. Only present when true.
+                  notify_channels:
+                    type: array
+                    items:
+                      type: string
+                    description: Notification channels for this policy. Only present when non-empty.
+                  host_group:
+                    type: string
+                    description: Host registry group label. Only present when the host is registered.
+        "400":
+          description: Missing required query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized (no admin session or valid API secret).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"

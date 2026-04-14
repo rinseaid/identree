@@ -611,6 +611,17 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		"status":     challenge.Status,
 		"expires_in": int(time.Until(challenge.ExpiresAt).Seconds()),
 	}
+	// Include multi-approval progress when the challenge requires more than
+	// one approval. This lets CLI clients show "1/2 approvals" progress.
+	if challenge.RequiredApprovals > 1 {
+		resp["required_approvals"] = challenge.RequiredApprovals
+		resp["current_approvals"] = len(challenge.Approvals)
+		approvers := make([]string, 0, len(challenge.Approvals))
+		for _, a := range challenge.Approvals {
+			approvers = append(approvers, a.Approver)
+		}
+		resp["approvers"] = approvers
+	}
 	// Include HMAC status tokens so the PAM client can verify the response
 	// is genuine and not injected by a MITM
 	if s.cfg.SharedSecret != "" {
