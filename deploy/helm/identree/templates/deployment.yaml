@@ -67,6 +67,11 @@ spec:
             - name: ldap
               containerPort: 389
               protocol: TCP
+            {{- if .Values.ldapsService.enabled }}
+            - name: ldaps
+              containerPort: 636
+              protocol: TCP
+            {{- end }}
             {{- end }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}

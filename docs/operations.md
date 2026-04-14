@@ -364,6 +364,82 @@ Review this list before going to production.
 
 ---
 
+## LDAPS Troubleshooting
+
+When LDAPS (LDAP over TLS with mTLS) is enabled, the most common issues involve certificate trust and handshake failures. This section covers diagnosis and resolution.
+
+### mTLS handshake failures
+
+If clients cannot connect to port 636, the TLS handshake is failing. Common causes:
+
+- **Client certificate not presented.** The client must send a certificate signed by the CA configured in `IDENTREE_LDAP_TLS_CA_CERT`. Verify with:
+  ```sh
+  LDAPTLS_CERT=/etc/identree/client.crt \
+  LDAPTLS_KEY=/etc/identree/client.key \
+  LDAPTLS_CACERT=/etc/identree/ca.crt \
+  ldapsearch -H ldaps://identree.example.com:636 -b "dc=example,dc=com" -D "cn=readonly,dc=example,dc=com" -w secret "(objectClass=*)"
+  ```
+- **Wrong CA.** The client certificate must be signed by the exact CA the server is configured with. Check with:
+  ```sh
+  openssl verify -CAfile /etc/identree/ca.crt /etc/identree/client.crt
+  ```
+- **Server certificate hostname mismatch.** If the server's TLS certificate does not include the hostname the client connects to, the handshake will fail. Add `-d 1` to `ldapsearch` for verbose TLS output.
+
+### Expired client certificates
+
+Client certificates have a configurable TTL (default 1 year, set via `IDENTREE_MTLS_CERT_TTL`). When a certificate expires, the client will be rejected during the TLS handshake.
+
+Check certificate expiry:
+```sh
+openssl x509 -in /etc/identree/client.crt -noout -enddate
+```
+
+To re-provision a host with a fresh certificate, re-run the install script or call the `/api/client/provision` endpoint.
+
+### CA trust issues
+
+- Ensure the CA certificate on the client (`ldap_tls_cacert` in sssd.conf or `LDAPTLS_CACERT`) matches the CA configured on the server (`IDENTREE_LDAP_TLS_CA_CERT`).
+- If you rotated the CA, all existing client certificates become untrusted. Re-provision all hosts after a CA rotation.
+- On some distributions, sssd caches TLS state. Restart sssd after changing certificate files:
+  ```sh
+  sudo systemctl restart sssd
+  ```
+
+### Testing with ldapsearch
+
+A quick end-to-end test using `ldapsearch` and `LDAPTLS_*` environment variables:
+
+```sh
+# Test plaintext LDAP (port 389)
+ldapsearch -H ldap://identree.example.com:389 -b "dc=example,dc=com" -D "cn=readonly,dc=example,dc=com" -w secret "(uid=*)"
+
+# Test LDAPS with mTLS (port 636)
+LDAPTLS_CERT=/etc/identree/client.crt \
+LDAPTLS_KEY=/etc/identree/client.key \
+LDAPTLS_CACERT=/etc/identree/ca.crt \
+ldapsearch -H ldaps://identree.example.com:636 -b "dc=example,dc=com" -D "cn=readonly,dc=example,dc=com" -w secret "(uid=*)"
+```
+
+If the LDAPS test fails but plaintext works, the issue is in the TLS/mTLS configuration.
+
+### Certificate expiry monitoring
+
+Monitor client certificate expiry proactively to avoid outages:
+
+- **Prometheus alert:** If your clients report certificate metadata, alert when any certificate is within 30 days of expiry.
+- **Cron job on each host:** Schedule a periodic check and alert:
+  ```sh
+  # Alert if certificate expires within 30 days
+  if openssl x509 -in /etc/identree/client.crt -noout -checkend 2592000 2>/dev/null; then
+    : # OK
+  else
+    echo "WARN: identree client certificate expires within 30 days" | logger -t identree-cert
+  fi
+  ```
+- **Centralized monitoring:** Use the identree audit log to track `provision` events and calculate when certificates were last issued. Certificates older than `IDENTREE_MTLS_CERT_TTL` minus a safety margin need rotation.
+
+---
+
 ## Known Limitations
 
 - Admin configuration panel help descriptions are English-only. All other user-facing strings are translated.

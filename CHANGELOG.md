@@ -19,12 +19,13 @@ All notable changes to identree will be documented in this file.
 #### LDAP
 - Embedded LDAP server exposing IdP users, groups, and sudo rules
 - SSSD auto-provisioning via `setup --sssd` subcommand and per-host LDAP bind credentials
+- LDAPS (LDAP over TLS) with mutual TLS client certificate authentication
 - Bridge mode for sudoers-only LDAP from a JSON rules store
 - Claims-based sudo rules with admin UI management
 - UID/GID mapping with collision-free allocation
 
 #### Security
-- mTLS client certificate authentication for PAM endpoints (embedded CA)
+- mTLS client certificate authentication for PAM endpoints and LDAP (embedded CA)
 - Break-glass escrow with multi-backend support (HashiCorp Vault, Infisical, Bitwarden/Vaultwarden)
 - Audit event hash chains for tamper evidence (SOC 2 CC7.2 aligned)
 - SSRF private IP denylist on webhook client

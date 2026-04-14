@@ -61,6 +61,42 @@ group:   files sss
 sudoers: files sss
 ```
 
+### sssd with LDAPS (mTLS)
+
+When LDAPS with mutual TLS is enabled on the identree server, use `ldaps://` and configure client certificate authentication:
+
+```ini
+[sssd]
+services = nss, pam, sudo
+config_file_version = 2
+domains = IDENTREE
+
+[domain/IDENTREE]
+id_provider    = ldap
+auth_provider  = none
+sudo_provider  = ldap
+
+ldap_uri             = ldaps://identree.example.com:636
+ldap_search_base              = dc=example,dc=com
+ldap_user_search_base         = ou=people,dc=example,dc=com
+ldap_group_search_base        = ou=groups,dc=example,dc=com
+ldap_sudo_search_base         = ou=sudoers,dc=example,dc=com
+
+ldap_schema           = rfc2307
+enumerate             = true
+cache_credentials     = false
+entry_cache_timeout   = 60
+ldap_sudo_full_refresh_interval = 60
+
+# mTLS client certificate authentication
+ldap_tls_cert    = /etc/identree/client.crt
+ldap_tls_key     = /etc/identree/client.key
+ldap_tls_cacert  = /etc/identree/ca.crt
+ldap_tls_reqcert = demand
+```
+
+The client certificate and key are issued by identree during provisioning (via `/api/client/provision`). The CA certificate is the same one configured on the server with `IDENTREE_LDAP_TLS_CA_CERT`.
+
 ### Sudo policy (full mode)
 
 Sudo rules are defined as **custom claims on PocketID groups**. A group with no sudo claims generates no sudo entries.

@@ -44,6 +44,8 @@ Use this if you are starting fresh or already use [PocketID](https://github.com/
 
 **Requires:** PocketID with an admin API key.
 
+When mTLS is enabled (`IDENTREE_MTLS_CA_CERT` and `IDENTREE_LDAP_TLS_CA_CERT` are set), identree also serves LDAP over TLS on port 636 with mutual TLS client certificate authentication. Clients must present a valid certificate signed by the configured CA.
+
 ### PAM bridge mode — identree alongside your existing stack
 
 Use this if you already have LDAP (Authentik, Kanidm, lldap, OpenLDAP, etc.) and just want to add passkey-gated PAM auth on top. Your existing LDAP continues to handle user/group resolution. identree handles only the PAM challenge flow, and optionally serves `ou=sudoers` for sudo policy management.
@@ -293,7 +295,8 @@ Key policy features:
 | `IDENTREE_LDAP_ALLOW_ANONYMOUS` | `false` | Allow anonymous LDAP binds |
 | `IDENTREE_LDAP_PROVISION_ENABLED` | `false` | Enable automatic provisioning of LDAP accounts |
 | `IDENTREE_LDAP_EXTERNAL_URL` | — | Public-facing LDAP URL (for client referrals) |
-| `IDENTREE_LDAP_TLS_CA_CERT` | — | Path to CA certificate for LDAP StartTLS |
+| `IDENTREE_LDAP_TLS_CA_CERT` | — | Path to CA certificate for LDAPS (LDAP over TLS) |
+| `IDENTREE_LDAP_TLS_LISTEN_ADDR` | `:636` | LDAPS listen address (used when `IDENTREE_LDAP_TLS_CA_CERT` is set) |
 | `IDENTREE_LDAP_SUDO_NO_AUTHENTICATE` | `false` | `false`, `true`, or `claims` — see [deployment modes](docs/deployment-modes.md) |
 | `IDENTREE_SUDO_RULES_FILE` | `/config/sudorules.json` | Sudo rules file (bridge mode) |
 

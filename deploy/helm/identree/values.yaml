@@ -132,6 +132,8 @@ config:
     allowAnonymous: false
     provisionEnabled: false
     externalUrl: ""
+    # -- LDAPS listen address (used when LDAP TLS CA cert is configured).
+    tlsListenAddr: ":636"
 
   # -- Notifications
   notify:
@@ -272,6 +274,13 @@ ldapService:
   enabled: true
   type: ClusterIP
   port: 389
+  annotations: {}
+
+# -- Separate Service for the LDAPS (TLS) port. Only created when ldap.enabled is true.
+ldapsService:
+  enabled: false
+  type: ClusterIP
+  port: 636
   annotations: {}
 
 # ---------------------------------------------------------------------------

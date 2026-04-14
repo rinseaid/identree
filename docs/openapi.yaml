@@ -389,7 +389,7 @@ tags:
   - name: Deploy
     description: Remote SSH deploy, remove, and stream operations.
   - name: LDAP
-    description: LDAP client provisioning.
+    description: LDAP client provisioning and mTLS client certificate issuance.
   - name: Health
     description: Health checks and metrics.
   - name: Downloads
@@ -1647,8 +1647,10 @@ paths:
       operationId: clientProvision
       summary: Get LDAP configuration for client host auto-provisioning
       description: >
-        Returns LDAP URL, base DN, per-host bind DN/password, and optional TLS
-        CA cert. Only active when IDENTREE_LDAP_PROVISION_ENABLED=true.
+        Returns LDAP URL, base DN, per-host bind DN/password, optional TLS
+        CA cert, and (when mTLS is enabled) a signed client certificate and
+        private key for mutual TLS authentication to the LDAPS endpoint.
+        Only active when IDENTREE_LDAP_PROVISION_ENABLED=true.
       tags: [LDAP]
       security:
         - sharedSecret: []

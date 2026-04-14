@@ -1,0 +1,21 @@
+{{- if and .Values.config.ldap.enabled .Values.ldapsService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "identree.fullname" . }}-ldaps
+  labels:
+    {{- include "identree.labels" . | nindent 4 }}
+  {{- with .Values.ldapsService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.ldapsService.type }}
+  ports:
+    - port: {{ .Values.ldapsService.port }}
+      targetPort: ldaps
+      protocol: TCP
+      name: ldaps
+  selector:
+    {{- include "identree.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -116,6 +116,9 @@ data:
   {{- if .Values.config.ldap.externalUrl }}
   IDENTREE_LDAP_EXTERNAL_URL: {{ .Values.config.ldap.externalUrl | quote }}
   {{- end }}
+  {{- if .Values.config.ldap.tlsListenAddr }}
+  IDENTREE_LDAP_TLS_LISTEN_ADDR: {{ .Values.config.ldap.tlsListenAddr | quote }}
+  {{- end }}
 
   # ── Notifications ─────────────────────────────────────────────────────────
   {{- if .Values.config.notify.backend }}
