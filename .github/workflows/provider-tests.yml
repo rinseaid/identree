@@ -205,21 +205,22 @@ jobs:
           timeout 300 bash -c 'until curl -sf http://localhost:8184/realms/master -o /dev/null; do sleep 5; done'
           echo "Both Keycloak instances ready."
 
-      - name: Start identree and testclient
+      - name: Run setup (IdP users + bridge SAML-to-OIDC config)
+        id: bridge-setup
         run: |
-          docker compose -f test/providers/keycloak-saml-bridge/docker-compose.yml up -d
+          bash test/providers/keycloak-saml-bridge/setup.sh | tee /tmp/bridge-setup.log
+          SECRET=$(grep 'client_secret:' /tmp/bridge-setup.log | awk '{print $NF}' || echo "")
+          echo "client_secret=${SECRET}" >> "$GITHUB_OUTPUT"
+
+      - name: Start identree with bridge client secret
+        run: |
+          BRIDGE_CLIENT_SECRET="${{ steps.bridge-setup.outputs.client_secret }}" \
+          docker compose -f test/providers/keycloak-saml-bridge/docker-compose.yml up -d --no-deps identree testclient
+          timeout 60 bash -c 'until curl -sf http://localhost:8095/healthz; do sleep 3; done'
+          echo "identree ready."
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
-
-      - name: Wait for identree to be healthy
-        run: |
-          echo "Waiting for identree..."
-          timeout 60 bash -c 'until curl -sf http://localhost:8095/healthz; do sleep 3; done'
-          echo "identree ready."
-
-      - name: Run setup (IdP users + bridge SAML-to-OIDC config)
-        run: make test-keycloak-saml-bridge-setup
 
       - name: Wait for sssd to populate
         run: |
