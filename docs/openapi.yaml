@@ -403,8 +403,6 @@ tags:
     description: Notification channel and routing rule management.
   - name: SudoRules
     description: Sudo rule management (bridge mode only).
-  - name: SAML
-    description: SAML 2.0 Service Provider endpoints.
   - name: Policies
     description: Approval policy management.
   - name: Dashboard
@@ -414,66 +412,6 @@ tags:
 # Paths
 # ---------------------------------------------------------------------------
 paths:
-
-  # ── SAML ───────────────────────────────────────────────────────────────
-
-  /saml/metadata:
-    get:
-      operationId: samlMetadata
-      summary: SAML SP metadata document
-      description: >
-        Returns the SAML 2.0 Service Provider metadata as XML. Used by IdPs
-        during federation setup.
-      tags: [SAML]
-      security: []
-      responses:
-        "200":
-          description: SAML SP metadata.
-          content:
-            application/xml: {}
-
-  /saml/login:
-    get:
-      operationId: samlLogin
-      summary: Initiate SAML SSO login
-      description: >
-        Redirects the browser to the configured SAML IdP for authentication.
-      tags: [SAML]
-      security: []
-      responses:
-        "302":
-          description: Redirect to SAML IdP.
-
-  /saml/acs:
-    post:
-      operationId: samlAcs
-      summary: SAML Assertion Consumer Service
-      description: >
-        Receives the SAML Response from the IdP. On success, sets a session
-        cookie and redirects to the dashboard. Returns 400 on malformed
-        assertions and 403 when the user is not authorized.
-      tags: [SAML]
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              properties:
-                SAMLResponse:
-                  type: string
-                  description: Base64-encoded SAML Response.
-                RelayState:
-                  type: string
-                  description: Optional relay state for post-login redirect.
-      responses:
-        "302":
-          description: Authentication successful; redirect to dashboard.
-        "400":
-          description: Malformed or invalid SAML assertion.
-        "403":
-          description: User not authorized (e.g. missing required group membership).
 
   # ── Challenges ──────────────────────────────────────────────────────────
 

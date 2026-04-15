@@ -1,11 +1,21 @@
+# Keycloak SAML-to-OIDC bridge test environment.
+#
+# Architecture:
+#   keycloak-idp    = "Enterprise SAML IdP" (holds users alice, bob, testadmin)
+#   keycloak-bridge = "OIDC-to-SAML bridge" (accepts SAML from idp, exposes OIDC to identree)
+#   identree        = speaks OIDC only (connects to keycloak-bridge)
+#
+# This proves the SAML bridge architecture works end-to-end:
+# a SAML IdP's users are accessible to identree via pure OIDC.
+
 services:
   lldap:
     image: lldap/lldap:stable
-    container_name: identree-keycloak-saml-lldap
+    container_name: identree-saml-bridge-lldap
     restart: unless-stopped
     environment:
-      LLDAP_JWT_SECRET: "lldap-keycloak-saml-test-jwt-secret"
-      LLDAP_KEY_SEED: "lldap-keycloak-saml-test-key-seed"
+      LLDAP_JWT_SECRET: "lldap-saml-bridge-test-jwt-secret"
+      LLDAP_KEY_SEED: "lldap-saml-bridge-test-key-seed"
       LLDAP_LDAP_BASE_DN: "dc=test,dc=local"
       LLDAP_LDAP_USER_DN: "admin"
       LLDAP_LDAP_USER_PASS: "lldap-admin-pass"
@@ -13,8 +23,8 @@ services:
     volumes:
       - lldap-data:/data
     ports:
-      - "127.0.0.1:17173:17170"  # lldap admin UI
-      - "127.0.0.1:3893:3890"    # LDAP
+      - "127.0.0.1:17175:17170"
+      - "127.0.0.1:3895:3890"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:17170/healthz"]
       interval: 10s
@@ -22,9 +32,10 @@ services:
       retries: 10
       start_period: 15s
 
-  keycloak:
+  # The "enterprise SAML IdP" -- holds users and exposes a SAML IdP endpoint.
+  keycloak-idp:
     image: quay.io/keycloak/keycloak:latest
-    container_name: identree-keycloak-saml-server
+    container_name: identree-saml-bridge-idp
     restart: unless-stopped
     command: start-dev
     environment:
@@ -35,13 +46,34 @@ services:
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
     volumes:
-      - keycloak-data:/opt/keycloak/data
+      - idp-data:/opt/keycloak/data
     ports:
-      - "127.0.0.1:8181:8080"
+      - "127.0.0.1:8183:8080"
     healthcheck:
-      # quay.io/keycloak/keycloak uses a minimal UBI9 image with no curl/wget.
-      # Port 8080 (0x1F90) is listening when Keycloak is ready to serve requests;
-      # check via /proc/net/tcp6 (IPv4-mapped) which is always available on Linux.
+      test: ["CMD-SHELL", "grep -q ':1F90 ' /proc/net/tcp6 2>/dev/null || grep -q ':1F90 ' /proc/net/tcp 2>/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # The "OIDC-to-SAML bridge" -- accepts SAML from keycloak-idp, exposes OIDC to identree.
+  keycloak-bridge:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: identree-saml-bridge-bridge
+    restart: unless-stopped
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - bridge-data:/opt/keycloak/data
+    ports:
+      - "127.0.0.1:8184:8080"
+    healthcheck:
       test: ["CMD-SHELL", "grep -q ':1F90 ' /proc/net/tcp6 2>/dev/null || grep -q ':1F90 ' /proc/net/tcp 2>/dev/null"]
       interval: 10s
       timeout: 5s
@@ -55,42 +87,37 @@ services:
       args:
         COMMIT: ${COMMIT:-dev}
         VERSION: ${VERSION:-dev}
-    container_name: identree-keycloak-saml-identree
+    container_name: identree-saml-bridge-identree
     restart: unless-stopped
     depends_on:
-      keycloak:
+      keycloak-bridge:
         condition: service_healthy
     environment:
-      # SAML — Keycloak realm identree-test
-      IDENTREE_AUTH_PROTOCOL: "saml"
-      IDENTREE_SAML_IDP_METADATA_URL: "http://keycloak:8080/realms/identree-test/protocol/saml/descriptor"
-      IDENTREE_SAML_ENTITY_ID: "http://localhost:8101"
-      IDENTREE_SAML_GROUPS_ATTR: "groups"
-      IDENTREE_SAML_USERNAME_ATTR: "username"
+      # OIDC -- points at the bridge, not the IdP.
+      IDENTREE_OIDC_ISSUER_URL: "http://keycloak-bridge:8080/realms/bridge"
+      IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:8184/realms/bridge"
+      IDENTREE_OIDC_CLIENT_ID: "identree"
+      IDENTREE_OIDC_CLIENT_SECRET: "${BRIDGE_CLIENT_SECRET:-}"
 
-      # Server
-      IDENTREE_EXTERNAL_URL: "http://localhost:8101"
+      IDENTREE_EXTERNAL_URL: "http://localhost:8095"
       IDENTREE_INSTALL_URL: "http://identree:8090"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-keycloak-saml-12345"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-saml-bridge-12345"
 
-      # Bridge mode — lldap serves LDAP; identree only handles PAM challenges
       IDENTREE_LDAP_ENABLED: "false"
       IDENTREE_ADMIN_GROUPS: "admins"
       IDENTREE_DEV_LOGIN: "false"
 
-      # Auth flow
       IDENTREE_CHALLENGE_TTL: "120s"
       IDENTREE_GRACE_PERIOD: "24h"
 
-      # Storage
       IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
       IDENTREE_ESCROW_BACKEND: "local"
-      IDENTREE_ESCROW_ENCRYPTION_KEY: "e47fb2a3b5cae6bfdf75d1be1429ffb8e4291826e7bf339292895d24bfb3b631"
+      IDENTREE_ESCROW_ENCRYPTION_KEY: "c36eb4a2a5fae5afef64c0ae0319eea7d3191715d6af228181784c13afa2a520"
       IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
     volumes:
       - identree-data:/data
     ports:
-      - "127.0.0.1:8101:8090"
+      - "127.0.0.1:8095:8090"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/healthz"]
       interval: 10s
@@ -102,8 +129,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/testclient/Dockerfile
-    container_name: identree-keycloak-saml-client
-    hostname: keycloak-saml-test-host
+    container_name: identree-saml-bridge-client
+    hostname: saml-bridge-test-host
     restart: unless-stopped
     depends_on:
       identree:
@@ -111,7 +138,6 @@ services:
       lldap:
         condition: service_healthy
     environment:
-      # NSS from lldap (rfc2307bis schema — same as keycloak OIDC env)
       LDAP_URI: "ldap://lldap:3890"
       LDAP_BASE: "dc=test,dc=local"
       LDAP_BIND_DN: "uid=admin,ou=people,dc=test,dc=local"
@@ -120,20 +146,17 @@ services:
       SSSD_USER_OBJECT_CLASS: "inetOrgPerson"
       SSSD_GROUP_OBJECT_CLASS: "groupOfUniqueNames"
       SSSD_GROUP_MEMBER_ATTR: "uniqueMember"
-
-      # Static sudoers — bridge mode has no LDAP sudoers tree
       SSSD_SUDO_PROVIDER: "none"
       STATIC_SUDO_RULES: "alice ALL=(ALL) ALL;bob ALL=(ALL) ALL;testadmin ALL=(ALL) ALL"
-
-      # identree
       IDENTREE_SERVER_URL: "http://identree:8090"
       IDENTREE_INSECURE_ALLOW_HTTP_ESCROW: "true"
-      IDENTREE_SHARED_SECRET: "test-shared-secret-keycloak-saml-12345"
+      IDENTREE_SHARED_SECRET: "test-shared-secret-saml-bridge-12345"
     cap_add:
       - NET_ADMIN
     command: ["sleep", "infinity"]
 
 volumes:
   lldap-data:
-  keycloak-data:
+  idp-data:
+  bridge-data:
   identree-data:

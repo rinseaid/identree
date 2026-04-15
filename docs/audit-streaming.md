@@ -85,7 +85,7 @@ Each audit event includes a `seq` number and a `prev_hash` field containing the 
 | `server_restarted` | Server restart requested via admin UI |
 | `deployed` | Remote host deploy completed successfully |
 | `session_extended` | Grace session extended |
-| `user_logged_in` | User logged in via OIDC/SAML |
+| `user_logged_in` | User logged in via OIDC |
 | `notification_channel_added` | Notification channel created |
 | `notification_channel_deleted` | Notification channel removed |
 | `notification_route_added` | Notification route created |

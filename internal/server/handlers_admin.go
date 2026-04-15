@@ -712,7 +712,6 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		}
 	}
 	return map[string]string{
-		"IDENTREE_AUTH_PROTOCOL":                   cfg.AuthProtocol,
 		"IDENTREE_OIDC_ISSUER_URL":                 cfg.IssuerURL,
 		"IDENTREE_OIDC_ISSUER_PUBLIC_URL":          cfg.IssuerPublicURL,
 		"IDENTREE_OIDC_CLIENT_ID":                  cfg.ClientID,

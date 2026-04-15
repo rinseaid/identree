@@ -168,41 +168,23 @@ test-authentik-validate:
 		"http://localhost:9000/application/o/identree" \
 		ldap://localhost:3896
 
-# ── Keycloak SAML + lldap (bridge mode, SAML SSO) ────────────────────────────
-.PHONY: test-keycloak-saml test-keycloak-saml-down test-keycloak-saml-logs test-keycloak-saml-setup test-keycloak-saml-validate
+# ── Keycloak SAML-to-OIDC bridge (two Keycloak instances) ─────────────────────
+.PHONY: test-keycloak-saml-bridge test-keycloak-saml-bridge-down test-keycloak-saml-bridge-logs test-keycloak-saml-bridge-setup test-keycloak-saml-bridge-validate
 
-test-keycloak-saml:
-	docker compose -f test/providers/keycloak-saml/docker-compose.yml up --build -d
+test-keycloak-saml-bridge:
+	docker compose -f test/providers/keycloak-saml-bridge/docker-compose.yml up --build -d
 
-test-keycloak-saml-down:
-	docker compose -f test/providers/keycloak-saml/docker-compose.yml down
+test-keycloak-saml-bridge-down:
+	docker compose -f test/providers/keycloak-saml-bridge/docker-compose.yml down
 
-test-keycloak-saml-logs:
-	docker compose -f test/providers/keycloak-saml/docker-compose.yml logs -f identree
+test-keycloak-saml-bridge-logs:
+	docker compose -f test/providers/keycloak-saml-bridge/docker-compose.yml logs -f identree
 
-test-keycloak-saml-setup:
-	bash test/providers/keycloak-saml/setup.sh
+test-keycloak-saml-bridge-setup:
+	bash test/providers/keycloak-saml-bridge/setup.sh
 
-test-keycloak-saml-validate:
-	bash test/providers/keycloak-saml/validate.sh
-
-# ── Authentik SAML (bridge mode, SAML SSO) ─────────────────────────────────────
-.PHONY: test-authentik-saml test-authentik-saml-down test-authentik-saml-logs test-authentik-saml-setup test-authentik-saml-validate
-
-test-authentik-saml:
-	docker compose -f test/providers/authentik-saml/docker-compose.yml up --build -d
-
-test-authentik-saml-down:
-	docker compose -f test/providers/authentik-saml/docker-compose.yml down -v
-
-test-authentik-saml-logs:
-	docker compose -f test/providers/authentik-saml/docker-compose.yml logs -f identree
-
-test-authentik-saml-setup:
-	bash test/providers/authentik-saml/setup.sh
-
-test-authentik-saml-validate:
-	bash test/providers/authentik-saml/validate.sh
+test-keycloak-saml-bridge-validate:
+	bash test/providers/keycloak-saml-bridge/validate.sh
 
 # ── Samba AD DC + Dex (bridge mode, AD schema) ────────────────────────────────
 .PHONY: test-samba-ad-dex test-samba-ad-dex-down test-samba-ad-dex-logs test-samba-ad-dex-setup test-samba-ad-dex-validate
@@ -324,4 +306,4 @@ integration-all-down: integration-full-mode-down integration-lldap-dex-down inte
 # ── Convenience: bring down all environments ──────────────────────────────────
 .PHONY: down-all
 
-down-all: down test-lldap-dex-down test-keycloak-down test-keycloak-saml-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down test-openldap-dex-down test-authentik-down test-authentik-saml-down test-samba-ad-dex-down test-mtls-down integration-all-down
+down-all: down test-lldap-dex-down test-keycloak-down test-keycloak-saml-bridge-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down test-openldap-dex-down test-authentik-down test-samba-ad-dex-down test-mtls-down integration-all-down

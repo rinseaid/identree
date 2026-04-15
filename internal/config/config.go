@@ -66,19 +66,6 @@ type ServerConfig struct {
 	ClientSecret           string // OIDC client secret
 	OIDCInsecureSkipVerify bool   // Skip TLS verification for OIDC discovery (test environments with self-signed certs only)
 
-	// ── Auth protocol ─────────────────────────────────────────────────────────
-	AuthProtocol string // "oidc" (default) or "saml"
-
-	// ── SAML ──────────────────────────────────────────────────────────────────
-	SAMLIdPMetadataURL  string // URL to fetch IdP metadata XML
-	SAMLIdPMetadata     string // raw XML metadata (alternative to URL)
-	SAMLEntityID        string // SP entity ID (default: ExternalURL)
-	SAMLCertFile        string // path to SP certificate PEM
-	SAMLKeyFile         string // path to SP private key PEM
-	SAMLGroupsAttr      string // assertion attribute for groups (default: "groups")
-	SAMLUsernameAttr    string // assertion attribute for username (default: "" = NameID)
-	SAMLDisplayNameAttr string // assertion attribute for display name (default: "displayName")
-
 	// ── PocketID API ──────────────────────────────────────────────────────────
 	// APIKey enables full mode (PocketID backend). When set, identree fetches
 	// users and groups from PocketID and serves a complete LDAP directory.
@@ -459,16 +446,6 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ClientSecret:           get("IDENTREE_OIDC_CLIENT_SECRET"),
 		OIDCInsecureSkipVerify: getBool("IDENTREE_OIDC_INSECURE_SKIP_VERIFY", false),
 
-		AuthProtocol:        stringDefault(get("IDENTREE_AUTH_PROTOCOL"), "oidc"),
-		SAMLIdPMetadataURL:  get("IDENTREE_SAML_IDP_METADATA_URL"),
-		SAMLIdPMetadata:     get("IDENTREE_SAML_IDP_METADATA"),
-		SAMLEntityID:        get("IDENTREE_SAML_ENTITY_ID"),
-		SAMLCertFile:        get("IDENTREE_SAML_CERT_FILE"),
-		SAMLKeyFile:         get("IDENTREE_SAML_KEY_FILE"),
-		SAMLGroupsAttr:      stringDefault(get("IDENTREE_SAML_GROUPS_ATTR"), "groups"),
-		SAMLUsernameAttr:    get("IDENTREE_SAML_USERNAME_ATTR"),
-		SAMLDisplayNameAttr: stringDefault(get("IDENTREE_SAML_DISPLAY_NAME_ATTR"), "displayName"),
-
 		APIKey:       get("IDENTREE_POCKETID_API_KEY"),
 		APIURL:       get("IDENTREE_POCKETID_API_URL"),
 
@@ -734,21 +711,6 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
-	// Validate AuthProtocol.
-	switch cfg.AuthProtocol {
-	case "", "oidc":
-		cfg.AuthProtocol = "oidc"
-	case "saml":
-		if cfg.SAMLIdPMetadataURL == "" && cfg.SAMLIdPMetadata == "" {
-			return nil, fmt.Errorf("IDENTREE_SAML_IDP_METADATA_URL or IDENTREE_SAML_IDP_METADATA must be set when IDENTREE_AUTH_PROTOCOL=saml")
-		}
-		if cfg.SAMLEntityID == "" {
-			cfg.SAMLEntityID = strings.TrimRight(cfg.ExternalURL, "/")
-		}
-	default:
-		return nil, fmt.Errorf("IDENTREE_AUTH_PROTOCOL must be \"oidc\" or \"saml\" (got %q)", cfg.AuthProtocol)
-	}
-
 	// Enable mTLS when CA cert/key paths are configured (or default them),
 	// or when a KMS backend is configured for remote signing.
 	if cfg.MTLSCACert != "" || cfg.MTLSCAKey != "" || cfg.MTLSKMSBackend == "vault-transit" {
@@ -807,17 +769,15 @@ func LoadServerConfig() (*ServerConfig, error) {
 		}
 	}
 
-	// Validate required fields — OIDC fields only required when using OIDC protocol.
-	if cfg.AuthProtocol != "saml" {
-		if cfg.IssuerURL == "" && !cfg.DevLoginEnabled {
-			return nil, fmt.Errorf("IDENTREE_OIDC_ISSUER_URL is required")
-		}
-		if cfg.ClientID == "" && !cfg.DevLoginEnabled {
-			return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_ID is required")
-		}
-		if cfg.ClientSecret == "" && !cfg.DevLoginEnabled {
-			return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_SECRET is required")
-		}
+	// Validate required OIDC fields.
+	if cfg.IssuerURL == "" && !cfg.DevLoginEnabled {
+		return nil, fmt.Errorf("IDENTREE_OIDC_ISSUER_URL is required")
+	}
+	if cfg.ClientID == "" && !cfg.DevLoginEnabled {
+		return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_ID is required")
+	}
+	if cfg.ClientSecret == "" && !cfg.DevLoginEnabled {
+		return nil, fmt.Errorf("IDENTREE_OIDC_CLIENT_SECRET is required")
 	}
 	// SharedSecret is required unless mTLS is enabled (mTLS replaces shared-secret auth).
 	if !cfg.MTLSEnabled {

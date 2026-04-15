@@ -201,19 +201,9 @@ Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 | `IDENTREE_OIDC_INSECURE_SKIP_VERIFY` | `false` | Skip TLS certificate verification for the OIDC issuer |
 | `IDENTREE_OIDC_ENFORCE_IP_BINDING` | `false` | Bind sessions to the originating IP address |
 
-#### SAML (alternative to OIDC)
+#### SAML IdPs (via OIDC bridge)
 
-| Variable | Default | Description |
-|---|---|---|
-| `IDENTREE_AUTH_PROTOCOL` | `oidc` | Authentication protocol: `oidc` or `saml` |
-| `IDENTREE_SAML_IDP_METADATA_URL` | — | URL to fetch IdP metadata XML |
-| `IDENTREE_SAML_IDP_METADATA` | — | Inline IdP metadata XML (alternative to URL) |
-| `IDENTREE_SAML_ENTITY_ID` | — | SP entity ID |
-| `IDENTREE_SAML_CERT_FILE` | — | Path to SP certificate file |
-| `IDENTREE_SAML_KEY_FILE` | — | Path to SP private key file |
-| `IDENTREE_SAML_GROUPS_ATTR` | `groups` | SAML attribute containing group memberships |
-| `IDENTREE_SAML_USERNAME_ATTR` | — | SAML attribute containing the username |
-| `IDENTREE_SAML_DISPLAY_NAME_ATTR` | `displayName` | SAML attribute containing the display name |
+identree authenticates exclusively via OIDC. If your organization uses a SAML-only IdP, deploy an OIDC-to-SAML bridge (Keycloak, Authentik, or Dex) between your IdP and identree. See [`docs/saml-bridge.md`](docs/saml-bridge.md) for architecture and configuration details.
 
 #### PocketID API (full mode only)
 

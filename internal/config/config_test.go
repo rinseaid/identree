@@ -234,9 +234,6 @@ func TestLoadServerConfig_MinimumViable(t *testing.T) {
 	if cfg.RedisKeyPrefix != "identree:" {
 		t.Errorf("RedisKeyPrefix = %q, want %q", cfg.RedisKeyPrefix, "identree:")
 	}
-	if cfg.AuthProtocol != "oidc" {
-		t.Errorf("AuthProtocol = %q, want %q", cfg.AuthProtocol, "oidc")
-	}
 	if cfg.NotifyTimeout != 15*time.Second {
 		t.Errorf("NotifyTimeout = %v, want %v", cfg.NotifyTimeout, 15*time.Second)
 	}
@@ -247,48 +244,6 @@ func TestLoadServerConfig_MinimumViable(t *testing.T) {
 	// InstallURL defaults to ExternalURL
 	if cfg.InstallURL != "http://localhost:8090" {
 		t.Errorf("InstallURL = %q, want ExternalURL default", cfg.InstallURL)
-	}
-}
-
-// ── SAML mode ────────────────────────────────────────────────────────────────
-
-func TestLoadServerConfig_SAMLMode(t *testing.T) {
-	setMinServerEnv(t)
-	setEnvForTest(t, "IDENTREE_AUTH_PROTOCOL", "saml")
-	setEnvForTest(t, "IDENTREE_SAML_IDP_METADATA_URL", "https://idp.example.com/metadata")
-	// Clear OIDC fields — they should not be required in SAML mode.
-	clearEnvForTest(t, "IDENTREE_OIDC_ISSUER_URL")
-	clearEnvForTest(t, "IDENTREE_OIDC_CLIENT_ID")
-	clearEnvForTest(t, "IDENTREE_OIDC_CLIENT_SECRET")
-
-	cfg, err := LoadServerConfig()
-	if err != nil {
-		t.Fatalf("LoadServerConfig (SAML): %v", err)
-	}
-	if cfg.AuthProtocol != "saml" {
-		t.Errorf("AuthProtocol = %q, want %q", cfg.AuthProtocol, "saml")
-	}
-	if cfg.SAMLIdPMetadataURL != "https://idp.example.com/metadata" {
-		t.Errorf("SAMLIdPMetadataURL = %q", cfg.SAMLIdPMetadataURL)
-	}
-	// SAMLEntityID defaults to ExternalURL
-	if cfg.SAMLEntityID != "http://localhost:8090" {
-		t.Errorf("SAMLEntityID = %q, want ExternalURL", cfg.SAMLEntityID)
-	}
-}
-
-func TestLoadServerConfig_SAMLMode_MissingMetadata(t *testing.T) {
-	setMinServerEnv(t)
-	setEnvForTest(t, "IDENTREE_AUTH_PROTOCOL", "saml")
-	clearEnvForTest(t, "IDENTREE_SAML_IDP_METADATA_URL")
-	clearEnvForTest(t, "IDENTREE_SAML_IDP_METADATA")
-
-	_, err := LoadServerConfig()
-	if err == nil {
-		t.Fatal("expected error for SAML without metadata")
-	}
-	if !strings.Contains(err.Error(), "SAML") {
-		t.Errorf("error should mention SAML: %v", err)
 	}
 }
 
@@ -442,16 +397,6 @@ func TestLoadServerConfig_MissingLDAPBaseDN(t *testing.T) {
 	_, err := LoadServerConfig()
 	if err == nil {
 		t.Fatal("expected error for missing LDAP base DN when LDAP enabled")
-	}
-}
-
-func TestLoadServerConfig_InvalidAuthProtocol(t *testing.T) {
-	setMinServerEnv(t)
-	setEnvForTest(t, "IDENTREE_AUTH_PROTOCOL", "kerberos")
-
-	_, err := LoadServerConfig()
-	if err == nil {
-		t.Fatal("expected error for invalid auth protocol")
 	}
 }
 

@@ -8,7 +8,7 @@ All notable changes to identree will be documented in this file.
 
 #### Core
 - PAM authentication module bridging Linux sudo/SSH to your identity provider
-- OIDC and SAML 2.0 SP support for flexible IdP integration
+- OIDC authentication with any compliant IdP (SAML IdPs supported via OIDC bridge)
 - Challenge/approval flow with browser-based passkey verification
 - Grace sessions to avoid repeated approval prompts within a configurable window
 - Justification system with predefined choices, required flag, and one-tap support

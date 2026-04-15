@@ -28,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Provider to test (lldap-dex | keycloak | keycloak-saml | kanidm | vault-escrow | infisical-escrow | openldap-dex | authentik | authentik-saml | samba-ad-dex | mtls | all)"
+        description: "Provider to test (lldap-dex | keycloak | keycloak-saml-bridge | kanidm | vault-escrow | infisical-escrow | openldap-dex | authentik | samba-ad-dex | mtls | all)"
         required: false
         default: "all"
 
@@ -174,14 +174,14 @@ jobs:
         if: always()
         run: make test-keycloak-down
 
-  # ── Keycloak SAML + lldap ──────────────────────────────────────────────────
-  keycloak-saml:
-    name: Keycloak SAML + lldap (bridge mode)
+  # ── Keycloak SAML-to-OIDC bridge ────────────────────────────────────────────
+  keycloak-saml-bridge:
+    name: Keycloak SAML-to-OIDC bridge
     runs-on: ubuntu-latest
     if: >
       github.event_name != 'workflow_dispatch' ||
       github.event.inputs.provider == 'all' ||
-      github.event.inputs.provider == 'keycloak-saml'
+      github.event.inputs.provider == 'keycloak-saml-bridge'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -189,23 +189,25 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Start Keycloak SAML environment
+      - name: Start SAML bridge environment
         run: |
-          docker compose -f test/providers/keycloak-saml/docker-compose.yml build
-          docker compose -f test/providers/keycloak-saml/docker-compose.yml up -d keycloak lldap
+          docker compose -f test/providers/keycloak-saml-bridge/docker-compose.yml build
+          docker compose -f test/providers/keycloak-saml-bridge/docker-compose.yml up -d keycloak-idp keycloak-bridge lldap
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
 
-      - name: Wait for Keycloak to be ready
+      - name: Wait for Keycloak instances to be ready
         run: |
-          echo "Waiting for Keycloak..."
-          timeout 300 bash -c 'until curl -sf http://localhost:8181/realms/master -o /dev/null; do sleep 5; done'
-          echo "Keycloak ready."
+          echo "Waiting for Keycloak IdP..."
+          timeout 300 bash -c 'until curl -sf http://localhost:8183/realms/master -o /dev/null; do sleep 5; done'
+          echo "Waiting for Keycloak Bridge..."
+          timeout 300 bash -c 'until curl -sf http://localhost:8184/realms/master -o /dev/null; do sleep 5; done'
+          echo "Both Keycloak instances ready."
 
       - name: Start identree and testclient
         run: |
-          docker compose -f test/providers/keycloak-saml/docker-compose.yml up -d
+          docker compose -f test/providers/keycloak-saml-bridge/docker-compose.yml up -d
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
@@ -213,36 +215,38 @@ jobs:
       - name: Wait for identree to be healthy
         run: |
           echo "Waiting for identree..."
-          timeout 60 bash -c 'until curl -sf http://localhost:8101/healthz; do sleep 3; done'
+          timeout 60 bash -c 'until curl -sf http://localhost:8095/healthz; do sleep 3; done'
           echo "identree ready."
 
-      - name: Run setup (Keycloak SAML client + lldap users)
-        run: make test-keycloak-saml-setup
+      - name: Run setup (IdP users + bridge SAML-to-OIDC config)
+        run: make test-keycloak-saml-bridge-setup
 
       - name: Wait for sssd to populate
         run: |
           echo "Waiting for sssd group membership..."
-          timeout 60 bash -c 'until docker exec identree-keycloak-saml-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
-          docker exec identree-keycloak-saml-client bash -c \
+          timeout 60 bash -c 'until docker exec identree-saml-bridge-client id alice 2>/dev/null | grep -q developers; do sleep 3; done'
+          docker exec identree-saml-bridge-client bash -c \
             "getent passwd alice bob testadmin >/dev/null 2>&1; sss_cache -G 2>/dev/null; getent group developers admins >/dev/null 2>&1" || true
           echo "sssd ready."
 
       - name: Validate environment
-        run: make test-keycloak-saml-validate
+        run: make test-keycloak-saml-bridge-validate
 
       - name: Capture logs on failure
         if: failure()
         run: |
-          echo "=== Keycloak logs ==="
-          docker logs identree-keycloak-saml-server 2>&1 | tail -80
+          echo "=== Keycloak IdP logs ==="
+          docker logs identree-saml-bridge-idp 2>&1 | tail -80
+          echo "=== Keycloak Bridge logs ==="
+          docker logs identree-saml-bridge-bridge 2>&1 | tail -80
           echo "=== identree logs ==="
-          docker logs identree-keycloak-saml-identree 2>&1 | tail -50
+          docker logs identree-saml-bridge-identree 2>&1 | tail -50
           echo "=== lldap logs ==="
-          docker logs identree-keycloak-saml-lldap 2>&1 | tail -30
+          docker logs identree-saml-bridge-lldap 2>&1 | tail -30
 
       - name: Tear down
         if: always()
-        run: make test-keycloak-saml-down
+        run: make test-keycloak-saml-bridge-down
 
   # ── Kanidm ──────────────────────────────────────────────────────────────────
   kanidm:
@@ -578,58 +582,6 @@ jobs:
       - name: Tear down
         if: always()
         run: make test-authentik-down
-
-  # ── Authentik SAML ────────────────────────────────────────────────────────────
-  authentik-saml:
-    name: Authentik (SAML SSO)
-    runs-on: ubuntu-latest
-    if: >
-      github.event_name != 'workflow_dispatch' ||
-      github.event.inputs.provider == 'all' ||
-      github.event.inputs.provider == 'authentik-saml'
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Start Authentik SAML environment
-        run: make test-authentik-saml
-        env:
-          COMMIT: ${{ github.sha }}
-          VERSION: ${{ github.ref_name }}
-
-      - name: Wait for Authentik to be healthy
-        run: |
-          echo "Waiting for Authentik server..."
-          timeout 180 bash -c 'until curl -sf http://localhost:9010/-/health/live/; do sleep 5; done'
-          echo "Waiting for Authentik API (flows ready)..."
-          timeout 120 bash -c 'until curl -sf http://localhost:9010/api/v3/flows/instances/ -H "Authorization: Bearer identree-authentik-saml-test-token" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if len(d.get(\"results\",[]))>0 else 1)" 2>/dev/null; do sleep 5; done'
-          echo "Authentik ready."
-
-      - name: Run setup (users, groups, SAML provider)
-        run: make test-authentik-saml-setup
-
-      - name: Wait for identree to be healthy after restart
-        run: timeout 60 bash -c 'until curl -sf http://localhost:8100/healthz; do sleep 3; done'
-
-      - name: Validate environment
-        run: make test-authentik-saml-validate
-
-      - name: Capture logs on failure
-        if: failure()
-        run: |
-          echo "=== authentik-server logs ==="
-          docker logs identree-authentik-saml-server 2>&1 | tail -80
-          echo "=== authentik-worker logs ==="
-          docker logs identree-authentik-saml-worker 2>&1 | tail -30
-          echo "=== identree logs ==="
-          docker logs identree-authentik-saml-app 2>&1 | tail -50
-
-      - name: Tear down
-        if: always()
-        run: make test-authentik-saml-down
 
   # ── Samba AD DC + Dex ─────────────────────────────────────────────────────────
   samba-ad-dex:

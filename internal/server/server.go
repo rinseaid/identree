@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/crewjam/saml"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/oauth2"
 
@@ -99,11 +98,6 @@ type Server struct {
 	notifyMu     sync.Mutex // guards notifyShutdown + notifyWg.Add to prevent TOCTOU
 
 	sessionNonces  map[string]sessionNonceData
-
-	// SAML SP state — only set when AuthProtocol == "saml".
-	samlSP          *saml.ServiceProvider
-	samlRelayStates map[string]samlRelayState
-	samlRelayMu     sync.Mutex
 
 	sseClients     map[string][]chan string
 	sseMu          sync.RWMutex
@@ -234,9 +228,6 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	var verifier *oidc.IDTokenVerifier
 	var oidcHTTPClient *http.Client
 
-	// ── OIDC initialization (skipped when AuthProtocol == "saml") ────────────
-	if cfg.AuthProtocol != "saml" {
-
 	oidcTransport := http.DefaultTransport
 	if cfg.OIDCInsecureSkipVerify {
 		if strings.HasPrefix(cfg.ExternalURL, "https://") {
@@ -341,8 +332,6 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	}
 
-	} // end if cfg.AuthProtocol != "saml"
-
 	// Create the store based on the configured state backend.
 	var challengeStore challenge.Store
 	var storeRedisClient redis.UniversalClient // non-nil when backend=redis; used for SSE and metrics
@@ -383,7 +372,6 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		verifier:      verifier,
 		mux:           http.NewServeMux(),
 		sessionNonces:   make(map[string]sessionNonceData),
-		samlRelayStates: make(map[string]samlRelayState),
 		sseClients:      make(map[string][]chan string),
 		deployJobs:    make(map[string]*deployJob),
 		deployRL:      newDeployRateLimiter(),
@@ -401,13 +389,6 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		oidcHTTPClient: oidcHTTPClient,
 		pocketIDClient: pocketid.NewPocketIDClient(cfg.APIURL, cfg.APIKey),
 		sudoRules:      store,
-	}
-
-	// ── SAML SP initialization ──────────────────────────────────────────────
-	if cfg.AuthProtocol == "saml" {
-		if err := s.initSAML(); err != nil {
-			return nil, fmt.Errorf("SAML init: %w", err)
-		}
 	}
 
 	// ── Challenge expiry audit callback ─────────────────────────────────────
@@ -628,11 +609,6 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 					return true
 				})
 
-				// Prune stale SAML relay states.
-				if s.samlSP != nil {
-					s.pruneSAMLRelayStates()
-				}
-
 			case <-s.stopCh:
 				return
 			}
@@ -771,23 +747,11 @@ func (s *Server) registerRoutes() {
 	// Access page
 	s.mux.HandleFunc("/access", s.handleAccess)
 
-	// Auth flow — OIDC or SAML
+	// Auth flow — OIDC
 	s.mux.HandleFunc("/approve/", s.handleApprovalPage)
 	s.mux.HandleFunc("/api/onetap/", s.handleOneTap)
-	if s.cfg.AuthProtocol == "saml" {
-		// SAML routes
-		s.mux.HandleFunc("/saml/metadata", s.handleSAMLMetadata)
-		s.mux.HandleFunc("/saml/acs", s.handleSAMLACS)
-		s.mux.HandleFunc("/saml/login", s.handleSAMLLogin)
-		// /sessions/login redirects to /saml/login for SAML mode.
-		s.mux.HandleFunc("/sessions/login", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, s.baseURL+"/saml/login", http.StatusSeeOther)
-		})
-	} else {
-		// OIDC routes (default)
-		s.mux.HandleFunc("/callback", s.handleOIDCCallback)
-		s.mux.HandleFunc("/sessions/login", s.handleSessionsLogin)
-	}
+	s.mux.HandleFunc("/callback", s.handleOIDCCallback)
+	s.mux.HandleFunc("/sessions/login", s.handleSessionsLogin)
 	s.mux.HandleFunc("/sessions", s.handleSessionsRedirect)
 
 	// Admin UI
