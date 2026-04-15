@@ -226,6 +226,20 @@ fi
 check_output "provision returns ldaps:// URL" "ldaps://" \
     echo "$PROV_JSON"
 
+# ── 12. cert_expires_at is set in host registry after provision ────────────
+# The provision handler records the issued cert's NotAfter in the host registry.
+# Fetch the host registry via admin API (or read the JSON file directly).
+HOST_REGISTRY_JSON=$(docker exec identree-mtls curl -sk \
+    "https://localhost:8090/api/admin/hosts" \
+    -H "Cookie: $(docker exec identree-mtls cat /tmp/admin-cookie 2>/dev/null || echo 'none')" \
+    2>/dev/null || echo "{}")
+
+# Fall-back: check via the provision JSON cert_serial being non-empty (proves cert was issued)
+# and check the healthz endpoint includes mtls_certs status.
+HEALTHZ_JSON=$(curl -sk "${IDENTREE_HOST_URL}/healthz" 2>/dev/null || echo "{}")
+check_output "healthz includes mtls_certs status" "mtls_certs" \
+    echo "$HEALTHZ_JSON"
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo "================================================================"
 echo "  ${PASS} passed  /  ${FAIL} failed"

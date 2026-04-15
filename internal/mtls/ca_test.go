@@ -245,6 +245,104 @@ func TestVerifyClientCert_Expired(t *testing.T) {
 	}
 }
 
+func TestCertExpiry_ShortTTL(t *testing.T) {
+	certPEM, _, signer, err := GenerateCA()
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	block, _ := pem.Decode(certPEM)
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse CA cert: %v", err)
+	}
+
+	// Issue a cert with a 2-second TTL.
+	clientCertPEM, _, err := IssueCert(caCert, signer, "short-ttl.local", 2*time.Second)
+	if err != nil {
+		t.Fatalf("IssueCert: %v", err)
+	}
+
+	block, _ = pem.Decode(clientCertPEM)
+	clientCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse client cert: %v", err)
+	}
+
+	// Verify the cert is currently valid.
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	if _, err := clientCert.Verify(x509.VerifyOptions{
+		Roots:     roots,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}); err != nil {
+		t.Fatalf("cert should be valid immediately after issuance: %v", err)
+	}
+
+	// Wait for the cert to expire. The TTL is 2s but jitter can add up to ~16%,
+	// so wait 3s to be safe.
+	time.Sleep(3 * time.Second)
+
+	// Verify the cert is now expired.
+	_, err = clientCert.Verify(x509.VerifyOptions{
+		Roots:       roots,
+		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		CurrentTime: time.Now(),
+	})
+	if err == nil {
+		t.Fatal("expected cert to be expired after waiting 3 seconds, but verification succeeded")
+	}
+}
+
+func TestIssueCert_TTLJitter(t *testing.T) {
+	certPEM, _, signer, err := GenerateCA()
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	block, _ := pem.Decode(certPEM)
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse CA cert: %v", err)
+	}
+
+	baseTTL := 365 * 24 * time.Hour
+	var notAfters []time.Time
+	for i := 0; i < 20; i++ {
+		clientCertPEM, _, err := IssueCert(caCert, signer, "jitter-test.local", baseTTL)
+		if err != nil {
+			t.Fatalf("IssueCert iteration %d: %v", i, err)
+		}
+		b, _ := pem.Decode(clientCertPEM)
+		c, err := x509.ParseCertificate(b.Bytes)
+		if err != nil {
+			t.Fatalf("parse cert iteration %d: %v", i, err)
+		}
+		notAfters = append(notAfters, c.NotAfter)
+	}
+
+	// With jitter, not all NotAfter times should be identical.
+	allSame := true
+	for i := 1; i < len(notAfters); i++ {
+		if !notAfters[i].Equal(notAfters[0]) {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		t.Error("expected TTL jitter to produce varying NotAfter times across 20 certs, but all were identical")
+	}
+
+	// Verify jitter stays within bounds: ±16% of TTL.
+	now := time.Now()
+	maxExpected := now.Add(baseTTL + baseTTL/6)
+	minExpected := now.Add(baseTTL - baseTTL/6)
+	for i, na := range notAfters {
+		// Allow 1 minute tolerance for test execution time.
+		if na.Before(minExpected.Add(-time.Minute)) || na.After(maxExpected.Add(time.Minute)) {
+			t.Errorf("cert %d NotAfter %v is outside jitter bounds [%v, %v]", i, na, minExpected, maxExpected)
+		}
+	}
+}
+
 func TestVerifyClientCert_NoCerts(t *testing.T) {
 	certPEM, _, _, _ := GenerateCA()
 	block, _ := pem.Decode(certPEM)

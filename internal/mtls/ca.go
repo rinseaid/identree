@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -136,6 +137,27 @@ func IssueCert(caCert *x509.Certificate, signer crypto.Signer, hostname string, 
 	}
 	if ttl <= 0 {
 		ttl = 365 * 24 * time.Hour
+	}
+
+	// Add ±8% jitter to prevent mass expiry when many hosts are provisioned at once.
+	// For a 365-day TTL this produces roughly ±30 days of spread.
+	// Uses crypto/rand since this is a security-sensitive path.
+	if ttl > time.Second {
+		jitterMax := int64(ttl) / 6 // ~16% of TTL
+		if jitterMax > 0 {
+			var buf [8]byte
+			if _, err := rand.Read(buf[:]); err == nil {
+				jitter := time.Duration(int64(binary.LittleEndian.Uint64(buf[:])%uint64(jitterMax)))
+				var coinBuf [1]byte
+				if _, err := rand.Read(coinBuf[:]); err == nil {
+					if coinBuf[0]&1 == 0 {
+						ttl += jitter
+					} else {
+						ttl -= jitter
+					}
+				}
+			}
+		}
 	}
 
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

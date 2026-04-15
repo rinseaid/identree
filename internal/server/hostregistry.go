@@ -21,10 +21,11 @@ import (
 
 // RegisteredHost represents a host authorized to use identree.
 type RegisteredHost struct {
-	Secret       string    `json:"secret"`
-	Users        []string  `json:"users"`             // authorized usernames, "*" = all users
-	Group        string    `json:"group,omitempty"`   // e.g., "production", "staging", "dev"
-	RegisteredAt time.Time `json:"registered_at"`
+	Secret        string    `json:"secret"`
+	Users         []string  `json:"users"`                        // authorized usernames, "*" = all users
+	Group         string    `json:"group,omitempty"`              // e.g., "production", "staging", "dev"
+	RegisteredAt  time.Time `json:"registered_at"`
+	CertExpiresAt time.Time `json:"cert_expires_at,omitempty"`   // mTLS cert NotAfter, set at provision time
 }
 
 // HostRegistry manages registered hosts with per-host secrets.
@@ -151,6 +152,32 @@ func (r *HostRegistry) GetHost(hostname string) (users []string, group string, r
 	usersCopy := make([]string, len(host.Users))
 	copy(usersCopy, host.Users)
 	return usersCopy, host.Group, host.RegisteredAt, true
+}
+
+// SetCertExpiry records the mTLS certificate expiry time for a host.
+func (r *HostRegistry) SetCertExpiry(hostname string, expiresAt time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	host, exists := r.hosts[normalizeHostname(hostname)]
+	if !exists {
+		return
+	}
+	host.CertExpiresAt = expiresAt
+	r.saveLocked()
+}
+
+// HostCertExpiries returns a map of hostname to CertExpiresAt for all hosts
+// that have a non-zero cert expiry recorded.
+func (r *HostRegistry) HostCertExpiries() map[string]time.Time {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]time.Time)
+	for hostname, host := range r.hosts {
+		if !host.CertExpiresAt.IsZero() {
+			result[hostname] = host.CertExpiresAt
+		}
+	}
+	return result
 }
 
 // HostsForUser returns hostnames the user is authorized for, sorted alphabetically.

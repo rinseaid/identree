@@ -208,6 +208,7 @@ type healthCheckResult struct {
 	oidc       string // "ok" or "unreachable"
 	ldapServer string // "ok" or "not_started" (empty when LDAP disabled)
 	redis      string // "ok" or "error" (empty when state backend is local)
+	mtlsCerts  string // "ok", "warning", or empty (when mTLS disabled)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -350,6 +351,16 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ── 5. mTLS cert expiry check ────────────────────────────────────────────
+	if s.cfg.MTLSEnabled && s.mtlsCACert != nil {
+		expiring := s.mtlsCertsExpiringSoon(30 * 24 * time.Hour)
+		if expiring > 0 {
+			res.mtlsCerts = fmt.Sprintf("warning: %d hosts have certs expiring within 30 days", expiring)
+		} else {
+			res.mtlsCerts = "ok"
+		}
+	}
+
 	// ── Build response ────────────────────────────────────────────────────────
 	// Critical failures (disk unwritable, LDAP sync stale, LDAP server not
 	// started) → 503 "unhealthy".
@@ -395,6 +406,9 @@ func buildChecksJSON(res healthCheckResult) string {
 	}
 	if res.redis != "" {
 		pairs = append(pairs, `"redis":"`+res.redis+`"`)
+	}
+	if res.mtlsCerts != "" {
+		pairs = append(pairs, `"mtls_certs":"`+res.mtlsCerts+`"`)
 	}
 	return strings.Join(pairs, ",")
 }

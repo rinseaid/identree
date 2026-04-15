@@ -520,6 +520,9 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		}
 		s.mtlsCACert = caCert
 		slog.Info("mTLS CA loaded", "subject", caCert.Subject.CommonName, "not_after", caCert.NotAfter.Format(time.RFC3339))
+
+		// Start background goroutine to update mTLS cert expiry Prometheus gauges.
+		s.startMTLSMetrics(s.stopCh)
 	}
 
 	if cfg.EscrowBackend == config.EscrowBackendLocal {

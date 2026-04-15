@@ -143,6 +143,9 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 		slog.Info("CERT_ISSUED", "hostname", hostname, "serial", serialHex, "expires", issuedCert.NotAfter)
 		s.emitAuditEvent("certificate_issued", hostname, hostname, serialHex, "", "", remoteAddr(r))
 
+		// Record cert expiry in the host registry for monitoring.
+		s.hostRegistry.SetCertExpiry(hostname, issuedCert.NotAfter)
+
 		resp.ClientCert = string(certPEM)
 		resp.ClientKey = string(keyPEM)
 		resp.CertSerial = serialHex
