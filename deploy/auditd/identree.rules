@@ -1,0 +1,20 @@
+## identree security monitoring rules
+## Install to /etc/audit/rules.d/identree.rules
+
+# Break-glass hash file read — detects password brute-force attempts
+-w /etc/identree/breakglass.hash -p r -k identree-breakglass
+
+# Break-glass report file — detects tampering/deletion of phone-home records
+-w /var/run/identree-breakglass-used -p wa -k identree-breakglass-report
+
+# identree client config — detects credential theft or config tampering
+-w /etc/identree/ -p wa -k identree-config
+
+# PAM sudo config — detects attempts to bypass identree's PAM module
+-w /etc/pam.d/sudo -p wa -k identree-pam-config
+
+# SSSD config — detects LDAP redirect attacks
+-w /etc/sssd/sssd.conf -p wa -k identree-sssd-config
+
+# mTLS client private key — detects key exfiltration
+-w /etc/identree/client.key -p r -k identree-mtls-key

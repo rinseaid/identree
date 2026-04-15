@@ -144,6 +144,7 @@ Host registry commands (run on the server):
 Setup commands (run on managed hosts as root):
   identree setup                         Configure PAM for identree authentication
             [--sssd]                     Also configure SSSD + nsswitch for LDAP identity
+            [--auditd]                   Install auditd monitoring rules
             [--hostname <name>]          Override hostname (default: os.Hostname)
             [--force]                    Overwrite existing config files
             [--dry-run]                  Print changes without applying them
@@ -857,19 +858,21 @@ func runSetup() {
 		switch args[i] {
 		case "--sssd":
 			cfg.SSSD = true
+		case "--auditd":
+			cfg.Auditd = true
 		case "--force":
 			cfg.Force = true
 		case "--dry-run":
 			cfg.DryRun = true
 		case "--hostname":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "usage: identree setup [--sssd] [--hostname <name>] [--force] [--dry-run]")
+				fmt.Fprintln(os.Stderr, "usage: identree setup [--sssd] [--auditd] [--hostname <name>] [--force] [--dry-run]")
 				os.Exit(1)
 			}
 			cfg.Hostname = args[i+1]
 			i++
 		default:
-			fmt.Fprintf(os.Stderr, "unknown flag: %s\nusage: identree setup [--sssd] [--hostname <name>] [--force] [--dry-run]\n", args[i])
+			fmt.Fprintf(os.Stderr, "unknown flag: %s\nusage: identree setup [--sssd] [--auditd] [--hostname <name>] [--force] [--dry-run]\n", args[i])
 			os.Exit(1)
 		}
 	}

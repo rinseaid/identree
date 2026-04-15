@@ -365,6 +365,9 @@ Review this list before going to production.
 - [ ] **`IDENTREE_OIDC_CLIENT_SECRET` is kept out of version control**
   Use environment variables or a secrets manager. Never commit OIDC credentials to a repository.
 
+- [ ] **Auditd monitoring rules are installed on managed hosts**
+  The install script installs auditd rules automatically if auditd is present. These rules create a kernel-level audit trail for break-glass hash reads, config file changes, PAM bypass attempts, and mTLS key exfiltration. Verify with `auditctl -l | grep identree`. Forward audit logs off-host for tamper resistance. See [auditd.md](auditd.md) for details.
+
 ---
 
 ## LDAPS Troubleshooting

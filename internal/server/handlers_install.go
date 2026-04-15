@@ -239,6 +239,35 @@ else
     echo "  sudo /usr/local/bin/identree rotate-breakglass"
 fi
 
+# ── Auditd monitoring rules (if auditd is present) ───────────────────────────
+
+if command -v augenrules >/dev/null 2>&1; then
+    cat > /etc/audit/rules.d/identree.rules << 'AUDIT_RULES'
+## identree security monitoring rules
+## Install to /etc/audit/rules.d/identree.rules
+
+# Break-glass hash file read — detects password brute-force attempts
+-w /etc/identree/breakglass.hash -p r -k identree-breakglass
+
+# Break-glass report file — detects tampering/deletion of phone-home records
+-w /var/run/identree-breakglass-used -p wa -k identree-breakglass-report
+
+# identree client config — detects credential theft or config tampering
+-w /etc/identree/ -p wa -k identree-config
+
+# PAM sudo config — detects attempts to bypass identree's PAM module
+-w /etc/pam.d/sudo -p wa -k identree-pam-config
+
+# SSSD config — detects LDAP redirect attacks
+-w /etc/sssd/sssd.conf -p wa -k identree-sssd-config
+
+# mTLS client private key — detects key exfiltration
+-w /etc/identree/client.key -p r -k identree-mtls-key
+AUDIT_RULES
+    augenrules --load 2>/dev/null || true
+    echo "auditd rules installed"
+fi
+
 # ── Setup (PAM + optional SSSD) ──────────────────────────────────────────────
 
 SETUP_FLAGS=""
@@ -305,6 +334,15 @@ if [ "$UNCONFIGURE_PAM" = "true" ]; then
             echo "identree not configured in $PAM_FILE"
         fi
     done
+fi
+
+# ── Auditd rules ──────────────────────────────────────────────────────────────
+if [ -f /etc/audit/rules.d/identree.rules ]; then
+    rm -f /etc/audit/rules.d/identree.rules
+    if command -v augenrules >/dev/null 2>&1; then
+        augenrules --load 2>/dev/null || true
+    fi
+    echo "Removed auditd rules"
 fi
 
 # ── Systemd / cron ────────────────────────────────────────────────────────────

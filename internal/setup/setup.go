@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -30,6 +31,8 @@ type Config struct {
 	Hostname string
 	// SSSD configures SSSD + nsswitch in addition to PAM.
 	SSSD bool
+	// Auditd installs auditd monitoring rules for identree-related files.
+	Auditd bool
 	// Force overwrites existing config files even when they look up-to-date.
 	Force bool
 	// DryRun prints what would be done without making changes.
@@ -96,6 +99,12 @@ func Run(cfg Config) error {
 			if err := writeMTLSCerts(prov, cfg.DryRun); err != nil {
 				return fmt.Errorf("mtls: %w", err)
 			}
+		}
+	}
+
+	if cfg.Auditd {
+		if err := installAuditdRules(cfg.DryRun); err != nil {
+			return fmt.Errorf("auditd: %w", err)
 		}
 	}
 
@@ -646,6 +655,73 @@ func RenewCert(serverURL, sharedSecret, clientCert, clientKey, caCert string) er
 
 	slog.Info("renew-cert: certificate renewed successfully", "hostname", hostname)
 	fmt.Printf("mTLS certificate renewed for %s\n", hostname)
+	return nil
+}
+
+// ── Auditd rules ──────────────────────────────────────────────────────────────
+
+// AuditdRules is the auditd rules file content embedded in the binary.
+// Exported so the install script handler can reference the same rules.
+const AuditdRules = `## identree security monitoring rules
+## Install to /etc/audit/rules.d/identree.rules
+
+# Break-glass hash file read — detects password brute-force attempts
+-w /etc/identree/breakglass.hash -p r -k identree-breakglass
+
+# Break-glass report file — detects tampering/deletion of phone-home records
+-w /var/run/identree-breakglass-used -p wa -k identree-breakglass-report
+
+# identree client config — detects credential theft or config tampering
+-w /etc/identree/ -p wa -k identree-config
+
+# PAM sudo config — detects attempts to bypass identree's PAM module
+-w /etc/pam.d/sudo -p wa -k identree-pam-config
+
+# SSSD config — detects LDAP redirect attacks
+-w /etc/sssd/sssd.conf -p wa -k identree-sssd-config
+
+# mTLS client private key — detects key exfiltration
+-w /etc/identree/client.key -p r -k identree-mtls-key
+`
+
+// auditdRulesPath is the path to install auditd rules. Declared as a var
+// so tests can redirect to a temp directory.
+var auditdRulesPath = "/etc/audit/rules.d/identree.rules"
+
+// installAuditdRules writes the identree auditd rules and loads them.
+func installAuditdRules(dryRun bool) error {
+	// Check if auditd is installed by looking for augenrules.
+	augenrules, err := exec.LookPath("augenrules")
+	if err != nil {
+		fmt.Println("auditd: augenrules not found — skipping (install auditd to enable)")
+		return nil
+	}
+
+	if dryRun {
+		fmt.Printf("[dry-run] would write %s\n", auditdRulesPath)
+		fmt.Printf("[dry-run] would run %s --load\n", augenrules)
+		return nil
+	}
+
+	// Ensure the rules directory exists.
+	rulesDir := filepath.Dir(auditdRulesPath)
+	if err := os.MkdirAll(rulesDir, 0750); err != nil {
+		return fmt.Errorf("mkdir %s: %w", rulesDir, err)
+	}
+
+	if err := atomicWrite(auditdRulesPath, []byte(AuditdRules), 0640); err != nil {
+		return fmt.Errorf("write %s: %w", auditdRulesPath, err)
+	}
+	fmt.Printf("auditd: wrote %s\n", auditdRulesPath)
+
+	// Load the rules into the running kernel.
+	cmd := exec.Command(augenrules, "--load")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("augenrules --load: %w", err)
+	}
+	fmt.Println("auditd: rules loaded")
 	return nil
 }
 

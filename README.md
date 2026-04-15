@@ -130,7 +130,7 @@ less install.sh   # review
 sudo bash install.sh
 ```
 
-The installer downloads the identree binary, writes `/etc/identree/client.conf` with the server URL and shared secret, configures `/etc/pam.d/sudo`, and generates a local break-glass password.
+The installer downloads the identree binary, writes `/etc/identree/client.conf` with the server URL and shared secret, configures `/etc/pam.d/sudo`, installs auditd monitoring rules (if auditd is present), and generates a local break-glass password.
 
 ### Step 6 — Register a passkey and try it
 
@@ -424,7 +424,7 @@ Server-pushed values are sent in the challenge response on every `sudo` invocati
 ```
 identree serve                          Start the server
 identree                                PAM helper (invoked by pam_exec.so)
-identree setup [--sssd] [--hostname <name>] [--force] [--dry-run]
+identree setup [--sssd] [--auditd] [--hostname <name>] [--force] [--dry-run]
                                         Configure PAM/SSSD on a managed host
 identree rotate-breakglass [--force]    Rotate break-glass password
 identree verify-breakglass              Verify current break-glass password
