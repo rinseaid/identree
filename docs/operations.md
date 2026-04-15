@@ -359,6 +359,9 @@ Review this list before going to production.
 - [ ] **LDAP bind credentials are set (if LDAP is network-exposed)**
   Set `IDENTREE_LDAP_BIND_DN` and `IDENTREE_LDAP_BIND_PASSWORD` to require authentication for LDAP queries. Without these (and with `IDENTREE_LDAP_ALLOW_ANONYMOUS=true`), anyone who can reach port 389 can enumerate your entire user directory.
 
+- [ ] **Set independent secrets (`IDENTREE_SESSION_SECRET`, `IDENTREE_ESCROW_SECRET`, `IDENTREE_LDAP_SECRET`)**
+  Split secrets limit blast radius if one is compromised. Each defaults to `IDENTREE_SHARED_SECRET` when unset, but production deployments should set all three independently.
+
 - [ ] **`IDENTREE_OIDC_CLIENT_SECRET` is kept out of version control**
   Use environment variables or a secrets manager. Never commit OIDC credentials to a repository.
 

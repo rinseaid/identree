@@ -242,6 +242,12 @@ secrets:
   escrowHkdfSalt: ""
   # -- HMAC-SHA256 secret for PocketID webhook validation.
   webhookSecret: ""
+  # -- Signs session cookies and CSRF tokens (defaults to sharedSecret).
+  sessionSecret: ""
+  # -- Signs break-glass escrow HMAC tokens (defaults to sharedSecret).
+  escrowSecret: ""
+  # -- Derives per-host LDAP bind passwords (defaults to sharedSecret).
+  ldapSecret: ""
 
   # -- Use an existing Secret instead of creating one. When set, the chart
   # does not create a Secret resource and mounts this one instead.

@@ -53,6 +53,7 @@ Each event is a single JSON line:
 | `actor` | Who performed the action, if different from `username` |
 | `reason` | Justification text (if provided) |
 | `remote_addr` | IP address of the client that triggered the event (from `X-Forwarded-For` or direct connection) |
+| `cert_serial` | Hex-encoded certificate serial number (present in `certificate_issued` events, carried in the `code` field) |
 | `source` | Always `"identree"` |
 | `version` | Server build version |
 
@@ -89,6 +90,7 @@ Each audit event includes a `seq` number and a `prev_hash` field containing the 
 | `notification_channel_deleted` | Notification channel removed |
 | `notification_route_added` | Notification route created |
 | `notification_route_deleted` | Notification route removed |
+| `certificate_issued` | Client certificate issued by embedded CA during host provisioning |
 
 ---
 

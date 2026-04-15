@@ -44,7 +44,7 @@ Use this if you are starting fresh or already use [PocketID](https://github.com/
 
 **Requires:** PocketID with an admin API key.
 
-When mTLS is enabled (`IDENTREE_MTLS_CA_CERT` and `IDENTREE_LDAP_TLS_CA_CERT` are set), identree also serves LDAP over TLS on port 636 with mutual TLS client certificate authentication. Clients must present a valid certificate signed by the configured CA.
+When mTLS is enabled (`IDENTREE_MTLS_CA_CERT` and `IDENTREE_LDAP_TLS_CA_CERT` are set), identree also serves LDAP over TLS on port 636 with mutual TLS client certificate authentication. Clients must present a valid certificate signed by the configured CA. Every certificate issued by the embedded CA is logged with its serial number to the audit stream (see [docs/audit-streaming.md](docs/audit-streaming.md)).
 
 ### PAM bridge mode — identree alongside your existing stack
 
@@ -231,8 +231,13 @@ Override any path with the corresponding `IDENTREE_*_FILE` environment variable.
 | `IDENTREE_INSTALL_URL` | `IDENTREE_EXTERNAL_URL` | URL embedded in install scripts (split-horizon DNS) |
 | `IDENTREE_SHARED_SECRET` | — | **Required.** HMAC secret shared with PAM clients |
 | `IDENTREE_HMAC_SECRET` | — | Separate HMAC secret for internal token signing (defaults to `IDENTREE_SHARED_SECRET`) |
+| `IDENTREE_SESSION_SECRET` | (SharedSecret) | Signs session cookies and CSRF tokens. Falls back to SharedSecret if unset. |
+| `IDENTREE_ESCROW_SECRET` | (SharedSecret) | Signs break-glass escrow HMAC tokens. Falls back to SharedSecret if unset. |
+| `IDENTREE_LDAP_SECRET` | (SharedSecret) | Derives per-host LDAP bind passwords. Falls back to SharedSecret if unset. Unnecessary when mTLS is enabled. |
 | `IDENTREE_API_KEYS` | — | Comma-separated API bearer tokens for programmatic access |
 | `IDENTREE_METRICS_TOKEN` | — | Bearer token for the `/metrics` endpoint |
+
+> **Split secrets:** Production deployments should set independent secrets for each trust domain. Compromise of one secret does not affect the others.
 
 #### TLS / mTLS
 

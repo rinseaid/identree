@@ -263,6 +263,9 @@ components:
         ca_cert:
           type: string
           description: PEM-encoded mTLS CA certificate for server verification.
+        cert_serial:
+          type: string
+          description: Hex-encoded serial number of the issued client certificate.
 
     SudoRule:
       type: object

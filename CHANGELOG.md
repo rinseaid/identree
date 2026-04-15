@@ -25,6 +25,10 @@ All notable changes to identree will be documented in this file.
 - UID/GID mapping with collision-free allocation
 
 #### Security
+- Per-domain secret splitting (session, escrow, LDAP) to limit compromise blast radius
+- HMAC-signed grace sessions prevent injection via Redis write access
+- Certificate issuance audit logging with serial number tracking
+- CA signing refactored to crypto.Signer interface for future KMS/HSM integration
 - mTLS client certificate authentication for PAM endpoints and LDAP (embedded CA)
 - Break-glass escrow with multi-backend support (HashiCorp Vault, Infisical, Bitwarden/Vaultwarden)
 - Audit event hash chains for tamper evidence (SOC 2 CC7.2 aligned)
