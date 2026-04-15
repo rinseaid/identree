@@ -241,7 +241,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 			slog.Error("SECURITY IDENTREE_OIDC_INSECURE_SKIP_VERIFY=true on an HTTPS deployment — TLS certificate verification is disabled; this must not be used in production")
 		}
 		oidcTransport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test environments with self-signed certs only
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- operator-configured for test environments with self-signed certs
 		}
 	}
 	// When IssuerPublicURL is set, the OIDC discovery document advertises all

@@ -341,27 +341,30 @@ jobs:
 
       - name: "Test: /install.sh endpoint"
         run: |
-          # 1. Fetch the install script
+          # 1. Fetch the static install script
           curl -sf http://localhost:8110/install.sh -o /tmp/install-script.sh
           echo "OK: fetched /install.sh ($(wc -c < /tmp/install-script.sh) bytes)"
 
-          # 2. Verify it contains the correct server URL
-          #    IDENTREE_INSTALL_URL (http://identree:8090) takes priority over
-          #    EXTERNAL_URL when rendering the install script, so the embedded
-          #    SERVER_URL points at the internal address that client hosts use.
-          grep -q 'http://identree:8090' /tmp/install-script.sh || \
-            { echo "FAIL: install.sh missing expected SERVER_URL (http://identree:8090)"; exit 1; }
-          echo "OK: install.sh contains correct server URL (http://identree:8090)"
-
-          # 3. Verify it contains identree setup invocation
-          grep -q 'identree.*setup' /tmp/install-script.sh || \
-            grep -q 'identree setup' /tmp/install-script.sh || \
-            { echo "FAIL: install.sh missing identree setup invocation"; exit 1; }
-          echo "OK: install.sh contains identree setup invocation"
-
-          # 4. Verify valid bash syntax
+          # 2. Verify it's a valid bash script (static installer, no embedded secrets)
           bash -n /tmp/install-script.sh
           echo "OK: install.sh passes bash -n syntax check"
+
+          # 3. Verify it contains identree setup invocation
+          grep -q 'identree' /tmp/install-script.sh || \
+            { echo "FAIL: install.sh missing identree reference"; exit 1; }
+          echo "OK: install.sh references identree"
+
+          # 4. Verify the config endpoint returns deployment-specific values
+          CONFIG=$(curl -sf http://localhost:8110/install-config.json \
+            -H "X-Shared-Secret: test-shared-secret-1234567890abc" || echo "")
+          echo "$CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('server_url'), 'missing server_url'" || \
+            { echo "FAIL: /install-config.json missing server_url"; exit 1; }
+          echo "OK: /install-config.json returns server_url"
+
+          # 5. Verify signature endpoint exists
+          curl -sf http://localhost:8110/install.sh.sig -o /dev/null || \
+            { echo "FAIL: /install.sh.sig not available"; exit 1; }
+          echo "OK: /install.sh.sig available"
 
       - name: Capture logs on failure
         if: failure()

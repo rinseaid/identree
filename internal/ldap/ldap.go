@@ -135,11 +135,12 @@ func NewLDAPServer(cfg *config.ServerConfig, um *uidmap.UIDMap, store *sudorules
 		s.mtlsCACert = tlsCfg.CACert
 		s.mtlsAllVerified = true
 		s.hostChecker = tlsCfg.HostChecker
-		s.tlsConfig = &tls.Config{
-			Certificates: []tls.Certificate{tlsCfg.ServerCert},
-			ClientAuth:   tls.RequireAndVerifyClientCert,
-			ClientCAs:    caPool,
-			MinVersion:   tls.VersionTLS12,
+		s.tlsConfig = &tls.Config{ // #nosec G123 -- session resumption is safe here; VerifyPeerCertificate only captures CN for audit, chain verification is done by RequireAndVerifyClientCert
+			Certificates:         []tls.Certificate{tlsCfg.ServerCert},
+			ClientAuth:           tls.RequireAndVerifyClientCert,
+			ClientCAs:            caPool,
+			MinVersion:           tls.VersionTLS12,
+			SessionTicketsDisabled: true,
 			// VerifyPeerCertificate captures the cert CN during TLS handshake
 			// so we can cross-check it against the bind DN hostname later.
 			// This runs after Go's built-in chain verification (RequireAndVerifyClientCert).

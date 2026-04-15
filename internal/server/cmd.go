@@ -997,13 +997,13 @@ func runVerifyInstall() {
 		os.Exit(1)
 	}
 
-	script, err := os.ReadFile(scriptPath)
+	script, err := os.ReadFile(scriptPath) // #nosec G703 -- operator-provided CLI argument
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading script: %v\n", err)
 		os.Exit(1)
 	}
 
-	sigData, err := os.ReadFile(sigPath)
+	sigData, err := os.ReadFile(sigPath) // #nosec G703 -- operator-provided CLI argument
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading signature: %v\n", err)
 		os.Exit(1)
@@ -1051,7 +1051,7 @@ func runSignScript() {
 		os.Exit(1)
 	}
 
-	script, err := os.ReadFile(scriptPath)
+	script, err := os.ReadFile(scriptPath) // #nosec G703 -- operator-provided CLI argument
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading script: %v\n", err)
 		os.Exit(1)
@@ -1061,7 +1061,7 @@ func runSignScript() {
 
 	// Write signature file alongside the script.
 	sigPath := scriptPath + ".sig"
-	if err := os.WriteFile(sigPath, []byte(sig+"\n"), 0644); err != nil {
+	if err := os.WriteFile(sigPath, []byte(sig+"\n"), 0644); err != nil { // #nosec G703 -- operator-provided CLI argument
 		fmt.Fprintf(os.Stderr, "Error writing signature file: %v\n", err)
 		os.Exit(1)
 	}

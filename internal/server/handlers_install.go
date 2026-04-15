@@ -494,11 +494,11 @@ func (s *Server) installScript() []byte {
 	customInstallMu.RLock()
 	defer customInstallMu.RUnlock()
 
-	scriptData, err := os.ReadFile(customInstallScriptPath)
+	scriptData, err := os.ReadFile(customInstallScriptPath) // #nosec G703 -- server-controlled config path
 	if err != nil {
 		return []byte(staticInstallScript)
 	}
-	sigData, err := os.ReadFile(customInstallSigPath)
+	sigData, err := os.ReadFile(customInstallSigPath) // #nosec G703 -- server-controlled config path
 	if err != nil {
 		return []byte(staticInstallScript)
 	}
@@ -664,14 +664,14 @@ func (s *Server) handleAdminInstallScriptGet(w http.ResponseWriter, r *http.Requ
 	customInstallMu.RLock()
 	defer customInstallMu.RUnlock()
 
-	scriptData, err := os.ReadFile(customInstallScriptPath)
+	scriptData, err := os.ReadFile(customInstallScriptPath) // #nosec G703 -- server-controlled config path
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "no custom script configured"}) //nolint:errcheck
 		return
 	}
-	sigData, _ := os.ReadFile(customInstallSigPath)
+	sigData, _ := os.ReadFile(customInstallSigPath) // #nosec G703 -- server-controlled config path
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck
@@ -745,7 +745,7 @@ func (s *Server) handleAdminInstallScriptPost(w http.ResponseWriter, r *http.Req
 		jsonErr(http.StatusInternalServerError, "internal error")
 		return
 	}
-	if err := os.WriteFile(customInstallSigPath, []byte(sigStr+"\n"), 0644); err != nil {
+	if err := os.WriteFile(customInstallSigPath, []byte(sigStr+"\n"), 0644); err != nil { // #nosec G703 -- server-controlled config path
 		// Clean up the script file if sig write fails.
 		os.Remove(customInstallScriptPath)
 		jsonErr(http.StatusInternalServerError, "internal error")

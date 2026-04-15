@@ -226,14 +226,14 @@ func (s *Server) handleAvatarProxy(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil) // #nosec G704 -- URL validated above (scheme check + isPrivateIP)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("User-Agent", "identree-avatar-proxy/1.0")
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- URL validated above
 	if err != nil {
 		http.NotFound(w, r)
 		return
