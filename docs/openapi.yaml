@@ -2441,13 +2441,165 @@ paths:
   /install.sh:
     get:
       operationId: getInstallScript
-      summary: Pre-configured installer shell script
+      summary: Static installer shell script
+      description: >
+        Returns the install script. The script is static (no embedded secrets);
+        runtime configuration is fetched from /install-config.json at execution
+        time using the shared secret. If a custom script has been uploaded via
+        the admin API, it is served instead of the built-in default.
       tags: [Downloads]
       responses:
         "200":
-          description: Shell script with embedded server URL.
+          description: Shell script (static, no embedded secrets).
           content:
             text/x-shellscript: {}
+
+  /install.sh.sig:
+    get:
+      operationId: getInstallScriptSignature
+      summary: Detached Ed25519 signature for install script
+      description: >
+        Returns the detached Ed25519 signature for the install script served
+        at /install.sh. Use with `identree verify-install` to verify script
+        integrity before execution.
+      tags: [Downloads]
+      responses:
+        "200":
+          description: Base64-encoded Ed25519 signature.
+          content:
+            application/octet-stream: {}
+
+  /install.pub:
+    get:
+      operationId: getInstallPublicKey
+      summary: Ed25519 public verification key
+      description: >
+        Returns the Ed25519 public key used to verify install script signatures.
+        For production, distribute this key out-of-band (bake into host images)
+        rather than fetching it from the server at install time.
+      tags: [Downloads]
+      responses:
+        "200":
+          description: PEM-encoded Ed25519 public key.
+          content:
+            application/x-pem-file: {}
+
+  /install-config.json:
+    get:
+      operationId: getInstallConfig
+      summary: Authenticated config for install script
+      description: >
+        Returns runtime configuration needed by the install script: server_url,
+        install_url, and ldap_base_dn. Requires the shared secret for
+        authentication. The install script calls this endpoint during execution.
+      tags: [Downloads]
+      security:
+        - sharedSecret: []
+      responses:
+        "200":
+          description: Install configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  server_url:
+                    type: string
+                    description: Public-facing identree server URL.
+                  install_url:
+                    type: string
+                    description: >
+                      URL for binary downloads (may differ from server_url in
+                      split-horizon DNS environments).
+                  ldap_base_dn:
+                    type: string
+                    description: LDAP base DN for host SSSD configuration.
+        "401":
+          description: Missing or invalid shared secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/admin/install-script:
+    get:
+      operationId: getCustomInstallScript
+      summary: View uploaded custom install script
+      description: >
+        Returns the custom install script if one has been uploaded. Returns 404
+        if the default built-in script is active.
+      tags: [Admin]
+      security:
+        - bearerToken: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Custom install script body.
+          content:
+            text/x-shellscript: {}
+        "404":
+          description: No custom script uploaded; default is active.
+    post:
+      operationId: uploadCustomInstallScript
+      summary: Upload a signed custom install script
+      description: >
+        Replaces the default install script with a custom one. The request must
+        include the script file and its detached Ed25519 signature. After upload,
+        GET /install.sh serves the custom script and GET /install.sh.sig serves
+        its signature.
+      tags: [Admin]
+      security:
+        - bearerToken: []
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [script, signature]
+              properties:
+                script:
+                  type: string
+                  format: binary
+                  description: The custom install script file.
+                signature:
+                  type: string
+                  description: Base64-encoded Ed25519 detached signature.
+      responses:
+        "200":
+          description: Custom script uploaded successfully.
+        "400":
+          description: Invalid signature or missing fields.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteCustomInstallScript
+      summary: Revert to default install script
+      description: >
+        Removes the custom install script and restores the built-in default.
+        GET /install.sh will serve the default script again.
+      tags: [Admin]
+      security:
+        - bearerToken: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Reverted to default install script.
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /download/version:
     get:

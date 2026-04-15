@@ -77,6 +77,7 @@ All notable changes to identree will be documented in this file.
 - Health endpoint with writable state file check
 - OpenAPI 3.1 specification (55+ endpoints)
 - GitHub Actions CI/CD pipeline with multi-OS integration tests
+- Ed25519 signed install scripts with static/config split architecture and custom script support
 - Install script with per-platform download links
 
 #### Audit

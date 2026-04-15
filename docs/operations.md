@@ -368,16 +368,21 @@ Review this list before going to production.
 - [ ] **Auditd monitoring rules are installed on managed hosts**
   The install script installs auditd rules automatically if auditd is present. These rules create a kernel-level audit trail for break-glass hash reads, config file changes, PAM bypass attempts, and mTLS key exfiltration. Verify with `auditctl -l | grep identree`. Forward audit logs off-host for tamper resistance. See [auditd.md](auditd.md) for details.
 
-- [ ] **Verify install script signatures before execution**
-  The identree server signs the install script with an Ed25519 key at startup. The signing keypair is auto-generated on first run and stored at the paths configured by `IDENTREE_INSTALL_SIGNING_KEY` and `IDENTREE_INSTALL_VERIFY_KEY` (defaults: `/config/install-signing.key` and `/config/install-signing.pub`). To verify:
+- [ ] **Use a dedicated signing key for install scripts (not auto-generated)**
+  The auto-generated keypair is convenient for development but lives on the server. In production, generate a keypair offline and keep the private key on a trusted workstation. Configure `IDENTREE_INSTALL_SIGNING_KEY` and `IDENTREE_INSTALL_VERIFY_KEY` to point to your keys. See [install-scripts.md](install-scripts.md) for the full production flow.
+
+- [ ] **Distribute the install verification public key out-of-band (bake into host images)**
+  Do not fetch the public key from the server at install time (TOFU). Instead, bake it into your base images, distribute it via configuration management (Ansible, Puppet, Chef), or include it in your provisioning pipeline. This ensures verification does not depend on the server's integrity.
+
+- [ ] **Verify install script signatures before execution on all new hosts**
+  Before running the install script on any host, verify its detached Ed25519 signature:
   ```sh
   curl -sf https://identree.example.com/install.sh     -o /tmp/install.sh
   curl -sf https://identree.example.com/install.sh.sig -o /tmp/install.sh.sig
-  curl -sf https://identree.example.com/install.pub    -o /tmp/install.pub
-  identree verify-install --key /tmp/install.pub --script /tmp/install.sh --sig /tmp/install.sh.sig
-  sudo bash /tmp/install.sh
+  identree verify-install --key /path/to/install-verify.pub --script /tmp/install.sh --sig /tmp/install.sh.sig
+  sudo IDENTREE_SHARED_SECRET=xxx bash /tmp/install.sh https://identree.example.com
   ```
-  For higher assurance, pre-distribute the public key into host images or via configuration management rather than fetching it from the server (TOFU). Back up the signing private key; if lost, a new keypair is auto-generated and all previously distributed public keys become stale.
+  A non-zero exit code from `verify-install` means the script has been tampered with. Do not execute it. See [install-scripts.md](install-scripts.md) for architecture details and custom script support.
 
 ---
 

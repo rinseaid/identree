@@ -114,43 +114,41 @@ Open `https://identree.example.com` and log in with your PocketID account. You s
 
 Go to **Hosts → Deploy** in the identree admin UI. Fill in the target hostname, SSH user, and paste in a private key with SSH access to the host. identree SSHes in, runs the installer, and streams the output back in real time. Once complete the host appears in the Hosts list automatically.
 
-**Option B — Run the installer manually**
+**Option B — Verified install (recommended)**
 
-On the host:
-
-```sh
-curl -fsSL https://identree.example.com/install.sh | sudo bash
-```
-
-Or fetch the script first to inspect it, then run it:
+The install script is a static shell script (no embedded secrets). Runtime
+configuration is fetched from the authenticated `/install-config.json` endpoint
+using the shared secret. The server signs the script with an Ed25519 key at
+startup so you can verify it before execution.
 
 ```sh
-curl -fsSL https://identree.example.com/install.sh -o install.sh
-less install.sh   # review
-sudo bash install.sh
-```
-
-#### Verified install (recommended)
-
-The server signs the install script with an Ed25519 key at startup. To verify
-the script before execution:
-
-```sh
+# Download and verify
 curl -sf https://identree.example.com/install.sh     -o /tmp/install.sh
 curl -sf https://identree.example.com/install.sh.sig -o /tmp/install.sh.sig
-curl -sf https://identree.example.com/install.pub    -o /tmp/install.pub
+identree verify-install --key /path/to/install-verify.pub \
+  --script /tmp/install.sh --sig /tmp/install.sh.sig
 
-identree verify-install \
-  --key /tmp/install.pub \
-  --script /tmp/install.sh \
-  --sig /tmp/install.sh.sig
-
-sudo bash /tmp/install.sh
+# Run (server URL as argument, shared secret authenticates config fetch)
+sudo IDENTREE_SHARED_SECRET=xxx bash /tmp/install.sh https://identree.example.com
 ```
 
-For automated deployments, pre-distribute the public key (`/install.pub`) into
-your host image or configuration management so verification does not depend on
-the server at install time.
+For automated deployments, pre-distribute the public key into your host image
+or configuration management so verification does not depend on the server at
+install time. See [docs/install-scripts.md](docs/install-scripts.md) for the
+full architecture, custom script support, and production hardening guidance.
+
+**Option C — Simple flow (TOFU)**
+
+If you trust the network path to the server, you can pipe the installer
+directly:
+
+```sh
+curl -sf https://identree.example.com/install.sh | \
+  sudo IDENTREE_SHARED_SECRET=xxx bash -s https://identree.example.com
+```
+
+This is convenient for development and trusted networks but provides no
+integrity guarantee beyond TLS.
 
 The installer downloads the identree binary, writes `/etc/identree/client.conf` with the server URL and shared secret, configures `/etc/pam.d/sudo`, installs auditd monitoring rules (if auditd is present), and generates a local break-glass password.
 
@@ -452,6 +450,10 @@ identree setup [--sssd] [--auditd] [--hostname <name>] [--force] [--dry-run]
                                         Configure PAM/SSSD on a managed host
 identree rotate-breakglass [--force]    Rotate break-glass password
 identree verify-breakglass              Verify current break-glass password
+identree sign-script --key <private-key> --script <script-path>
+                                        Sign a custom install script (Ed25519)
+identree verify-install --key <pub> --script <sh> --sig <sig>
+                                        Verify a signed install script
 identree rotate-host-secret <hostname>  Rotate a host's shared secret
 identree add-host <hostname>            Register a host
 identree remove-host <hostname>         Unregister a host
