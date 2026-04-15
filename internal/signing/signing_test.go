@@ -147,6 +147,53 @@ func TestEncodePubKeyPEM(t *testing.T) {
 	}
 }
 
+func TestLoadPrivateKey(t *testing.T) {
+	dir := t.TempDir()
+	pubPath := filepath.Join(dir, "test.pub")
+	privPath := filepath.Join(dir, "test.key")
+
+	_, origPriv, err := LoadOrGenerateSigningKey(pubPath, privPath)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	loadedPriv, err := LoadPrivateKey(privPath)
+	if err != nil {
+		t.Fatalf("LoadPrivateKey: %v", err)
+	}
+	if !origPriv.Equal(loadedPriv) {
+		t.Error("loaded private key differs from generated")
+	}
+
+	// Sign with loaded key and verify with public key.
+	data := []byte("test script content")
+	sig := SignScript(loadedPriv, data)
+
+	loadedPub, err := LoadPublicKey(pubPath)
+	if err != nil {
+		t.Fatalf("LoadPublicKey: %v", err)
+	}
+	if !VerifyScript(loadedPub, data, sig) {
+		t.Error("signature from loaded private key does not verify with loaded public key")
+	}
+}
+
+func TestLoadPrivateKey_Invalid(t *testing.T) {
+	dir := t.TempDir()
+
+	// Non-existent file.
+	if _, err := LoadPrivateKey(filepath.Join(dir, "nonexistent")); err == nil {
+		t.Error("expected error for non-existent file")
+	}
+
+	// Wrong PEM type.
+	wrongPEM := filepath.Join(dir, "wrong.key")
+	os.WriteFile(wrongPEM, []byte("-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\n"), 0600)
+	if _, err := LoadPrivateKey(wrongPEM); err == nil {
+		t.Error("expected error for wrong PEM type")
+	}
+}
+
 func TestParsePublicKeyPEM_Invalid(t *testing.T) {
 	if _, err := ParsePublicKeyPEM([]byte("not pem")); err == nil {
 		t.Error("expected error for non-PEM input")

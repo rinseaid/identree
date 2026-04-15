@@ -106,6 +106,9 @@ func Main() {
 		case "verify-install":
 			runVerifyInstall()
 			return
+		case "sign-script":
+			runSignScript()
+			return
 		}
 	}
 
@@ -118,7 +121,7 @@ func Main() {
 			"add-host": true, "remove-host": true, "list-hosts": true,
 			"rotate-host-secret": true,
 			"setup": true, "renew-cert": true,
-			"verify-install": true,
+			"verify-install": true, "sign-script": true,
 		}
 		if !strings.HasPrefix(os.Args[1], "-") && !known[os.Args[1]] {
 			fmt.Fprintf(os.Stderr, "unknown command: %s\nRun 'identree --help' for usage.\n", os.Args[1])
@@ -158,6 +161,9 @@ Setup commands (run on managed hosts as root):
             --key <pubkey-path>          Path to Ed25519 public key PEM
             --script <script-path>       Path to downloaded install.sh
             --sig <sig-path>             Path to downloaded install.sh.sig
+  identree sign-script                  Sign a script with Ed25519 private key
+            --key <privkey-path>         Path to Ed25519 private key PEM
+            --script <script-path>       Path to script to sign
 
 Global flags:
   --version, -v                          Show version
@@ -1012,4 +1018,54 @@ func runVerifyInstall() {
 		fmt.Fprintln(os.Stderr, "The script may have been tampered with. Do NOT execute it.")
 		os.Exit(1)
 	}
+}
+
+// runSignScript signs a script file with an Ed25519 private key.
+//
+//	identree sign-script --key <privkey> --script <script>
+func runSignScript() {
+	var keyPath, scriptPath string
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--key":
+			if i+1 < len(os.Args) {
+				i++
+				keyPath = os.Args[i]
+			}
+		case "--script":
+			if i+1 < len(os.Args) {
+				i++
+				scriptPath = os.Args[i]
+			}
+		}
+	}
+
+	if keyPath == "" || scriptPath == "" {
+		fmt.Fprintln(os.Stderr, "Usage: identree sign-script --key <privkey-path> --script <script-path>")
+		os.Exit(1)
+	}
+
+	priv, err := signing.LoadPrivateKey(keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading private key: %v\n", err)
+		os.Exit(1)
+	}
+
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading script: %v\n", err)
+		os.Exit(1)
+	}
+
+	sig := signing.SignScript(priv, script)
+
+	// Write signature file alongside the script.
+	sigPath := scriptPath + ".sig"
+	if err := os.WriteFile(sigPath, []byte(sig+"\n"), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing signature file: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(sig)
+	fmt.Fprintf(os.Stderr, "Signature written to %s\n", sigPath)
 }

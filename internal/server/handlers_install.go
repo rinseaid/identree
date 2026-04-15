@@ -1,30 +1,49 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/rinseaid/identree/internal/signing"
 )
 
-// installScriptTmpl is a shell script template served at GET /install.sh.
-// It pre-configures IDENTREE_SERVER_URL from the server's ExternalURL so
-// users can pipe the script directly: curl -fsSL {{.ServerURL}}/install.sh | sudo bash
+// staticInstallScript is the default installer served at GET /install.sh.
+// It contains NO deployment-specific values — those are fetched at runtime
+// from the /install-config.json endpoint. This means the script is identical
+// across deployments and can be signed once at build time or at server startup.
 //
-// The shared secret is intentionally NOT embedded in the publicly-served script.
-// Pass it at install time via the SHARED_SECRET env var for automated deployments:
-//   SHARED_SECRET=xxx curl -fsSL {{.ServerURL}}/install.sh | sudo bash
-const installScriptTmpl = `#!/bin/bash
+// Usage:
+//
+//	curl -sf https://identree.example.com/install.sh | sudo IDENTREE_SHARED_SECRET=xxx bash -s https://identree.example.com
+//	# or download-then-verify:
+//	curl -sf https://identree.example.com/install.sh -o /tmp/install.sh
+//	curl -sf https://identree.example.com/install.sh.sig -o /tmp/install.sh.sig
+//	identree verify-install --key install.pub --script /tmp/install.sh --sig /tmp/install.sh.sig
+//	sudo IDENTREE_SHARED_SECRET=xxx bash /tmp/install.sh https://identree.example.com
+const staticInstallScript = `#!/bin/bash
 set -euo pipefail
 
-# identree installer — pre-configured for {{.ServerURL}}
-# Usage: curl -fsSL {{.ServerURL}}/install.sh | sudo bash
-# Automated: SHARED_SECRET=xxx curl -fsSL {{.ServerURL}}/install.sh | sudo bash
-# With SSSD:  SHARED_SECRET=xxx SETUP_SSSD=1 curl -fsSL {{.ServerURL}}/install.sh | sudo bash
+# identree static installer
+# Usage: IDENTREE_SHARED_SECRET=xxx bash install.sh <identree-server-url>
+# With SSSD: IDENTREE_SHARED_SECRET=xxx SETUP_SSSD=1 bash install.sh <identree-server-url>
 
-SERVER_URL={{shellQuote .ServerURL}}
+CONFIG_URL="${1:-}"
+if [ -z "$CONFIG_URL" ]; then
+    echo "Usage: install.sh <identree-server-url>" >&2
+    echo "  e.g. IDENTREE_SHARED_SECRET=xxx bash install.sh https://identree.example.com" >&2
+    exit 1
+fi
+# Strip trailing slash for consistency.
+CONFIG_URL="${CONFIG_URL%/}"
+
 MACHINE_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
 echo "IDENTREE_HOSTNAME=$MACHINE_HOSTNAME"
 SETUP_SSSD="${SETUP_SSSD:-0}"
@@ -87,6 +106,25 @@ except Exception as e:
     fi
 }
 
+# _dl_secret downloads a URL with the shared secret in the X-Shared-Secret header.
+_dl_secret() {
+    local url="$1" dest="${2:-}" secret="${IDENTREE_SHARED_SECRET:-${SHARED_SECRET:-}}"
+    if [ -z "$secret" ]; then
+        echo "Error: IDENTREE_SHARED_SECRET (or SHARED_SECRET) must be set" >&2
+        exit 1
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        if [ -n "$dest" ]; then curl -fsSL -H "X-Shared-Secret: $secret" -o "$dest" "$url"
+        else curl -fsSL -H "X-Shared-Secret: $secret" "$url"; fi
+    elif command -v wget >/dev/null 2>&1; then
+        if [ -n "$dest" ]; then wget -qO "$dest" --header="X-Shared-Secret: $secret" "$url"
+        else wget -qO- --header="X-Shared-Secret: $secret" "$url"; fi
+    else
+        echo "Error: curl or wget required for authenticated downloads" >&2
+        exit 1
+    fi
+}
+
 # ── Preflight ───────────────────────────────────────────────────────────────
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -109,11 +147,50 @@ case "$ARCH" in
         ;;
 esac
 
+# ── Fetch deployment config ────────────────────────────────────────────────
+
+echo "Fetching deployment config from $CONFIG_URL..."
+INSTALL_CONFIG=$(_dl_secret "$CONFIG_URL/install-config.json") || {
+    echo "Error: could not fetch install config from $CONFIG_URL/install-config.json" >&2
+    echo "Ensure IDENTREE_SHARED_SECRET is set correctly." >&2
+    exit 1
+}
+
+# Parse config values using lightweight JSON extraction.
+# Prefer jq if available, otherwise use python3/python, otherwise use grep/sed.
+_json_val() {
+    local key="$1" json="$2"
+    if command -v jq >/dev/null 2>&1; then
+        echo "$json" | jq -r ".$key // empty"
+    elif command -v python3 >/dev/null 2>&1; then
+        echo "$json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$key',''))"
+    elif command -v python >/dev/null 2>&1; then
+        echo "$json" | python -c "import json,sys; d=json.load(sys.stdin); print d.get('$key','')"
+    else
+        # Fallback: naive grep — works for simple flat JSON with string values.
+        echo "$json" | grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/.*":\s*"//;s/"$//'
+    fi
+}
+
+SERVER_URL=$(_json_val server_url "$INSTALL_CONFIG")
+INSTALL_URL=$(_json_val install_url "$INSTALL_CONFIG")
+
+# Use install_url for downloads if set, otherwise fall back to server_url.
+DL_URL="${INSTALL_URL:-$SERVER_URL}"
+
+if [ -z "$SERVER_URL" ]; then
+    echo "Error: install config missing server_url" >&2
+    exit 1
+fi
+
+echo "  server_url=$SERVER_URL"
+echo "  install_url=${INSTALL_URL:-<same as server_url>}"
+
 # ── Binary ──────────────────────────────────────────────────────────────────
 
-echo "Fetching version from $SERVER_URL..."
-VERSION=$(_dl "$SERVER_URL/download/version" 2>&1) || {
-    echo "Error: could not reach identree server at $SERVER_URL" >&2
+echo "Fetching version from $DL_URL..."
+VERSION=$(_dl "$DL_URL/download/version" 2>&1) || {
+    echo "Error: could not reach identree server at $DL_URL" >&2
     echo "$VERSION" >&2
     exit 1
 }
@@ -132,7 +209,7 @@ fi
 if [ "$CURRENT" = "$VERSION" ] && [ "$VERSION" != "dev" ]; then
     echo "Binary already at $VERSION — skipping download."
 else
-    BIN_URL="$SERVER_URL/download/identree-$SUFFIX"
+    BIN_URL="$DL_URL/download/identree-$SUFFIX"
     TMP_BIN=$(mktemp /tmp/identree-XXXXXX)
     trap 'rm -f "$TMP_BIN"' EXIT
 
@@ -140,7 +217,7 @@ else
     _dl "$BIN_URL" "$TMP_BIN"
 
     # Verify SHA-256 checksum before installing.
-    SUM_URL="$SERVER_URL/download/identree-$SUFFIX.sha256"
+    SUM_URL="$DL_URL/download/identree-$SUFFIX.sha256"
     TMP_SUM=$(mktemp /tmp/identree-sum-XXXXXX)
     trap 'rm -f "$TMP_BIN" "$TMP_SUM"' EXIT
     _dl "$SUM_URL" "$TMP_SUM"
@@ -163,6 +240,9 @@ fi
 mkdir -p "$CONFIG_DIR"
 chmod 750 "$CONFIG_DIR"
 
+# Resolve the shared secret from env.
+SECRET="${IDENTREE_SHARED_SECRET:-${SHARED_SECRET:-}}"
+
 if [ -f "$CONFIG_FILE" ]; then
     conf_url=$(grep -E '^IDENTREE_SERVER_URL=' "$CONFIG_FILE" | cut -d= -f2- || true)
     conf_secret=$(grep -E '^IDENTREE_SHARED_SECRET=' "$CONFIG_FILE" | cut -d= -f2- || true)
@@ -177,11 +257,10 @@ if [ -f "$CONFIG_FILE" ]; then
     else
         echo "  IDENTREE_SHARED_SECRET=${conf_secret:0:4}****"
     fi
-    # Overwrite if SHARED_SECRET provided and config differs
-    NEW_SECRET="${SHARED_SECRET:-}"
-    if [ -n "$NEW_SECRET" ] && { [ "$conf_url" != "$SERVER_URL" ] || [ "$conf_secret" != "$NEW_SECRET" ]; }; then
+    # Overwrite if SECRET provided and config differs
+    if [ -n "$SECRET" ] && { [ "$conf_url" != "$SERVER_URL" ] || [ "$conf_secret" != "$SECRET" ]; }; then
         printf 'IDENTREE_SERVER_URL=%s\nIDENTREE_SHARED_SECRET=%s\n' \
-            "$SERVER_URL" "$NEW_SECRET" > "$CONFIG_FILE"
+            "$SERVER_URL" "$SECRET" > "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
         echo "  Updated $CONFIG_FILE with current values."
     else
@@ -189,7 +268,6 @@ if [ -f "$CONFIG_FILE" ]; then
     fi
     CONFIG_WRITTEN=1
 else
-    SECRET="${SHARED_SECRET:-}"
     if [ -z "$SECRET" ]; then
         if [ -t 0 ]; then
             # Interactive: prompt securely
@@ -197,7 +275,7 @@ else
             echo
         else
             echo ""
-            echo "NOTE: SHARED_SECRET not set and stdin is not a terminal."
+            echo "NOTE: IDENTREE_SHARED_SECRET not set and stdin is not a terminal."
             echo "Create $CONFIG_FILE manually after this script completes:"
             echo ""
             echo "  cat > $CONFIG_FILE <<'EOF'"
@@ -222,7 +300,7 @@ fi
 
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     for UNIT in identree-rotate.service identree-rotate.timer; do
-        _dl "$SERVER_URL/download/systemd/$UNIT" "$SYSTEMD_DIR/$UNIT"
+        _dl "$DL_URL/download/systemd/$UNIT" "$SYSTEMD_DIR/$UNIT"
     done
     systemctl daemon-reload
     systemctl enable --now identree-rotate.timer
@@ -370,6 +448,15 @@ echo ""
 echo "identree removed from this host."
 `
 
+// customInstallScriptPath and customInstallSigPath are the on-disk locations
+// for operator-uploaded custom install scripts and their signatures.
+const customInstallScriptPath = "/config/custom-install.sh"
+const customInstallSigPath = "/config/custom-install.sh.sig"
+
+// customInstallMu protects reads/writes to the custom install script files.
+// This is a package-level mutex since the paths are fixed.
+var customInstallMu sync.RWMutex
+
 // renderUninstallScript returns the rendered uninstall script.
 func (s *Server) renderUninstallScript(unconfigurePAM, removeFiles bool) ([]byte, error) {
 	tmpl, err := template.New("uninstall").Parse(uninstallScriptTmpl)
@@ -400,20 +487,76 @@ func (s *Server) installServerURL() string {
 	return s.baseURL
 }
 
-// renderInstallScript returns the rendered install script as bytes.
+// installScript returns the install script bytes to serve. If a verified
+// custom script exists on disk, it is returned; otherwise the default
+// staticInstallScript is returned.
+func (s *Server) installScript() []byte {
+	customInstallMu.RLock()
+	defer customInstallMu.RUnlock()
+
+	scriptData, err := os.ReadFile(customInstallScriptPath)
+	if err != nil {
+		return []byte(staticInstallScript)
+	}
+	sigData, err := os.ReadFile(customInstallSigPath)
+	if err != nil {
+		return []byte(staticInstallScript)
+	}
+
+	// Verify the custom script signature before serving it.
+	if s.installVerifyKey == nil {
+		return []byte(staticInstallScript)
+	}
+	sig := strings.TrimSpace(string(sigData))
+	if !signing.VerifyScript(s.installVerifyKey, scriptData, sig) {
+		slog.Warn("custom install script signature verification failed, serving default")
+		return []byte(staticInstallScript)
+	}
+
+	return scriptData
+}
+
+// renderInstallScript returns the install script as bytes.
 // Used by the deploy handler to pipe the script directly over SSH.
 func (s *Server) renderInstallScript() ([]byte, error) {
-	funcMap := template.FuncMap{"shellQuote": shellQuote}
-	tmpl, err := template.New("install").Funcs(funcMap).Parse(installScriptTmpl)
-	if err != nil {
-		return nil, err
+	return s.installScript(), nil
+}
+
+// installConfigJSON returns the deployment-specific JSON config.
+type installConfigJSON struct {
+	ServerURL  string `json:"server_url"`
+	InstallURL string `json:"install_url,omitempty"`
+	LDAPBaseDN string `json:"ldap_base_dn,omitempty"`
+}
+
+// handleInstallConfig serves the per-deployment configuration as JSON.
+// GET /install-config.json
+// Authenticated via X-Shared-Secret header.
+func (s *Server) handleInstallConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-	data := struct{ ServerURL string }{ServerURL: s.installServerURL()}
-	var buf strings.Builder
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return nil, err
+
+	if !s.verifySharedSecret(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
-	return []byte(buf.String()), nil
+
+	cfg := installConfigJSON{
+		ServerURL:  s.baseURL,
+		LDAPBaseDN: s.cfg.LDAPBaseDN,
+	}
+	// Only include install_url if it differs from the external URL.
+	if s.cfg.InstallURL != "" && s.cfg.InstallURL != s.cfg.ExternalURL {
+		cfg.InstallURL = s.installServerURL()
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := json.NewEncoder(w).Encode(cfg); err != nil {
+		slog.Error("install-config.json encode error", "err", err)
+	}
 }
 
 // handleUninstallScript serves the rendered uninstall script.
@@ -435,40 +578,24 @@ func (s *Server) handleUninstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Write(script)
 }
 
-// handleInstallScript serves a pre-configured shell installer script.
+// handleInstallScript serves the static installer script.
 // GET /install.sh
+// If a verified custom script exists, it is served instead of the default.
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	funcMap := template.FuncMap{"shellQuote": shellQuote}
-	tmpl, err := template.New("install").Funcs(funcMap).Parse(installScriptTmpl)
-	if err != nil {
-		// Template is a compile-time constant; any parse error is a programmer bug.
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	data := struct {
-		ServerURL string
-	}{
-		ServerURL: s.installServerURL(),
-	}
+	script := s.installScript()
 
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Content-Disposition", "inline; filename=install.sh")
-	// Prevent browsers from caching a stale version of the script.
 	w.Header().Set("Cache-Control", "no-store")
-
-	if err := tmpl.Execute(w, data); err != nil {
-		// Can't write headers at this point; just log.
-		fmt.Printf("ERROR: install script template: %v\n", err)
-	}
+	w.Write(script)
 }
 
-// handleInstallScriptSig serves the Ed25519 signature of the rendered install script.
+// handleInstallScriptSig serves the Ed25519 signature of the install script.
 // GET /install.sh.sig
 func (s *Server) handleInstallScriptSig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -480,12 +607,7 @@ func (s *Server) handleInstallScriptSig(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	script, err := s.renderInstallScript()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
+	script := s.installScript()
 	sig := signing.SignScript(s.installSigningKey, script)
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -510,4 +632,144 @@ func (s *Server) handleInstallPubKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write(pubPEM)
+}
+
+// maxCustomScriptSize is the maximum size for uploaded custom install scripts (1 MB).
+const maxCustomScriptSize = 1 << 20
+
+// handleAdminInstallScript handles custom install script management.
+//
+//	GET    /api/admin/install-script → returns the current custom script (or 404)
+//	POST   /api/admin/install-script → upload a new custom script + signature
+//	DELETE /api/admin/install-script → revert to default installer
+func (s *Server) handleAdminInstallScript(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleAdminInstallScriptGet(w, r)
+	case http.MethodPost:
+		s.handleAdminInstallScriptPost(w, r)
+	case http.MethodDelete:
+		s.handleAdminInstallScriptDelete(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleAdminInstallScriptGet(w http.ResponseWriter, r *http.Request) {
+	adminUser := s.verifyJSONAdminAuth(w, r)
+	if adminUser == "" {
+		return
+	}
+
+	customInstallMu.RLock()
+	defer customInstallMu.RUnlock()
+
+	scriptData, err := os.ReadFile(customInstallScriptPath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "no custom script configured"}) //nolint:errcheck
+		return
+	}
+	sigData, _ := os.ReadFile(customInstallSigPath)
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck
+		"script":    string(scriptData),
+		"signature": strings.TrimSpace(string(sigData)),
+	})
+}
+
+func (s *Server) handleAdminInstallScriptPost(w http.ResponseWriter, r *http.Request) {
+	adminUser := s.verifyJSONAdminAuth(w, r)
+	if adminUser == "" {
+		return
+	}
+
+	jsonErr := func(code int, msg string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck
+	}
+
+	if s.installVerifyKey == nil {
+		jsonErr(http.StatusServiceUnavailable, "signing not configured")
+		return
+	}
+
+	// Parse multipart form.
+	if err := r.ParseMultipartForm(maxCustomScriptSize + 4096); err != nil {
+		jsonErr(http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+
+	scriptFile, _, err := r.FormFile("script")
+	if err != nil {
+		jsonErr(http.StatusBadRequest, "missing script file")
+		return
+	}
+	defer scriptFile.Close()
+
+	scriptData, err := io.ReadAll(io.LimitReader(scriptFile, maxCustomScriptSize+1))
+	if err != nil {
+		jsonErr(http.StatusBadRequest, "error reading script")
+		return
+	}
+	if len(scriptData) > maxCustomScriptSize {
+		jsonErr(http.StatusBadRequest, "script exceeds maximum size")
+		return
+	}
+
+	sigStr := strings.TrimSpace(r.FormValue("signature"))
+	if sigStr == "" {
+		jsonErr(http.StatusBadRequest, "missing signature")
+		return
+	}
+
+	// Verify the signature.
+	if !signing.VerifyScript(s.installVerifyKey, scriptData, sigStr) {
+		jsonErr(http.StatusBadRequest, "invalid signature")
+		return
+	}
+
+	// Write to disk atomically.
+	customInstallMu.Lock()
+	defer customInstallMu.Unlock()
+
+	dir := filepath.Dir(customInstallScriptPath)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		jsonErr(http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := os.WriteFile(customInstallScriptPath, scriptData, 0644); err != nil {
+		jsonErr(http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := os.WriteFile(customInstallSigPath, []byte(sigStr+"\n"), 0644); err != nil {
+		// Clean up the script file if sig write fails.
+		os.Remove(customInstallScriptPath)
+		jsonErr(http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	slog.Info("custom install script uploaded", "admin", adminUser, "size", len(scriptData))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
+}
+
+func (s *Server) handleAdminInstallScriptDelete(w http.ResponseWriter, r *http.Request) {
+	adminUser := s.verifyJSONAdminAuth(w, r)
+	if adminUser == "" {
+		return
+	}
+
+	customInstallMu.Lock()
+	defer customInstallMu.Unlock()
+
+	os.Remove(customInstallScriptPath)
+	os.Remove(customInstallSigPath)
+
+	slog.Info("custom install script removed, reverted to default", "admin", adminUser)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
 }

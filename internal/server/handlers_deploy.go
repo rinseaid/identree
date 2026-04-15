@@ -320,10 +320,12 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if req.SSHUser != "root" {
 		sudoPrefix = "sudo "
 	}
-	remoteCmd := fmt.Sprintf("%sbash", sudoPrefix)
-	// Inject SHARED_SECRET via stdin (the install script) so it does not
-	// appear in the remote process list (ps aux).
-	secretExport := fmt.Sprintf("export SHARED_SECRET=%s\n", shellQuote(s.cfg.SharedSecret))
+	// The static installer takes the server URL as $1. Pass it via bash -s.
+	remoteCmd := fmt.Sprintf("%sbash -s %s", sudoPrefix, shellQuote(s.installServerURL()))
+	// Inject SHARED_SECRET and IDENTREE_SHARED_SECRET via stdin (the install
+	// script) so they do not appear in the remote process list (ps aux).
+	secretExport := fmt.Sprintf("export SHARED_SECRET=%s\nexport IDENTREE_SHARED_SECRET=%s\n",
+		shellQuote(s.cfg.SharedSecret), shellQuote(s.cfg.SharedSecret))
 	installScript = append([]byte(secretExport), installScript...)
 
 	go func() {

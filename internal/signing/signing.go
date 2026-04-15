@@ -116,6 +116,22 @@ func EncodePubKeyPEM(pub ed25519.PublicKey) []byte {
 	})
 }
 
+// LoadPrivateKey reads an Ed25519 private key from a PEM file.
+func LoadPrivateKey(path string) (ed25519.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "ED25519 PRIVATE KEY" {
+		return nil, fmt.Errorf("invalid private key PEM: expected ED25519 PRIVATE KEY block")
+	}
+	if len(block.Bytes) != ed25519.SeedSize {
+		return nil, fmt.Errorf("invalid private key seed length: got %d, want %d", len(block.Bytes), ed25519.SeedSize)
+	}
+	return ed25519.NewKeyFromSeed(block.Bytes), nil
+}
+
 // LoadPublicKey reads an Ed25519 public key from a PEM file.
 func LoadPublicKey(path string) (ed25519.PublicKey, error) {
 	data, err := os.ReadFile(path)

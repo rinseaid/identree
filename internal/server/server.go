@@ -826,6 +826,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/install.sh", s.handleInstallScript)
 	s.mux.HandleFunc("/install.sh.sig", s.handleInstallScriptSig)
 	s.mux.HandleFunc("/install.pub", s.handleInstallPubKey)
+	s.mux.HandleFunc("/install-config.json", s.handleInstallConfig)
+	s.mux.HandleFunc("/api/admin/install-script", s.handleAdminInstallScript)
 
 	// Self-hosted binary distribution
 	s.mux.HandleFunc("/download/version", s.handleDownloadVersion)
