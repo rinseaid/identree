@@ -356,7 +356,7 @@ jobs:
 
           # 4. Verify the config endpoint returns deployment-specific values
           CONFIG=$(curl -sf http://localhost:8110/install-config.json \
-            -H "X-Shared-Secret: test-shared-secret-1234567890abc" || echo "")
+            -H "X-Shared-Secret: integ-full-shared-secret-abc123456" || echo "")
           echo "$CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('server_url'), 'missing server_url'" || \
             { echo "FAIL: /install-config.json missing server_url"; exit 1; }
           echo "OK: /install-config.json returns server_url"
