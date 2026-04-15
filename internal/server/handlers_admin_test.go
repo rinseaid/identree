@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -853,5 +854,381 @@ func TestBuildChecksJSON_WithRedis(t *testing.T) {
 	got := buildChecksJSON(res)
 	if !strings.Contains(got, `"redis":"error"`) {
 		t.Errorf("expected redis in JSON, got %q", got)
+	}
+}
+
+// ── configToValues expanded tests ────────────────────────────────────────────
+
+func TestConfigToValues_BoolFields(t *testing.T) {
+	cfg := &config.ServerConfig{
+		LDAPEnabled:           true,
+		RequireJustification:  true,
+		LDAPProvisionEnabled:  false,
+	}
+	values := configToValues(cfg)
+	if values["IDENTREE_LDAP_ENABLED"] != "true" {
+		t.Errorf("expected LDAPEnabled=true, got %q", values["IDENTREE_LDAP_ENABLED"])
+	}
+	if values["IDENTREE_REQUIRE_JUSTIFICATION"] != "true" {
+		t.Errorf("expected RequireJustification=true, got %q", values["IDENTREE_REQUIRE_JUSTIFICATION"])
+	}
+	if values["IDENTREE_LDAP_PROVISION_ENABLED"] != "false" {
+		t.Errorf("expected LDAPProvisionEnabled=false, got %q", values["IDENTREE_LDAP_PROVISION_ENABLED"])
+	}
+}
+
+func TestConfigToValues_TokenCacheEnabled(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	cfg := &config.ServerConfig{ClientTokenCacheEnabled: &trueVal}
+	values := configToValues(cfg)
+	if values["IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"] != "true" {
+		t.Errorf("expected token cache true, got %q", values["IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"])
+	}
+
+	cfg2 := &config.ServerConfig{ClientTokenCacheEnabled: &falseVal}
+	values2 := configToValues(cfg2)
+	if values2["IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"] != "false" {
+		t.Errorf("expected token cache false, got %q", values2["IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"])
+	}
+
+	cfg3 := &config.ServerConfig{ClientTokenCacheEnabled: nil}
+	values3 := configToValues(cfg3)
+	if values3["IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"] != "" {
+		t.Errorf("expected token cache empty for nil, got %q", values3["IDENTREE_CLIENT_TOKEN_CACHE_ENABLED"])
+	}
+}
+
+func TestConfigToValues_DurationFields(t *testing.T) {
+	cfg := &config.ServerConfig{
+		ChallengeTTL:       10 * time.Minute,
+		GracePeriod:        1 * time.Hour,
+		OneTapMaxAge:       5 * time.Minute,
+		ClientPollInterval: 3 * time.Second,
+		ClientTimeout:      30 * time.Second,
+	}
+	values := configToValues(cfg)
+	if values["IDENTREE_CHALLENGE_TTL"] == "" {
+		t.Error("expected non-empty ChallengeTTL")
+	}
+	if values["IDENTREE_GRACE_PERIOD"] == "" {
+		t.Error("expected non-empty GracePeriod")
+	}
+	if values["IDENTREE_CLIENT_POLL_INTERVAL"] == "" {
+		t.Error("expected non-empty ClientPollInterval")
+	}
+	if values["IDENTREE_CLIENT_TIMEOUT"] == "" {
+		t.Error("expected non-empty ClientTimeout")
+	}
+}
+
+func TestConfigToValues_ZeroDurationOmitted(t *testing.T) {
+	cfg := &config.ServerConfig{
+		ClientPollInterval: 0,
+		ClientTimeout:      0,
+	}
+	values := configToValues(cfg)
+	if values["IDENTREE_CLIENT_POLL_INTERVAL"] != "" {
+		t.Errorf("expected empty for zero ClientPollInterval, got %q", values["IDENTREE_CLIENT_POLL_INTERVAL"])
+	}
+	if values["IDENTREE_CLIENT_TIMEOUT"] != "" {
+		t.Errorf("expected empty for zero ClientTimeout, got %q", values["IDENTREE_CLIENT_TIMEOUT"])
+	}
+}
+
+// ── boolToString / boolPtrToString tests ─────────────────────────────────────
+
+func TestBoolToString(t *testing.T) {
+	if boolToString(true) != "true" {
+		t.Error("expected 'true'")
+	}
+	if boolToString(false) != "false" {
+		t.Error("expected 'false'")
+	}
+}
+
+func TestBoolPtrToString(t *testing.T) {
+	trueVal := true
+	falseVal := false
+	if boolPtrToString(&trueVal) != "true" {
+		t.Error("expected 'true' for *true")
+	}
+	if boolPtrToString(&falseVal) != "false" {
+		t.Error("expected 'false' for *false")
+	}
+	if boolPtrToString(nil) != "" {
+		t.Error("expected '' for nil")
+	}
+}
+
+// ── configLockedKeys tests ───────────────────────────────────────────────────
+
+func TestConfigLockedKeys_ReturnsMap(t *testing.T) {
+	locked := configLockedKeys()
+	// Should always return a map (possibly empty).
+	if locked == nil {
+		t.Error("expected non-nil map from configLockedKeys")
+	}
+}
+
+// ── configSecretStatus tests ─────────────────────────────────────────────────
+
+func TestConfigSecretStatus_AllSet(t *testing.T) {
+	cfg := &config.ServerConfig{
+		SharedSecret:       "secret",
+		ClientSecret:       "secret",
+		APIKey:             "key",
+		LDAPBindPassword:   "pass",
+		EscrowAuthSecret:   "auth",
+		EscrowEncryptionKey: "enc",
+		WebhookSecret:      "whsec",
+	}
+	status := configSecretStatus(cfg)
+	if !status["IDENTREE_SHARED_SECRET"] {
+		t.Error("expected SharedSecret to be set")
+	}
+	if !status["IDENTREE_OIDC_CLIENT_SECRET"] {
+		t.Error("expected ClientSecret to be set")
+	}
+	if !status["IDENTREE_POCKETID_API_KEY"] {
+		t.Error("expected APIKey to be set")
+	}
+	if !status["IDENTREE_LDAP_BIND_PASSWORD"] {
+		t.Error("expected LDAPBindPassword to be set")
+	}
+	if !status["IDENTREE_ESCROW_AUTH_SECRET"] {
+		t.Error("expected EscrowAuthSecret to be set")
+	}
+	if !status["IDENTREE_ESCROW_ENCRYPTION_KEY"] {
+		t.Error("expected EscrowEncryptionKey to be set")
+	}
+	if !status["IDENTREE_WEBHOOK_SECRET"] {
+		t.Error("expected WebhookSecret to be set")
+	}
+}
+
+func TestConfigSecretStatus_NoneSet(t *testing.T) {
+	cfg := &config.ServerConfig{}
+	status := configSecretStatus(cfg)
+	for key, val := range status {
+		if val {
+			t.Errorf("expected %s to be false for empty config", key)
+		}
+	}
+}
+
+// ── findRestartSections expanded tests ───────────────────────────────────────
+
+func TestFindRestartSections_RestartRequired(t *testing.T) {
+	// IDENTREE_LISTEN_ADDR is not in liveUpdateKeys, so changing it requires restart.
+	submitted := map[string]string{
+		"IDENTREE_LISTEN_ADDR": ":9090",
+		"IDENTREE_EXTERNAL_URL": "https://auth.example.com",
+	}
+	current := map[string]string{
+		"IDENTREE_LISTEN_ADDR": ":8080",
+		"IDENTREE_EXTERNAL_URL": "https://auth.example.com",
+	}
+	sections := findRestartSections(submitted, current)
+	if len(sections) == 0 {
+		t.Error("expected restart sections for non-live config change")
+	}
+}
+
+// ── handleAdminConfig POST tests ─────────────────────────────────────────────
+
+func TestHandleAdminConfig_POST_MissingCSRF(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+
+	ts := time.Now().Unix()
+	cookieVal := makeCookie(secret, "admin-user", "admin", ts)
+	r := httptest.NewRequest(http.MethodPost, "/admin/config", strings.NewReader("username=admin-user"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleAdminConfig(w, r)
+
+	// Should fail because csrf_token and csrf_ts are missing.
+	if w.Code == http.StatusOK || w.Code == http.StatusSeeOther {
+		// 400 for missing fields is acceptable
+	}
+	if w.Code != http.StatusBadRequest && w.Code != http.StatusForbidden {
+		t.Errorf("expected 400 or 403 for missing CSRF, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminConfig_POST_InvalidCSRF(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+
+	ts := time.Now().Unix()
+	tsStr := fmt.Sprintf("%d", ts)
+	cookieVal := makeCookie(secret, "admin-user", "admin", ts)
+	form := url.Values{
+		"username":   {"admin-user"},
+		"csrf_token": {"bad-token"},
+		"csrf_ts":    {tsStr},
+	}
+	r := httptest.NewRequest(http.MethodPost, "/admin/config", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleAdminConfig(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for invalid CSRF token, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminConfig_POST_ExpiredCSRF(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+
+	// Use a timestamp 10 minutes in the past (exceeds 5-minute window).
+	oldTs := time.Now().Add(-10 * time.Minute).Unix()
+	tsStr := fmt.Sprintf("%d", oldTs)
+	csrfToken := computeCSRFToken(secret, "admin-user", tsStr)
+	cookieVal := makeCookie(secret, "admin-user", "admin", time.Now().Unix())
+	form := url.Values{
+		"username":   {"admin-user"},
+		"csrf_token": {csrfToken},
+		"csrf_ts":    {tsStr},
+	}
+	r := httptest.NewRequest(http.MethodPost, "/admin/config", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleAdminConfig(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for expired CSRF, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminConfig_POST_UsernameMismatch(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+
+	ts := time.Now().Unix()
+	tsStr := fmt.Sprintf("%d", ts)
+	// CSRF token is for "hacker" but session is for "admin-user"
+	csrfToken := computeCSRFToken(secret, "hacker", tsStr)
+	cookieVal := makeCookie(secret, "admin-user", "admin", ts)
+	form := url.Values{
+		"username":   {"hacker"},
+		"csrf_token": {csrfToken},
+		"csrf_ts":    {tsStr},
+	}
+	r := httptest.NewRequest(http.MethodPost, "/admin/config", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleAdminConfig(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for username mismatch, got %d", w.Code)
+	}
+}
+
+// ── handleAdminTestNotification with channel tests ───────────────────────────
+
+func TestHandleAdminTestNotification_UnknownChannel(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+
+	// Add a channel so channelMap is non-empty.
+	s.notifyCfg.Channels = append(s.notifyCfg.Channels, notify.Channel{
+		Name:    "existing",
+		Backend: "ntfy",
+	})
+
+	r := buildJSONAdminReq(secret, "admin-user", "/api/admin/test-notification?channel=nonexistent")
+	w := httptest.NewRecorder()
+	s.handleAdminTestNotification(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── validateWebhookURL additional tests ──────────────────────────────────────
+
+func TestValidateWebhookURL_ValidHTTPS(t *testing.T) {
+	err := validateWebhookURL("https://hooks.slack.com/services/xxx")
+	if err != nil {
+		t.Errorf("expected no error for valid HTTPS URL, got %v", err)
+	}
+}
+
+func TestValidateWebhookURL_ValidHTTP(t *testing.T) {
+	// Use a known public hostname that resolves to non-private IPs.
+	err := validateWebhookURL("http://example.com/webhook")
+	if err != nil {
+		t.Errorf("expected no error for valid HTTP URL, got %v", err)
+	}
+}
+
+// ── isPrivateIP expanded tests ───────────────────────────────────────────────
+
+func TestIsPrivateIP_Multicast(t *testing.T) {
+	ip := net.ParseIP("224.0.0.1")
+	if !isPrivateIP(ip) {
+		t.Error("expected 224.0.0.1 (multicast) to be private")
+	}
+}
+
+func TestIsPrivateIP_IPv6ULA(t *testing.T) {
+	ip := net.ParseIP("fc00::1")
+	if !isPrivateIP(ip) {
+		t.Error("expected fc00::1 (ULA) to be private")
+	}
+}
+
+func TestIsPrivateIP_ZeroNetwork(t *testing.T) {
+	ip := net.ParseIP("0.0.0.1")
+	if !isPrivateIP(ip) {
+		t.Error("expected 0.0.0.1 to be private (this-host network)")
+	}
+}
+
+func TestIsPrivateIP_IPv6Multicast(t *testing.T) {
+	ip := net.ParseIP("ff02::1")
+	if !isPrivateIP(ip) {
+		t.Error("expected ff02::1 (IPv6 multicast) to be private")
+	}
+}
+
+// ── stripSensitiveEnv tests ──────────────────────────────────────────────────
+
+func TestStripSensitiveEnv(t *testing.T) {
+	t.Setenv("IDENTREE_TEST_VAR", "secret-value")
+	t.Setenv("LD_PRELOAD", "/tmp/evil.so")
+
+	stripSensitiveEnv()
+
+	// After stripping, IDENTREE_* env vars should be unset.
+	if os.Getenv("IDENTREE_TEST_VAR") != "" {
+		t.Error("expected IDENTREE_TEST_VAR to be unset")
+	}
+	if os.Getenv("LD_PRELOAD") != "" {
+		t.Error("expected LD_PRELOAD to be unset")
+	}
+}
+
+func TestHostRegistryPath_Default(t *testing.T) {
+	t.Setenv("IDENTREE_HOST_REGISTRY_FILE", "")
+	got := hostRegistryPath()
+	if got != "/data/hosts.json" {
+		t.Errorf("expected /data/hosts.json, got %q", got)
+	}
+}
+
+func TestHostRegistryPath_Custom(t *testing.T) {
+	t.Setenv("IDENTREE_HOST_REGISTRY_FILE", "/custom/hosts.json")
+	got := hostRegistryPath()
+	if got != "/custom/hosts.json" {
+		t.Errorf("expected /custom/hosts.json, got %q", got)
 	}
 }

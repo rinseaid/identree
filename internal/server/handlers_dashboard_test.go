@@ -588,9 +588,51 @@ func TestHandleSessionsRedirect(t *testing.T) {
 	}
 }
 
-// ── handleHealthz additional tests ───────────────────────────────────────────
+// ── handleDashboard with pending challenges ──────────────────────────────────
 
-// ── handleDevSeedHistory tests ────────────────────────────────────────────────
+func TestHandleDashboard_WithSession_ShowsContent(t *testing.T) {
+	const secret = "test-secret"
+	s := newDashboardFullServer(t, secret)
+	s.removedUsers = make(map[string]time.Time)
+
+	// Add a history entry so the dashboard has data to render.
+	s.store.LogAction("alice", "approved", "web01", "ABC-123", "admin")
+
+	ts := time.Now().Unix()
+	cookieVal := makeCookie(secret, "alice", "admin", ts)
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleDashboard(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body length: %d", w.Code, w.Body.Len())
+	}
+}
+
+// ── handleAccess valid session tests ─────────────────────────────────────────
+
+func TestHandleAccess_ValidSession(t *testing.T) {
+	const secret = "test-secret"
+	s := newDashboardFullServer(t, secret)
+	s.removedUsers = make(map[string]time.Time)
+
+	ts := time.Now().Unix()
+	cookieVal := makeCookie(secret, "alice", "admin", ts)
+	r := httptest.NewRequest(http.MethodGet, "/access", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleAccess(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body length: %d", w.Code, w.Body.Len())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/html" {
+		t.Errorf("expected Content-Type text/html, got %q", ct)
+	}
+}
+
+// ── handleHealthz additional tests ───────────────────────────────────────────
 
 func TestHandleDevSeedHistory_Disabled(t *testing.T) {
 	s := newDashboardFullServer(t, "test-secret")

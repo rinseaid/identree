@@ -1090,6 +1090,263 @@ func TestLDAPS_mTLSCertFromWrongCA(t *testing.T) {
 	cancel()
 }
 
+// ── Plaintext LDAP search integration tests ──────────────────────────────────
+
+// newPlainLDAPTestServer creates an LDAP server with anonymous bind enabled,
+// seeds it with users and groups, starts it on a random port, and returns the
+// server, its address, and a cancel function.
+func newPlainLDAPTestServer(t *testing.T) (*LDAPServer, string, context.CancelFunc) {
+	t.Helper()
+	baseDN := "dc=test,dc=local"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	cfg := &config.ServerConfig{
+		LDAPBaseDN:         baseDN,
+		LDAPListenAddr:     addr,
+		LDAPAllowAnonymous: true,
+	}
+	um, err := uidmap.NewUIDMap(t.TempDir()+"/uidmap.json", 200000, 200000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := NewLDAPServer(cfg, um, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed with users and groups.
+	var users []pocketid.PocketIDAdminUser
+	_ = json.Unmarshal([]byte(`[
+		{"id":"u1","username":"alice","email":"alice@example.com","firstName":"Alice","lastName":"Smith"},
+		{"id":"u2","username":"bob","email":"bob@example.com","firstName":"Bob","lastName":"Jones"},
+		{"id":"u3","username":"carol","email":"carol@example.com","firstName":"Carol","lastName":"White"}
+	]`), &users)
+	var groups []pocketid.PocketIDAdminGroup
+	_ = json.Unmarshal([]byte(`[
+		{"id":"g1","name":"sysadmins","customClaims":[{"key":"sudoCommands","value":"ALL"}],"members":[{"id":"u1"},{"id":"u2"}]},
+		{"id":"g2","name":"developers","customClaims":[],"members":[{"id":"u2"},{"id":"u3"}]}
+	]`), &groups)
+	srv.Refresh(pocketid.NewUserDirectory(users, groups), "", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = srv.Start(ctx) }()
+
+	if !waitForPort(t, addr, 5*time.Second) {
+		cancel()
+		t.Fatal("LDAP server did not start in time")
+	}
+
+	return srv, addr, cancel
+}
+
+func TestPlainLDAP_AnonymousBind(t *testing.T) {
+	_, addr, cancel := newPlainLDAPTestServer(t)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Anonymous bind (empty DN, empty password).
+	if err := conn.UnauthenticatedBind(""); err != nil {
+		t.Fatalf("anonymous bind failed: %v", err)
+	}
+}
+
+func TestPlainLDAP_SearchUsers(t *testing.T) {
+	_, addr, cancel := newPlainLDAPTestServer(t)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	// Search for all users.
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=people,dc=test,dc=local",
+		Scope:      ldapclient.ScopeWholeSubtree,
+		Filter:     "(objectClass=posixAccount)",
+		Attributes: []string{"uid", "cn", "uidNumber"},
+	})
+	if err != nil {
+		t.Fatalf("search users: %v", err)
+	}
+	if len(sr.Entries) < 3 {
+		t.Errorf("expected at least 3 user entries, got %d", len(sr.Entries))
+	}
+}
+
+func TestPlainLDAP_SearchSpecificUser(t *testing.T) {
+	_, addr, cancel := newPlainLDAPTestServer(t)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	// Search for alice specifically.
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=people,dc=test,dc=local",
+		Scope:      ldapclient.ScopeWholeSubtree,
+		Filter:     "(uid=alice)",
+		Attributes: []string{"uid", "cn", "uidNumber", "gidNumber"},
+	})
+	if err != nil {
+		t.Fatalf("search alice: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Fatalf("expected 1 entry for alice, got %d", len(sr.Entries))
+	}
+	uid := sr.Entries[0].GetAttributeValue("uid")
+	if uid != "alice" {
+		t.Errorf("expected uid=alice, got %q", uid)
+	}
+}
+
+func TestPlainLDAP_SearchGroups(t *testing.T) {
+	_, addr, cancel := newPlainLDAPTestServer(t)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	// Search for groups.
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=groups,dc=test,dc=local",
+		Scope:      ldapclient.ScopeWholeSubtree,
+		Filter:     "(objectClass=posixGroup)",
+		Attributes: []string{"cn", "gidNumber", "memberUid"},
+	})
+	if err != nil {
+		t.Fatalf("search groups: %v", err)
+	}
+	if len(sr.Entries) < 2 {
+		t.Errorf("expected at least 2 group entries, got %d", len(sr.Entries))
+	}
+}
+
+func TestPlainLDAP_SearchWithANDFilter(t *testing.T) {
+	_, addr, cancel := newPlainLDAPTestServer(t)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	// AND filter: uid=alice AND objectClass=posixAccount.
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=people,dc=test,dc=local",
+		Scope:      ldapclient.ScopeWholeSubtree,
+		Filter:     "(&(uid=alice)(objectClass=posixAccount))",
+		Attributes: []string{"uid"},
+	})
+	if err != nil {
+		t.Fatalf("search with AND: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Errorf("expected 1 entry, got %d", len(sr.Entries))
+	}
+}
+
+func TestPlainLDAP_SearchWithPresenceFilter(t *testing.T) {
+	_, addr, cancel := newPlainLDAPTestServer(t)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	// Presence filter: gidNumber=*.
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=people,dc=test,dc=local",
+		Scope:      ldapclient.ScopeWholeSubtree,
+		Filter:     "(&(uid=alice)(gidNumber=*))",
+		Attributes: []string{"uid", "gidNumber"},
+	})
+	if err != nil {
+		t.Fatalf("search with presence: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Errorf("expected 1 entry with gidNumber, got %d", len(sr.Entries))
+	}
+}
+
+func TestPlainLDAP_SearchBaseScope(t *testing.T) {
+	_, addr, cancel := newPlainLDAPTestServer(t)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	// Base scope search on the root DSE.
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "dc=test,dc=local",
+		Scope:      ldapclient.ScopeBaseObject,
+		Filter:     "(objectClass=*)",
+		Attributes: []string{"dn"},
+	})
+	if err != nil {
+		t.Fatalf("base search: %v", err)
+	}
+	if len(sr.Entries) == 0 {
+		t.Error("expected at least one entry for base scope")
+	}
+}
+
+func TestPlainLDAP_SearchNonexistentUser(t *testing.T) {
+	_, addr, cancel := newPlainLDAPTestServer(t)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	// Search for a user that doesn't exist.
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=people,dc=test,dc=local",
+		Scope:      ldapclient.ScopeWholeSubtree,
+		Filter:     "(uid=nonexistent)",
+		Attributes: []string{"uid"},
+	})
+	if err != nil {
+		t.Fatalf("search nonexistent: %v", err)
+	}
+	if len(sr.Entries) != 0 {
+		t.Errorf("expected 0 entries for nonexistent user, got %d", len(sr.Entries))
+	}
+}
+
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 // waitForPort polls the given address until it accepts a TCP connection.
