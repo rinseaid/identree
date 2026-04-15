@@ -31,6 +31,21 @@ jobs:
       - name: Validate OpenAPI spec
         run: python3 -c "import yaml; yaml.safe_load(open('docs/openapi.yaml'))"
 
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run gosec
+        run: gosec -exclude-generated ./...
+
   build:
     runs-on: ubuntu-latest
     needs: test
