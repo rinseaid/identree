@@ -514,16 +514,17 @@ jobs:
             docker logs integ-lldap-dex-identree 2>&1 | grep -q "redis" || true
 
           echo "==> Verifying challenges exist in Redis..."
-          # Install redis-cli in the runner
-          sudo apt-get install -y -qq redis-tools >/dev/null 2>&1
+          # Use docker exec to access redis-cli inside the Redis container
+          # (avoids fragile apt-get install redis-tools on the runner)
+          RCLI="docker exec integ-lldap-dex-redis redis-cli"
 
-          KEYS=$(redis-cli -h 127.0.0.1 -p 6381 KEYS 'integ-lldap-dex:challenge:*' 2>/dev/null | wc -l)
+          KEYS=$($RCLI KEYS 'integ-lldap-dex:challenge:*' 2>/dev/null | wc -l)
           echo "  Redis challenge keys: ${KEYS}"
 
-          GRACE=$(redis-cli -h 127.0.0.1 -p 6381 KEYS 'integ-lldap-dex:grace:*' 2>/dev/null | wc -l)
+          GRACE=$($RCLI KEYS 'integ-lldap-dex:grace:*' 2>/dev/null | wc -l)
           echo "  Redis grace session keys: ${GRACE}"
 
-          ACTIONS=$(redis-cli -h 127.0.0.1 -p 6381 KEYS 'integ-lldap-dex:actionlog:*' 2>/dev/null | wc -l)
+          ACTIONS=$($RCLI KEYS 'integ-lldap-dex:actionlog:*' 2>/dev/null | wc -l)
           echo "  Redis action log keys: ${ACTIONS}"
           [ "$ACTIONS" -ge 1 ] || { echo "FAIL: no action log entries in Redis"; exit 1; }
 
@@ -710,13 +711,12 @@ jobs:
       - name: Verify Dragonfly state backend
         run: |
           echo "==> Checking identree is using Redis/Dragonfly backend..."
+          RCLI="docker exec integ-vault-dragonfly redis-cli"
 
-          sudo apt-get install -y -qq redis-tools >/dev/null 2>&1
-
-          KEYS=$(redis-cli -h 127.0.0.1 -p 6382 KEYS 'integ-vault:challenge:*' 2>/dev/null | wc -l)
+          KEYS=$($RCLI KEYS 'integ-vault:challenge:*' 2>/dev/null | wc -l)
           echo "  Dragonfly challenge keys: ${KEYS}"
 
-          ACTIONS=$(redis-cli -h 127.0.0.1 -p 6382 KEYS 'integ-vault:actionlog:*' 2>/dev/null | wc -l)
+          ACTIONS=$($RCLI KEYS 'integ-vault:actionlog:*' 2>/dev/null | wc -l)
           echo "  Dragonfly action log keys: ${ACTIONS}"
           [ "$ACTIONS" -ge 1 ] || { echo "FAIL: no action log entries in Dragonfly"; exit 1; }
 
