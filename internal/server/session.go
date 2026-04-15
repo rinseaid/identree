@@ -158,11 +158,19 @@ func (s *Server) evaluatePolicy(username, hostname string) policy.EvalResult {
 	return engine.Evaluate(username, hostname, hostGroup)
 }
 
-// reloadPolicies reloads the approval policies from disk.
-func (s *Server) reloadPolicies() {
-	s.cfgMu.RLock()
-	path := s.cfg.ApprovalPoliciesFile
-	s.cfgMu.RUnlock()
+// reloadPolicies reloads approval policies from disk. If path is empty, reads
+// from s.cfg.ApprovalPoliciesFile under the config read lock. Pass a non-empty
+// path when calling from applyLiveConfigUpdates (which already holds the write
+// lock, making a nested RLock a deadlock).
+func (s *Server) reloadPolicies(paths ...string) {
+	var path string
+	if len(paths) > 0 && paths[0] != "" {
+		path = paths[0]
+	} else {
+		s.cfgMu.RLock()
+		path = s.cfg.ApprovalPoliciesFile
+		s.cfgMu.RUnlock()
+	}
 
 	policies, err := policy.LoadPolicies(path)
 	if err != nil {

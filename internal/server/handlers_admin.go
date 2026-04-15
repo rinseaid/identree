@@ -1064,7 +1064,9 @@ func (s *Server) applyLiveConfigUpdates(values map[string]string, actor string) 
 		}
 	}
 	// Reload the approval policies from disk on any settings save.
-	s.reloadPolicies()
+	// Pass the path explicitly to avoid a deadlock: we already hold cfgMu.Lock(),
+	// and reloadPolicies() without a path would try cfgMu.RLock() (re-entrant = deadlock).
+	s.reloadPolicies(s.cfg.ApprovalPoliciesFile)
 	// Notification config file paths: update before reload so the new path is used.
 	if !config.IsEnvSourced("IDENTREE_NOTIFICATION_CONFIG_FILE") {
 		s.cfg.NotificationConfigFile = values["IDENTREE_NOTIFICATION_CONFIG_FILE"]
