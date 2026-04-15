@@ -208,9 +208,13 @@ func isAuthLine(line string) bool {
 
 // ── nsswitch.conf ─────────────────────────────────────────────────────────────
 
+// nsswitchPath is the path to nsswitch.conf. Declared as a var so tests can
+// redirect to a temp directory.
+var nsswitchPath = "/etc/nsswitch.conf"
+
 // configureNsswitch ensures provider is present in passwd, group, and sudoers lines.
 func configureNsswitch(dryRun, force bool, provider string) error {
-	const nssFile = "/etc/nsswitch.conf"
+	nssFile := nsswitchPath
 	data, err := os.ReadFile(nssFile)
 	if os.IsNotExist(err) {
 		fmt.Printf("nsswitch: %s not found, skipping\n", nssFile)
@@ -273,10 +277,11 @@ func configureNsswitch(dryRun, force bool, provider string) error {
 
 // ── SSSD configuration ────────────────────────────────────────────────────────
 
-// sssdConfigDir returns the distribution-appropriate path for sssd.conf.
-// Both Debian/Ubuntu and RHEL/Fedora use /etc/sssd/sssd.conf.
-const sssdConfigDir = "/etc/sssd"
-const sssdConfigPath = "/etc/sssd/sssd.conf"
+// sssdConfigDir and sssdConfigPath hold the distribution-appropriate paths for
+// sssd.conf. Both Debian/Ubuntu and RHEL/Fedora use /etc/sssd/sssd.conf.
+// Declared as vars (not consts) so that tests can redirect writes to a temp directory.
+var sssdConfigDir = "/etc/sssd"
+var sssdConfigPath = "/etc/sssd/sssd.conf"
 
 // sssdConfigTmpl is the sssd.conf template. Arguments (1-indexed for explicit
 // fmt.Sprintf verbs): [1] ldap_uri, [2] base_dn, [3] bind_dn,
@@ -331,7 +336,7 @@ sudo_timed = false
 // sssdCACertPath is the path where the LDAP TLS CA cert is stored within
 // the SSSD config directory so that SSSD can find it without relying on
 // the system trust store (which requires running update-ca-certificates).
-const sssdCACertPath = "/etc/sssd/identree-ldap-ca.crt"
+var sssdCACertPath = "/etc/sssd/identree-ldap-ca.crt"
 
 func writeSSSDConfig(prov *provisionResponse, hostname string, dryRun, force bool) error {
 	if err := os.MkdirAll(sssdConfigDir, 0700); err != nil && !os.IsExist(err) {
@@ -433,7 +438,8 @@ func writeTLSCACert(pemCert string, dryRun bool) error {
 
 // ── mTLS client certificate ────────────────────────────────────────────────
 
-const (
+// mTLS certificate paths — declared as vars so tests can redirect to a temp directory.
+var (
 	mtlsClientCertPath = "/etc/identree/client.crt"
 	mtlsClientKeyPath  = "/etc/identree/client.key"
 	mtlsCACertPath     = "/etc/identree/ca.crt"
@@ -452,9 +458,10 @@ func writeMTLSCerts(prov *provisionResponse, dryRun bool) error {
 		return nil
 	}
 
-	// Ensure /etc/identree exists.
-	if err := os.MkdirAll("/etc/identree", 0755); err != nil {
-		return fmt.Errorf("mkdir /etc/identree: %w", err)
+	// Ensure the parent directory of the cert path exists.
+	certDir := filepath.Dir(mtlsClientCertPath)
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", certDir, err)
 	}
 
 	if err := atomicWrite(mtlsClientCertPath, []byte(prov.ClientCert), 0644); err != nil {
@@ -482,10 +489,14 @@ func writeMTLSCerts(prov *provisionResponse, dryRun bool) error {
 	return nil
 }
 
+// clientConfPath is the path to the client config file. Declared as a var
+// so tests can redirect to a temp directory.
+var clientConfPath = "/etc/identree/client.conf"
+
 // appendMTLSConfig appends IDENTREE_CLIENT_CERT, IDENTREE_CLIENT_KEY, and
 // IDENTREE_CA_CERT lines to the client config file, skipping any that already exist.
 func appendMTLSConfig() error {
-	const confPath = "/etc/identree/client.conf"
+	confPath := clientConfPath
 	existing, err := os.ReadFile(confPath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
