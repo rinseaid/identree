@@ -1,6 +1,7 @@
 package mtls
 
 import (
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -11,9 +12,12 @@ import (
 )
 
 func TestGenerateCA(t *testing.T) {
-	certPEM, keyPEM, err := GenerateCA()
+	certPEM, keyPEM, signer, err := GenerateCA()
 	if err != nil {
 		t.Fatalf("GenerateCA: %v", err)
+	}
+	if signer == nil {
+		t.Fatal("expected non-nil signer")
 	}
 
 	// Verify the cert is valid PEM
@@ -42,6 +46,9 @@ func TestGenerateCA(t *testing.T) {
 	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
 		t.Fatalf("X509KeyPair: %v", err)
 	}
+
+	// Verify the returned signer implements crypto.Signer
+	var _ crypto.Signer = signer
 }
 
 func TestLoadOrGenerateCA_Generate(t *testing.T) {
@@ -49,7 +56,7 @@ func TestLoadOrGenerateCA_Generate(t *testing.T) {
 	certPath := filepath.Join(dir, "ca.crt")
 	keyPath := filepath.Join(dir, "ca.key")
 
-	pair, err := LoadOrGenerateCA(certPath, keyPath)
+	pair, signer, err := LoadOrGenerateCA(certPath, keyPath)
 	if err != nil {
 		t.Fatalf("LoadOrGenerateCA: %v", err)
 	}
@@ -58,6 +65,9 @@ func TestLoadOrGenerateCA_Generate(t *testing.T) {
 	}
 	if !pair.Leaf.IsCA {
 		t.Error("generated cert should be a CA")
+	}
+	if signer == nil {
+		t.Fatal("expected non-nil signer")
 	}
 
 	// Files should exist on disk
@@ -81,15 +91,21 @@ func TestLoadOrGenerateCA_Load(t *testing.T) {
 	keyPath := filepath.Join(dir, "ca.key")
 
 	// Generate first
-	pair1, err := LoadOrGenerateCA(certPath, keyPath)
+	pair1, signer1, err := LoadOrGenerateCA(certPath, keyPath)
 	if err != nil {
 		t.Fatalf("first LoadOrGenerateCA: %v", err)
 	}
+	if signer1 == nil {
+		t.Fatal("expected non-nil signer from generate")
+	}
 
 	// Load existing
-	pair2, err := LoadOrGenerateCA(certPath, keyPath)
+	pair2, signer2, err := LoadOrGenerateCA(certPath, keyPath)
 	if err != nil {
 		t.Fatalf("second LoadOrGenerateCA: %v", err)
+	}
+	if signer2 == nil {
+		t.Fatal("expected non-nil signer from load")
 	}
 
 	// Should be the same cert
@@ -99,24 +115,23 @@ func TestLoadOrGenerateCA_Load(t *testing.T) {
 }
 
 func TestIssueCert(t *testing.T) {
-	certPEM, keyPEM, err := GenerateCA()
+	certPEM, _, signer, err := GenerateCA()
 	if err != nil {
 		t.Fatalf("GenerateCA: %v", err)
 	}
-	ca, err := tls.X509KeyPair(certPEM, keyPEM)
+	block, _ := pem.Decode(certPEM)
+	caCert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		t.Fatalf("X509KeyPair: %v", err)
+		t.Fatalf("parse CA cert: %v", err)
 	}
-	caCert, _ := x509.ParseCertificate(ca.Certificate[0])
-	ca.Leaf = caCert
 
-	clientCertPEM, clientKeyPEM, err := IssueCert(ca, "test-host.example.com", 24*time.Hour)
+	clientCertPEM, clientKeyPEM, err := IssueCert(caCert, signer, "test-host.example.com", 24*time.Hour)
 	if err != nil {
 		t.Fatalf("IssueCert: %v", err)
 	}
 
 	// Parse and verify the client cert
-	block, _ := pem.Decode(clientCertPEM)
+	block, _ = pem.Decode(clientCertPEM)
 	if block == nil {
 		t.Fatal("no PEM block in client cert")
 	}
@@ -152,27 +167,27 @@ func TestIssueCert(t *testing.T) {
 }
 
 func TestIssueCert_EmptyHostname(t *testing.T) {
-	certPEM, keyPEM, _ := GenerateCA()
-	ca, _ := tls.X509KeyPair(certPEM, keyPEM)
+	certPEM, _, signer, _ := GenerateCA()
+	block, _ := pem.Decode(certPEM)
+	caCert, _ := x509.ParseCertificate(block.Bytes)
 
-	_, _, err := IssueCert(ca, "", time.Hour)
+	_, _, err := IssueCert(caCert, signer, "", time.Hour)
 	if err == nil {
 		t.Fatal("expected error for empty hostname")
 	}
 }
 
 func TestVerifyClientCert_Valid(t *testing.T) {
-	certPEM, keyPEM, _ := GenerateCA()
-	ca, _ := tls.X509KeyPair(certPEM, keyPEM)
-	caCert, _ := x509.ParseCertificate(ca.Certificate[0])
-	ca.Leaf = caCert
+	certPEM, _, signer, _ := GenerateCA()
+	block, _ := pem.Decode(certPEM)
+	caCert, _ := x509.ParseCertificate(block.Bytes)
 
-	clientCertPEM, _, err := IssueCert(ca, "myhost.local", 24*time.Hour)
+	clientCertPEM, _, err := IssueCert(caCert, signer, "myhost.local", 24*time.Hour)
 	if err != nil {
 		t.Fatalf("IssueCert: %v", err)
 	}
 
-	block, _ := pem.Decode(clientCertPEM)
+	block, _ = pem.Decode(clientCertPEM)
 	clientCert, _ := x509.ParseCertificate(block.Bytes)
 
 	hostname, err := VerifyClientCert(caCert, []*x509.Certificate{clientCert})
@@ -186,17 +201,16 @@ func TestVerifyClientCert_Valid(t *testing.T) {
 
 func TestVerifyClientCert_WrongCA(t *testing.T) {
 	// Generate two separate CAs
-	certPEM1, keyPEM1, _ := GenerateCA()
-	ca1, _ := tls.X509KeyPair(certPEM1, keyPEM1)
-	caCert1, _ := x509.ParseCertificate(ca1.Certificate[0])
-	ca1.Leaf = caCert1
+	certPEM1, _, signer1, _ := GenerateCA()
+	block1, _ := pem.Decode(certPEM1)
+	caCert1, _ := x509.ParseCertificate(block1.Bytes)
 
-	certPEM2, _, _ := GenerateCA()
+	certPEM2, _, _, _ := GenerateCA()
 	block2, _ := pem.Decode(certPEM2)
 	caCert2, _ := x509.ParseCertificate(block2.Bytes)
 
 	// Issue cert with CA1
-	clientCertPEM, _, _ := IssueCert(ca1, "host1.local", 24*time.Hour)
+	clientCertPEM, _, _ := IssueCert(caCert1, signer1, "host1.local", 24*time.Hour)
 	block, _ := pem.Decode(clientCertPEM)
 	clientCert, _ := x509.ParseCertificate(block.Bytes)
 
@@ -208,13 +222,12 @@ func TestVerifyClientCert_WrongCA(t *testing.T) {
 }
 
 func TestVerifyClientCert_Expired(t *testing.T) {
-	certPEM, keyPEM, _ := GenerateCA()
-	ca, _ := tls.X509KeyPair(certPEM, keyPEM)
-	caCert, _ := x509.ParseCertificate(ca.Certificate[0])
-	ca.Leaf = caCert
+	certPEM, _, signer, _ := GenerateCA()
+	block, _ := pem.Decode(certPEM)
+	caCert, _ := x509.ParseCertificate(block.Bytes)
 
 	// Issue a cert with 1ns TTL -- it will be expired by the time we verify
-	clientCertPEM, _, err := IssueCert(ca, "expired.local", time.Nanosecond)
+	clientCertPEM, _, err := IssueCert(caCert, signer, "expired.local", time.Nanosecond)
 	if err != nil {
 		t.Fatalf("IssueCert: %v", err)
 	}
@@ -223,7 +236,7 @@ func TestVerifyClientCert_Expired(t *testing.T) {
 	// NotAfter is now+1ns, so it's already expired).
 	time.Sleep(time.Millisecond)
 
-	block, _ := pem.Decode(clientCertPEM)
+	block, _ = pem.Decode(clientCertPEM)
 	clientCert, _ := x509.ParseCertificate(block.Bytes)
 
 	_, err = VerifyClientCert(caCert, []*x509.Certificate{clientCert})
@@ -233,7 +246,7 @@ func TestVerifyClientCert_Expired(t *testing.T) {
 }
 
 func TestVerifyClientCert_NoCerts(t *testing.T) {
-	certPEM, _, _ := GenerateCA()
+	certPEM, _, _, _ := GenerateCA()
 	block, _ := pem.Decode(certPEM)
 	caCert, _ := x509.ParseCertificate(block.Bytes)
 

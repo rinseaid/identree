@@ -4,6 +4,7 @@
 package mtls
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -20,15 +21,19 @@ import (
 // GenerateCA creates a new self-signed ECDSA P-256 CA certificate and private
 // key. The CA is valid for 10 years and is constrained to signing client
 // certificates (IsCA=true, KeyUsageCertSign|CRLSign).
-func GenerateCA() (certPEM, keyPEM []byte, err error) {
+//
+// It returns PEM-encoded certificate and key bytes, plus a crypto.Signer
+// backed by the CA's private key. The signer can be passed directly to
+// IssueCert without exposing the raw key material.
+func GenerateCA() (certPEM, keyPEM []byte, signer crypto.Signer, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, fmt.Errorf("generate CA key: %w", err)
+		return nil, nil, nil, fmt.Errorf("generate CA key: %w", err)
 	}
 
 	serial, err := randomSerial()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	now := time.Now()
@@ -49,24 +54,25 @@ func GenerateCA() (certPEM, keyPEM []byte, err error) {
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create CA certificate: %w", err)
+		return nil, nil, nil, fmt.Errorf("create CA certificate: %w", err)
 	}
 
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal CA key: %w", err)
+		return nil, nil, nil, fmt.Errorf("marshal CA key: %w", err)
 	}
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	return certPEM, keyPEM, nil
+	return certPEM, keyPEM, key, nil
 }
 
 // LoadOrGenerateCA loads an existing CA certificate+key from disk, or generates
 // a new one and writes it to the provided paths. The returned tls.Certificate
-// contains both the parsed x509 certificate and the private key.
-func LoadOrGenerateCA(certPath, keyPath string) (tls.Certificate, error) {
+// contains both the parsed x509 certificate and the private key, and the
+// crypto.Signer can be passed to IssueCert for certificate signing.
+func LoadOrGenerateCA(certPath, keyPath string) (tls.Certificate, crypto.Signer, error) {
 	// Try loading existing files first.
 	if certPath != "" && keyPath != "" {
 		certData, certErr := os.ReadFile(certPath)
@@ -74,65 +80,62 @@ func LoadOrGenerateCA(certPath, keyPath string) (tls.Certificate, error) {
 		if certErr == nil && keyErr == nil {
 			pair, err := tls.X509KeyPair(certData, keyData)
 			if err != nil {
-				return tls.Certificate{}, fmt.Errorf("parse existing CA cert+key: %w", err)
+				return tls.Certificate{}, nil, fmt.Errorf("parse existing CA cert+key: %w", err)
 			}
 			leaf, err := x509.ParseCertificate(pair.Certificate[0])
 			if err != nil {
-				return tls.Certificate{}, fmt.Errorf("parse CA leaf: %w", err)
+				return tls.Certificate{}, nil, fmt.Errorf("parse CA leaf: %w", err)
 			}
 			pair.Leaf = leaf
-			return pair, nil
+			signer, ok := pair.PrivateKey.(crypto.Signer)
+			if !ok {
+				return tls.Certificate{}, nil, fmt.Errorf("CA private key does not implement crypto.Signer")
+			}
+			return pair, signer, nil
 		}
 	}
 
 	// Generate new CA.
-	certPEM, keyPEM, err := GenerateCA()
+	certPEM, keyPEM, signer, err := GenerateCA()
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, nil, err
 	}
 
 	// Write to disk if paths are provided.
 	if certPath != "" {
 		if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
-			return tls.Certificate{}, fmt.Errorf("write CA cert: %w", err)
+			return tls.Certificate{}, nil, fmt.Errorf("write CA cert: %w", err)
 		}
 	}
 	if keyPath != "" {
 		if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
-			return tls.Certificate{}, fmt.Errorf("write CA key: %w", err)
+			return tls.Certificate{}, nil, fmt.Errorf("write CA key: %w", err)
 		}
 	}
 
 	pair, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("parse generated CA: %w", err)
+		return tls.Certificate{}, nil, fmt.Errorf("parse generated CA: %w", err)
 	}
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("parse generated CA leaf: %w", err)
+		return tls.Certificate{}, nil, fmt.Errorf("parse generated CA leaf: %w", err)
 	}
 	pair.Leaf = leaf
-	return pair, nil
+	return pair, signer, nil
 }
 
-// IssueCert signs a client certificate for the given hostname using the
-// provided CA. The cert's CN and DNS SAN are set to hostname. The certificate
-// is an ECDSA P-256 key with ExtKeyUsageClientAuth.
-func IssueCert(ca tls.Certificate, hostname string, ttl time.Duration) (certPEM, keyPEM []byte, err error) {
+// IssueCert signs a client certificate for the given hostname. The CA
+// certificate (caCert) is used as the issuer, and signer (which must be the
+// CA's private key implementing crypto.Signer) performs the actual signing.
+// The cert's CN and DNS SAN are set to hostname. The certificate uses an
+// ECDSA P-256 key with ExtKeyUsageClientAuth.
+func IssueCert(caCert *x509.Certificate, signer crypto.Signer, hostname string, ttl time.Duration) (certPEM, keyPEM []byte, err error) {
 	if hostname == "" {
 		return nil, nil, fmt.Errorf("hostname must not be empty")
 	}
 	if ttl <= 0 {
 		ttl = 365 * 24 * time.Hour
-	}
-
-	caCert := ca.Leaf
-	if caCert == nil {
-		var parseErr error
-		caCert, parseErr = x509.ParseCertificate(ca.Certificate[0])
-		if parseErr != nil {
-			return nil, nil, fmt.Errorf("parse CA cert: %w", parseErr)
-		}
 	}
 
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -158,7 +161,7 @@ func IssueCert(ca tls.Certificate, hostname string, ttl time.Duration) (certPEM,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 
-	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &clientKey.PublicKey, ca.PrivateKey)
+	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &clientKey.PublicKey, signer)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sign client certificate: %w", err)
 	}

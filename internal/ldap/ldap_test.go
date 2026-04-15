@@ -761,7 +761,7 @@ func TestParseProvisionBindDN(t *testing.T) {
 // a provisioned host DN (password is ignored — the cert is the credential).
 func TestLDAPS_mTLSBindAcceptsValidCert(t *testing.T) {
 	// Generate a CA and issue a server cert + client cert.
-	caCertPEM, caKeyPEM, err := mtls.GenerateCA()
+	caCertPEM, caKeyPEM, caSigner, err := mtls.GenerateCA()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -789,7 +789,7 @@ func TestLDAPS_mTLSBindAcceptsValidCert(t *testing.T) {
 
 	// Issue a client certificate for hostname "testhost-01".
 	clientHostname := "testhost-01"
-	clientCertPEM, clientKeyPEM, err := mtls.IssueCert(caPair, clientHostname, 1*time.Hour)
+	clientCertPEM, clientKeyPEM, err := mtls.IssueCert(caLeaf, caSigner, clientHostname, 1*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -890,7 +890,7 @@ func TestLDAPS_mTLSBindAcceptsValidCert(t *testing.T) {
 // configured, a connection without a client certificate is rejected.
 // The rejection may happen at the TLS handshake or on the first LDAP operation.
 func TestLDAPS_mTLSRejectsWithoutCert(t *testing.T) {
-	caCertPEM, caKeyPEM, err := mtls.GenerateCA()
+	caCertPEM, caKeyPEM, _, err := mtls.GenerateCA()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -982,7 +982,7 @@ func TestLDAPS_mTLSRejectsWithoutCert(t *testing.T) {
 // signed by a different CA is rejected at the TLS handshake level.
 func TestLDAPS_mTLSCertFromWrongCA(t *testing.T) {
 	// Generate the server's mTLS CA.
-	caCertPEM, caKeyPEM, err := mtls.GenerateCA()
+	caCertPEM, caKeyPEM, _, err := mtls.GenerateCA()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1006,21 +1006,17 @@ func TestLDAPS_mTLSCertFromWrongCA(t *testing.T) {
 	}
 
 	// Generate a DIFFERENT CA and issue a client cert from it.
-	wrongCACertPEM, wrongCAKeyPEM, err := mtls.GenerateCA()
+	wrongCACertPEM, _, wrongCASigner, err := mtls.GenerateCA()
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongCAPair, err := tls.X509KeyPair(wrongCACertPEM, wrongCAKeyPEM)
+	wrongCABlock, _ := pem.Decode(wrongCACertPEM)
+	wrongCALeaf, err := x509.ParseCertificate(wrongCABlock.Bytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongCALeaf, err := x509.ParseCertificate(wrongCAPair.Certificate[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrongCAPair.Leaf = wrongCALeaf
 
-	clientCertPEM, clientKeyPEM, err := mtls.IssueCert(wrongCAPair, "testhost-01", 1*time.Hour)
+	clientCertPEM, clientKeyPEM, err := mtls.IssueCert(wrongCALeaf, wrongCASigner, "testhost-01", 1*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

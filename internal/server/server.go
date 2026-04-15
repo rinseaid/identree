@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -213,6 +214,10 @@ type Server struct {
 	// mtlsCA is the CA certificate+key used for mTLS client authentication
 	// (embedded mode). nil when mTLS is disabled or in external mode.
 	mtlsCA *tls.Certificate
+
+	// mtlsCASigner is the CA's private key as a crypto.Signer, used by
+	// IssueCert for certificate signing without exposing the raw key.
+	mtlsCASigner crypto.Signer
 
 	// mtlsCACert is the parsed CA certificate for verifying client certs.
 	// Set in both embedded and external modes.
@@ -486,11 +491,12 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 
 	// ── mTLS client certificate authentication ─────────────────────────────
 	if cfg.MTLSEnabled {
-		ca, err := mtls.LoadOrGenerateCA(cfg.MTLSCACert, cfg.MTLSCAKey)
+		ca, caSigner, err := mtls.LoadOrGenerateCA(cfg.MTLSCACert, cfg.MTLSCAKey)
 		if err != nil {
 			return nil, fmt.Errorf("mTLS CA: %w", err)
 		}
 		s.mtlsCA = &ca
+		s.mtlsCASigner = caSigner
 		caCert := ca.Leaf
 		if caCert == nil {
 			caCert, err = x509.ParseCertificate(ca.Certificate[0])
@@ -858,14 +864,15 @@ func (s *Server) isUserDisabled(username string) bool {
 	return false
 }
 
-// hmacBase returns HMACSecret when set, falling back to SharedSecret.
-// All HMAC signing (session, CSRF, onetap, approval_status) must use this so
-// that operators can rotate HMAC keys independently from the PAM shared secret.
+// hmacBase returns the base secret for session/CSRF/onetap/approval_status HMAC signing.
+// Priority: HMACSecret > SessionSecret > SharedSecret.
+// HMACSecret is a legacy override; SessionSecret is the per-domain key (which already
+// falls back to SharedSecret via config loading).
 func (s *Server) hmacBase() string {
 	if s.cfg.HMACSecret != "" {
 		return s.cfg.HMACSecret
 	}
-	return s.cfg.SharedSecret
+	return s.cfg.SessionSecret
 }
 
 // buildDisabledMap returns a set of disabled usernames for O(1) batch lookup.

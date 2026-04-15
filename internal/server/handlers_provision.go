@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -25,6 +26,7 @@ type provisionResponse struct {
 	ClientCert string `json:"client_cert,omitempty"` // PEM-encoded client certificate
 	ClientKey  string `json:"client_key,omitempty"`  // PEM-encoded client private key
 	CACert     string `json:"ca_cert,omitempty"`     // PEM-encoded CA certificate
+	CertSerial string `json:"cert_serial,omitempty"` // hex-encoded serial number of issued cert
 }
 
 // handleClientProvision returns LDAP configuration and per-host derived bind
@@ -102,8 +104,8 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 
 	bindDN := fmt.Sprintf("uid=%s,ou=identree-hosts,%s", hostname, s.cfg.LDAPBaseDN)
 	bindPassword := ""
-	if s.cfg.SharedSecret != "" {
-		bindPassword = config.DeriveLDAPBindPassword(s.cfg.SharedSecret, hostname)
+	if s.cfg.LDAPSecret != "" {
+		bindPassword = config.DeriveLDAPBindPassword(s.cfg.LDAPSecret, hostname)
 	}
 
 	resp := provisionResponse{
@@ -115,15 +117,35 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// When mTLS is enabled, issue a client certificate for this host.
-	if s.cfg.MTLSEnabled && s.mtlsCA != nil {
-		certPEM, keyPEM, err := mtls.IssueCert(*s.mtlsCA, hostname, s.cfg.MTLSCertTTL)
+	if s.cfg.MTLSEnabled && s.mtlsCA != nil && s.mtlsCASigner != nil {
+		certPEM, keyPEM, err := mtls.IssueCert(s.mtlsCACert, s.mtlsCASigner, hostname, s.cfg.MTLSCertTTL)
 		if err != nil {
 			slog.Error("provision: failed to issue mTLS client cert", "hostname", hostname, "err", err)
 			http.Error(w, "failed to issue client certificate", http.StatusInternalServerError)
 			return
 		}
+
+		// Parse the issued cert to extract serial number and expiry for audit.
+		block, _ := pem.Decode(certPEM)
+		if block == nil {
+			slog.Error("provision: failed to decode issued cert PEM", "hostname", hostname)
+			http.Error(w, "failed to issue client certificate", http.StatusInternalServerError)
+			return
+		}
+		issuedCert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			slog.Error("provision: failed to parse issued cert", "hostname", hostname, "err", err)
+			http.Error(w, "failed to issue client certificate", http.StatusInternalServerError)
+			return
+		}
+		serialHex := fmt.Sprintf("%x", issuedCert.SerialNumber)
+
+		slog.Info("CERT_ISSUED", "hostname", hostname, "serial", serialHex, "expires", issuedCert.NotAfter)
+		s.emitAuditEvent("certificate_issued", hostname, hostname, serialHex, "", "", remoteAddr(r))
+
 		resp.ClientCert = string(certPEM)
 		resp.ClientKey = string(keyPEM)
+		resp.CertSerial = serialHex
 		// Include the CA cert so the client can verify the server (or be
 		// configured to trust it).
 		caCertPEM := pem.EncodeToMemory(&pem.Block{
@@ -131,7 +153,6 @@ func (s *Server) handleClientProvision(w http.ResponseWriter, r *http.Request) {
 			Bytes: s.mtlsCA.Certificate[0],
 		})
 		resp.CACert = string(caCertPEM)
-		slog.Info("PROVISION mTLS cert issued", "hostname", hostname, "ttl", s.cfg.MTLSCertTTL, "remote_addr", remoteAddr(r))
 	}
 
 	slog.Info("PROVISION", "hostname", hostname, "remote_addr", remoteAddr(r))
