@@ -50,6 +50,7 @@ const (
 	ActionClaimsUpdated          = "claims_updated"
 	ActionServerRestarted        = "server_restarted"
 	ActionBreakglassOverride     = "breakglass_override"
+	ActionBreakglassUsed         = "breakglass_used"
 )
 
 var (

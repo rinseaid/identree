@@ -1160,3 +1160,81 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 		slog.Error("writing reveal JSON response", "err", err)
 	}
 }
+
+// handleBreakglassReport receives a phone-home report from a PAM client that
+// used break-glass authentication during a server outage. The client stores a
+// record locally and reports it on the next successful server contact.
+// POST /api/breakglass/report — client reports that break-glass was used during an outage
+func (s *Server) handleBreakglassReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		apiError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Authenticate: same as challenge creation (shared secret or mTLS).
+	ip := remoteAddr(r)
+	if s.authFailRL.throttled(ip) {
+		apiError(w, http.StatusTooManyRequests, "too many authentication failures")
+		return
+	}
+	if !s.verifyAPISecret(r) {
+		authFailures.Inc()
+		s.authFailRL.record(ip)
+		slog.Warn("AUTH_FAILURE invalid shared secret", "path", "POST /api/breakglass/report", "remote_addr", ip)
+		apiError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	ct := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/json") {
+		apiError(w, http.StatusUnsupportedMediaType, "content-type must be application/json")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+
+	var req struct {
+		Hostname  string `json:"hostname"`
+		Username  string `json:"username"`
+		Timestamp int64  `json:"timestamp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		io.Copy(io.Discard, r.Body) //nolint:errcheck // best-effort drain for keep-alive
+		apiError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Hostname == "" || req.Username == "" {
+		apiError(w, http.StatusBadRequest, "hostname and username required")
+		return
+	}
+	if !validHostname.MatchString(req.Hostname) {
+		apiError(w, http.StatusBadRequest, "invalid hostname format")
+		return
+	}
+
+	ts := time.Unix(req.Timestamp, 0).UTC()
+	slog.Warn("BREAK_GLASS_USED", "host", req.Hostname, "user", req.Username,
+		"break_glass_time", ts.Format(time.RFC3339), "reported_at", time.Now().UTC().Format(time.RFC3339),
+		"remote_addr", ip)
+
+	// Log the action for all users with activity on this host.
+	for _, user := range s.store.UsersWithHostActivity(req.Hostname) {
+		s.store.LogAction(user, challpkg.ActionBreakglassUsed, req.Hostname, "", req.Username)
+	}
+	// Also log against the user who performed break-glass authentication.
+	s.store.LogAction(req.Username, challpkg.ActionBreakglassUsed, req.Hostname, "", req.Username)
+
+	// Emit audit event and dispatch notifications to all configured channels.
+	s.dispatchNotification(notify.WebhookData{
+		Event:      "break_glass_used",
+		Username:   req.Username,
+		Hostname:   req.Hostname,
+		Timestamp:  ts.Format(time.RFC3339),
+		RemoteAddr: ip,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		slog.Error("writing JSON response", "err", err)
+	}
+}

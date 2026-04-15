@@ -748,9 +748,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/grace-status", s.handleGraceStatus)
 	s.mux.HandleFunc("/api/client/provision", s.handleClientProvision)
 
-	// Break-glass escrow
+	// Break-glass escrow and reporting
 	s.mux.HandleFunc("/api/breakglass/escrow", s.handleBreakglassEscrow)
 	s.mux.HandleFunc("/api/breakglass/reveal", s.handleBreakglassReveal)
+	s.mux.HandleFunc("/api/breakglass/report", s.handleBreakglassReport)
 
 	// Session management
 	s.mux.HandleFunc("/api/sessions/revoke", s.handleRevokeSession)

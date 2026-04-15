@@ -248,6 +248,10 @@ func (p *PAMClient) Authenticate(username string) error {
 		// Cache miss, invalid, or revoked — fall through to device flow
 	}
 
+	// 0b. Phone-home: if a previous break-glass usage record exists and the
+	// server is reachable, report it now before doing anything else.
+	p.reportBreakglassUsageIfNeeded()
+
 	// 1. Create challenge. If SUDO_REASON is set, include it on the first call so
 	// the reason is always recorded even when the server does not require one.
 	presetReason := strings.TrimSpace(os.Getenv("SUDO_REASON"))
@@ -266,8 +270,37 @@ func (p *PAMClient) Authenticate(username string) error {
 	if err != nil {
 		// Break-glass fallback: if the server is unreachable and a break-glass
 		// hash file exists, fall back to local password authentication.
+		// Require sustained unreachability (3 attempts over 15s) to prevent
+		// a single transient failure from triggering break-glass.
 		if p.cfg.BreakglassEnabled && breakglass.BreakglassFileExists(p.cfg.BreakglassFile) && breakglass.IsServerUnreachable(err) {
-			return breakglass.AuthenticateBreakglass(username, p.cfg.BreakglassFile)
+			const breakglassRetries = 3
+			const breakglassRetryInterval = 5 * time.Second
+			unreachableCount := 1 // first failure already counted above
+			for unreachableCount < breakglassRetries {
+				fmt.Fprintf(os.Stderr, "identree: server unreachable (%d/%d), retrying in %s...\n",
+					unreachableCount, breakglassRetries, breakglassRetryInterval)
+				time.Sleep(breakglassRetryInterval)
+				challenge, err = p.createChallenge(username, presetReason)
+				if err == nil {
+					break // server recovered
+				}
+				if !breakglass.IsServerUnreachable(err) {
+					break // server reachable but returned an error — don't fall back
+				}
+				unreachableCount++
+			}
+			if err != nil && breakglass.IsServerUnreachable(err) {
+				fmt.Fprintf(os.Stderr, "identree: server unreachable after %d attempts, falling back to break-glass\n", breakglassRetries)
+				bgErr := breakglass.AuthenticateBreakglass(username, p.cfg.BreakglassFile)
+				if bgErr == nil {
+					// Break-glass succeeded — record usage for phone-home reporting
+					recordBreakglassUsage(p.hostname, username)
+				}
+				return bgErr
+			}
+			if err == nil {
+				goto challengeOK
+			}
 		}
 		// Map HTTP status codes to human-readable terminal messages.
 		var httpErr *serverHTTPError
@@ -285,6 +318,7 @@ func (p *PAMClient) Authenticate(username string) error {
 		}
 		return fmt.Errorf("creating challenge: %w", err)
 	}
+challengeOK:
 
 	// Parse server-requested rotation timestamp (if any).
 	// Only acted on after HMAC verification (the field is included in the HMAC),
@@ -826,4 +860,114 @@ func (p *PAMClient) promptJustification(t func(string) string, choices []string)
 		return line, nil
 	}
 	return "", fmt.Errorf("invalid selection")
+}
+
+// breakglassUsagePath is the file used to record break-glass usage for
+// phone-home reporting. Stored in /var/run/ (tmpfs) so it resets on reboot.
+const breakglassUsagePath = "/var/run/identree-breakglass-used"
+
+// recordBreakglassUsage writes a record of break-glass usage to disk so it can
+// be reported to the server on the next successful contact.
+// The file is root-owned with 0600 permissions and uses O_NOFOLLOW to prevent
+// symlink attacks.
+func recordBreakglassUsage(hostname, username string) {
+	record := fmt.Sprintf("%s %s %d\n", hostname, username, time.Now().Unix())
+	f, err := os.OpenFile(breakglassUsagePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identree: WARNING: failed to record break-glass usage: %v\n", err)
+		return
+	}
+	defer f.Close()
+	fmt.Fprint(f, record)
+}
+
+// breakglassUsageRecord represents a single break-glass usage event.
+type breakglassUsageRecord struct {
+	Hostname  string `json:"hostname"`
+	Username  string `json:"username"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// readBreakglassUsageRecords reads and parses the break-glass usage file.
+// Returns nil if the file doesn't exist or can't be read.
+func readBreakglassUsageRecords() []breakglassUsageRecord {
+	f, err := os.OpenFile(breakglassUsagePath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	// Validate ownership: only trust root-owned files
+	info, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	if uid, ok := config.FileOwnerUID(info); ok && uid != 0 {
+		return nil
+	}
+
+	var records []breakglassUsageRecord
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		var ts int64
+		if _, err := fmt.Sscanf(parts[2], "%d", &ts); err != nil {
+			continue
+		}
+		records = append(records, breakglassUsageRecord{
+			Hostname:  parts[0],
+			Username:  parts[1],
+			Timestamp: ts,
+		})
+	}
+	return records
+}
+
+// reportBreakglassUsageIfNeeded checks for a break-glass usage record file and,
+// if present, reports each record to the server via POST /api/breakglass/report.
+// On successful report, the file is deleted. This is the "phone-home" mechanism
+// that ensures admins learn about break-glass usage during outages.
+func (p *PAMClient) reportBreakglassUsageIfNeeded() {
+	records := readBreakglassUsageRecords()
+	if len(records) == 0 {
+		return
+	}
+
+	allReported := true
+	for _, rec := range records {
+		body, _ := json.Marshal(rec)
+		req, err := http.NewRequest(http.MethodPost, p.cfg.ServerURL+"/api/breakglass/report", bytes.NewReader(body))
+		if err != nil {
+			allReported = false
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if p.cfg.SharedSecret != "" {
+			req.Header.Set("X-Shared-Secret", p.cfg.SharedSecret)
+		}
+		resp, err := p.client.Do(req)
+		if err != nil {
+			// Server still unreachable — keep the file for next time
+			allReported = false
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			fmt.Fprintf(os.Stderr, "identree: WARNING: break-glass report returned HTTP %d\n", resp.StatusCode)
+			allReported = false
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "identree: reported break-glass usage for %s@%s to server\n", rec.Username, rec.Hostname)
+	}
+
+	if allReported {
+		os.Remove(breakglassUsagePath)
+	}
 }
