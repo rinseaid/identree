@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -37,6 +38,7 @@ import (
 	"github.com/rinseaid/identree/internal/mtls"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/pocketid"
+	"github.com/rinseaid/identree/internal/signing"
 	"github.com/rinseaid/identree/internal/policy"
 	"github.com/rinseaid/identree/internal/randutil"
 	"github.com/rinseaid/identree/internal/sudorules"
@@ -218,6 +220,11 @@ type Server struct {
 	// mtlsCACert is the parsed CA certificate for verifying client certs.
 	// Set in both embedded and external modes.
 	mtlsCACert *x509.Certificate
+
+	// installSigningKey is the Ed25519 private key for signing the install script.
+	installSigningKey ed25519.PrivateKey
+	// installVerifyKey is the Ed25519 public key served at /install.pub.
+	installVerifyKey ed25519.PublicKey
 }
 
 var validUsername = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,64}$`)
@@ -549,6 +556,17 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		s.startMTLSMetrics(s.stopCh)
 	}
 
+	// ── Install script signing key ──────────────────────────────────────────
+	{
+		pub, priv, err := signing.LoadOrGenerateSigningKey(cfg.InstallVerifyKeyFile, cfg.InstallSigningKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("install signing key: %w", err)
+		}
+		s.installSigningKey = priv
+		s.installVerifyKey = pub
+		slog.Info("install script signing key loaded", "pub_path", cfg.InstallVerifyKeyFile)
+	}
+
 	if cfg.EscrowBackend == config.EscrowBackendLocal {
 		if cfg.EscrowEncryptionKey == "" {
 			return nil, fmt.Errorf("IDENTREE_ESCROW_ENCRYPTION_KEY must be set when using the local escrow backend")
@@ -806,6 +824,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/theme", s.handleThemeToggle)
 	s.mux.HandleFunc("/signout", s.handleSignOut)
 	s.mux.HandleFunc("/install.sh", s.handleInstallScript)
+	s.mux.HandleFunc("/install.sh.sig", s.handleInstallScriptSig)
+	s.mux.HandleFunc("/install.pub", s.handleInstallPubKey)
 
 	// Self-hosted binary distribution
 	s.mux.HandleFunc("/download/version", s.handleDownloadVersion)

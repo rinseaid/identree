@@ -252,6 +252,12 @@ type ServerConfig struct {
 	// the LDAP server certificate without installing a system CA.
 	LDAPTLSCACert string
 
+	// ── Install script signing ────────────────────────────────────────────────
+	// Ed25519 keypair for signing the install script. If neither is set,
+	// the server auto-generates at startup and saves to the default paths.
+	InstallSigningKeyFile string // path to Ed25519 private key (env: IDENTREE_INSTALL_SIGNING_KEY)
+	InstallVerifyKeyFile  string // path to Ed25519 public key (env: IDENTREE_INSTALL_VERIFY_KEY)
+
 	// ── Development / testing ─────────────────────────────────────────────────
 	// DevLoginEnabled enables /dev/login?user=X&role=Y for bypassing OIDC in
 	// local test environments. NEVER enable in production.
@@ -531,6 +537,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		MTLSVaultToken:   get("IDENTREE_MTLS_VAULT_TOKEN"),
 		MTLSVaultKeyName: get("IDENTREE_MTLS_VAULT_KEY_NAME"),
 
+		InstallSigningKeyFile: get("IDENTREE_INSTALL_SIGNING_KEY"),
+		InstallVerifyKeyFile:  get("IDENTREE_INSTALL_VERIFY_KEY"),
+
 		WebhookSecret:        get("IDENTREE_WEBHOOK_SECRET"),
 		EnforceOIDCIPBinding: getBool("IDENTREE_OIDC_ENFORCE_IP_BINDING", false),
 		DevLoginEnabled:      getBool("IDENTREE_DEV_LOGIN", false),
@@ -591,6 +600,14 @@ func LoadServerConfig() (*ServerConfig, error) {
 	// InstallURL defaults to ExternalURL so install scripts point to the right place.
 	if cfg.InstallURL == "" {
 		cfg.InstallURL = cfg.ExternalURL
+	}
+
+	// Install signing key defaults.
+	if cfg.InstallSigningKeyFile == "" {
+		cfg.InstallSigningKeyFile = "/config/install-signing.key"
+	}
+	if cfg.InstallVerifyKeyFile == "" {
+		cfg.InstallVerifyKeyFile = "/config/install-signing.pub"
 	}
 
 	// Per-domain secrets fall back to SharedSecret for simple deployments.

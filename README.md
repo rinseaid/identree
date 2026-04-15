@@ -130,6 +130,28 @@ less install.sh   # review
 sudo bash install.sh
 ```
 
+#### Verified install (recommended)
+
+The server signs the install script with an Ed25519 key at startup. To verify
+the script before execution:
+
+```sh
+curl -sf https://identree.example.com/install.sh     -o /tmp/install.sh
+curl -sf https://identree.example.com/install.sh.sig -o /tmp/install.sh.sig
+curl -sf https://identree.example.com/install.pub    -o /tmp/install.pub
+
+identree verify-install \
+  --key /tmp/install.pub \
+  --script /tmp/install.sh \
+  --sig /tmp/install.sh.sig
+
+sudo bash /tmp/install.sh
+```
+
+For automated deployments, pre-distribute the public key (`/install.pub`) into
+your host image or configuration management so verification does not depend on
+the server at install time.
+
 The installer downloads the identree binary, writes `/etc/identree/client.conf` with the server URL and shared secret, configures `/etc/pam.d/sudo`, installs auditd monitoring rules (if auditd is present), and generates a local break-glass password.
 
 ### Step 6 — Register a passkey and try it
@@ -219,6 +241,8 @@ identree authenticates exclusively via OIDC. If your organization uses a SAML-on
 | `IDENTREE_EXTERNAL_URL` | — | **Required.** Public-facing URL of identree |
 | `IDENTREE_LISTEN_ADDR` | `:8090` | HTTP listen address |
 | `IDENTREE_INSTALL_URL` | `IDENTREE_EXTERNAL_URL` | URL embedded in install scripts (split-horizon DNS) |
+| `IDENTREE_INSTALL_SIGNING_KEY` | `/config/install-signing.key` | Ed25519 private key for install script signing (auto-generated if absent) |
+| `IDENTREE_INSTALL_VERIFY_KEY` | `/config/install-signing.pub` | Ed25519 public key for install script verification (auto-generated if absent) |
 | `IDENTREE_SHARED_SECRET` | — | **Required.** HMAC secret shared with PAM clients |
 | `IDENTREE_HMAC_SECRET` | — | Separate HMAC secret for internal token signing (defaults to `IDENTREE_SHARED_SECRET`) |
 | `IDENTREE_SESSION_SECRET` | (SharedSecret) | Signs session cookies and CSRF tokens. Falls back to SharedSecret if unset. |

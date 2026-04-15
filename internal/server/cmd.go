@@ -24,6 +24,7 @@ import (
 	ldapserver "github.com/rinseaid/identree/internal/ldap"
 	"github.com/rinseaid/identree/internal/pam"
 	"github.com/rinseaid/identree/internal/setup"
+	"github.com/rinseaid/identree/internal/signing"
 	"github.com/rinseaid/identree/internal/sudorules"
 	"github.com/rinseaid/identree/internal/uidmap"
 )
@@ -102,6 +103,9 @@ func Main() {
 		case "renew-cert":
 			runRenewCert()
 			return
+		case "verify-install":
+			runVerifyInstall()
+			return
 		}
 	}
 
@@ -114,6 +118,7 @@ func Main() {
 			"add-host": true, "remove-host": true, "list-hosts": true,
 			"rotate-host-secret": true,
 			"setup": true, "renew-cert": true,
+			"verify-install": true,
 		}
 		if !strings.HasPrefix(os.Args[1], "-") && !known[os.Args[1]] {
 			fmt.Fprintf(os.Stderr, "unknown command: %s\nRun 'identree --help' for usage.\n", os.Args[1])
@@ -149,6 +154,10 @@ Setup commands (run on managed hosts as root):
             [--force]                    Overwrite existing config files
             [--dry-run]                  Print changes without applying them
   identree renew-cert                    Renew mTLS client certificate from server
+  identree verify-install                Verify install script signature
+            --key <pubkey-path>          Path to Ed25519 public key PEM
+            --script <script-path>       Path to downloaded install.sh
+            --sig <sig-path>             Path to downloaded install.sh.sig
 
 Global flags:
   --version, -v                          Show version
@@ -944,4 +953,63 @@ func hostRegistryPath() string {
 		return p
 	}
 	return "/data/hosts.json"
+}
+
+// runVerifyInstall verifies an install script's Ed25519 signature.
+//
+//	identree verify-install --key <pubkey> --script <script> --sig <sig>
+func runVerifyInstall() {
+	var keyPath, scriptPath, sigPath string
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--key":
+			if i+1 < len(os.Args) {
+				i++
+				keyPath = os.Args[i]
+			}
+		case "--script":
+			if i+1 < len(os.Args) {
+				i++
+				scriptPath = os.Args[i]
+			}
+		case "--sig":
+			if i+1 < len(os.Args) {
+				i++
+				sigPath = os.Args[i]
+			}
+		}
+	}
+
+	if keyPath == "" || scriptPath == "" || sigPath == "" {
+		fmt.Fprintln(os.Stderr, "Usage: identree verify-install --key <pubkey-path> --script <script-path> --sig <sig-path>")
+		os.Exit(1)
+	}
+
+	pub, err := signing.LoadPublicKey(keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading public key: %v\n", err)
+		os.Exit(1)
+	}
+
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading script: %v\n", err)
+		os.Exit(1)
+	}
+
+	sigData, err := os.ReadFile(sigPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading signature: %v\n", err)
+		os.Exit(1)
+	}
+	sig := strings.TrimSpace(string(sigData))
+
+	if signing.VerifyScript(pub, script, sig) {
+		fmt.Println("OK: install script signature verified.")
+		os.Exit(0)
+	} else {
+		fmt.Fprintln(os.Stderr, "FAILED: install script signature verification failed.")
+		fmt.Fprintln(os.Stderr, "The script may have been tampered with. Do NOT execute it.")
+		os.Exit(1)
+	}
 }

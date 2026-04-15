@@ -368,6 +368,17 @@ Review this list before going to production.
 - [ ] **Auditd monitoring rules are installed on managed hosts**
   The install script installs auditd rules automatically if auditd is present. These rules create a kernel-level audit trail for break-glass hash reads, config file changes, PAM bypass attempts, and mTLS key exfiltration. Verify with `auditctl -l | grep identree`. Forward audit logs off-host for tamper resistance. See [auditd.md](auditd.md) for details.
 
+- [ ] **Verify install script signatures before execution**
+  The identree server signs the install script with an Ed25519 key at startup. The signing keypair is auto-generated on first run and stored at the paths configured by `IDENTREE_INSTALL_SIGNING_KEY` and `IDENTREE_INSTALL_VERIFY_KEY` (defaults: `/config/install-signing.key` and `/config/install-signing.pub`). To verify:
+  ```sh
+  curl -sf https://identree.example.com/install.sh     -o /tmp/install.sh
+  curl -sf https://identree.example.com/install.sh.sig -o /tmp/install.sh.sig
+  curl -sf https://identree.example.com/install.pub    -o /tmp/install.pub
+  identree verify-install --key /tmp/install.pub --script /tmp/install.sh --sig /tmp/install.sh.sig
+  sudo bash /tmp/install.sh
+  ```
+  For higher assurance, pre-distribute the public key into host images or via configuration management rather than fetching it from the server (TOFU). Back up the signing private key; if lost, a new keypair is auto-generated and all previously distributed public keys become stale.
+
 ---
 
 ## LDAPS Troubleshooting

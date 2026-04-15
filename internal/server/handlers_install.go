@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"text/template"
+
+	"github.com/rinseaid/identree/internal/signing"
 )
 
 // installScriptTmpl is a shell script template served at GET /install.sh.
@@ -464,4 +466,48 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 		// Can't write headers at this point; just log.
 		fmt.Printf("ERROR: install script template: %v\n", err)
 	}
+}
+
+// handleInstallScriptSig serves the Ed25519 signature of the rendered install script.
+// GET /install.sh.sig
+func (s *Server) handleInstallScriptSig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.installSigningKey == nil {
+		http.Error(w, "signing not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	script, err := s.renderInstallScript()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	sig := signing.SignScript(s.installSigningKey, script)
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprint(w, sig)
+}
+
+// handleInstallPubKey serves the Ed25519 public key used to verify the install script signature.
+// GET /install.pub
+func (s *Server) handleInstallPubKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.installVerifyKey == nil {
+		http.Error(w, "signing not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	pubPEM := signing.EncodePubKeyPEM(s.installVerifyKey)
+
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(pubPEM)
 }
