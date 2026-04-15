@@ -22,8 +22,9 @@ func newBenchServer(b *testing.B, policies []policy.Policy) *Server {
 	b.Cleanup(func() { store.Stop() })
 	return &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: "bench-secret",
-			ChallengeTTL: 5 * time.Minute,
+			SharedSecret:  "bench-secret",
+			SessionSecret: "bench-secret",
+			ChallengeTTL:  5 * time.Minute,
 		},
 		store:          store,
 		hostRegistry:   NewHostRegistry(""),

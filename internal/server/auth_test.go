@@ -15,8 +15,9 @@ import (
 func newAuthTestServer(secret string, apiKeys []string, _ []string) *Server {
 	s := &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: secret,
-			APIKeys:      apiKeys,
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			APIKeys:       apiKeys,
 		},
 		hostRegistry: NewHostRegistry(""),
 	}

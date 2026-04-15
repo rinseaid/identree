@@ -20,7 +20,8 @@ import (
 func newTestServer(sharedSecret string) *Server {
 	return &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: sharedSecret,
+			SharedSecret:  sharedSecret,
+			SessionSecret: sharedSecret, // mirrors config.LoadServerConfig fallback
 		},
 		mutationRL: newMutationRateLimiter(),
 	}

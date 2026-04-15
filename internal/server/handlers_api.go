@@ -889,7 +889,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 			apiError(w, http.StatusForbidden, "invalid credential for hostname")
 			return
 		}
-	} else if s.cfg.SharedSecret != "" {
+	} else if s.cfg.EscrowSecret != "" {
 		// No host registry: use HMAC escrow token tied to the specific hostname and timestamp.
 		// Validate the timestamp is within ±5 minutes to prevent replay attacks.
 		tsHeader := r.Header.Get("X-Escrow-Ts")
@@ -910,7 +910,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 			apiError(w, http.StatusForbidden, "escrow timestamp out of window")
 			return
 		}
-		expectedToken := breakglass.ComputeEscrowToken(s.cfg.SharedSecret, req.Hostname, tsHeader)
+		expectedToken := breakglass.ComputeEscrowToken(s.cfg.EscrowSecret, req.Hostname, tsHeader)
 		providedToken := r.Header.Get("X-Escrow-Token")
 		if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {
 			slog.Warn("AUTH_FAILURE invalid escrow token", "host", req.Hostname, "remote_addr", remoteAddr(r))

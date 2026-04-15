@@ -23,6 +23,9 @@ func newDashboardTestServer(t *testing.T, cfg *config.ServerConfig) *Server {
 	if cfg.SharedSecret == "" {
 		cfg.SharedSecret = "test-secret"
 	}
+	if cfg.SessionSecret == "" {
+		cfg.SessionSecret = cfg.SharedSecret
+	}
 	if cfg.ChallengeTTL == 0 {
 		cfg.ChallengeTTL = 5 * time.Minute
 	}

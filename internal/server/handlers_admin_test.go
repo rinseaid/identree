@@ -25,8 +25,9 @@ func newAdminTestServer(t *testing.T, secret string) *Server {
 	notifyCfg := &notify.NotificationConfig{}
 	return &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: secret,
-			ChallengeTTL: 5 * time.Minute,
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			ChallengeTTL:  5 * time.Minute,
 		},
 		store:          store,
 		hostRegistry:   NewHostRegistry(""),
@@ -486,8 +487,9 @@ func TestFindRestartSections_LiveUpdateOnly(t *testing.T) {
 
 func TestConfigToValues(t *testing.T) {
 	cfg := &config.ServerConfig{
-		SharedSecret: "test-secret",
-		ChallengeTTL: 5 * time.Minute,
+		SharedSecret:  "test-secret",
+		SessionSecret: "test-secret",
+		ChallengeTTL:  5 * time.Minute,
 		GracePeriod:  10 * time.Minute,
 		ListenAddr:   ":8080",
 		ExternalURL:  "https://auth.example.com",

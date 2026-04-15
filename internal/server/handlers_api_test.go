@@ -29,8 +29,9 @@ func newAPITestServer(t *testing.T, secret string) *Server {
 	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
 	return &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: secret,
-			ChallengeTTL: 5 * time.Minute,
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			ChallengeTTL:  5 * time.Minute,
 		},
 		store:          store,
 		hostRegistry:   NewHostRegistry(""),
@@ -263,9 +264,10 @@ func TestHandleCreateChallenge_GraceAutoApprove(t *testing.T) {
 	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
 	s := &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: secret,
-			ChallengeTTL: 5 * time.Minute,
-			GracePeriod:  10 * time.Minute,
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			ChallengeTTL:  5 * time.Minute,
+			GracePeriod:   10 * time.Minute,
 		},
 		store:          store,
 		hostRegistry:   NewHostRegistry(""),
@@ -322,9 +324,10 @@ func TestHandleCreateChallenge_GraceAutoApprove_DifferentHost(t *testing.T) {
 	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
 	s := &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: secret,
-			ChallengeTTL: 5 * time.Minute,
-			GracePeriod:  10 * time.Minute,
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			ChallengeTTL:  5 * time.Minute,
+			GracePeriod:   10 * time.Minute,
 		},
 		store:          store,
 		hostRegistry:   NewHostRegistry(""),
@@ -863,8 +866,9 @@ func TestHandlePollChallenge_ExpiredChallenge(t *testing.T) {
 	store := challpkg.NewChallengeStore(shortTTL, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
 	s := &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: secret,
-			ChallengeTTL: shortTTL,
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			ChallengeTTL:  shortTTL,
 		},
 		store:          store,
 		hostRegistry:   NewHostRegistry(""),

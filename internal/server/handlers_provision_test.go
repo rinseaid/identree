@@ -11,6 +11,10 @@ import (
 
 // newProvisionServer builds a minimal *Server configured for provision endpoint tests.
 func newProvisionServer(cfg *config.ServerConfig) *Server {
+	// Mirror config.LoadServerConfig fallback: per-domain secrets default to SharedSecret.
+	if cfg.LDAPSecret == "" {
+		cfg.LDAPSecret = cfg.SharedSecret
+	}
 	return &Server{
 		cfg:          cfg,
 		hostRegistry: NewHostRegistry(""),

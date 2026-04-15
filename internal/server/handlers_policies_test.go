@@ -23,6 +23,7 @@ func newPolicyTestServer(t *testing.T, secret string) *Server {
 	return &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret:         secret,
+			SessionSecret:        secret,
 			ChallengeTTL:         5 * time.Minute,
 			ApprovalPoliciesFile: policyFile,
 		},

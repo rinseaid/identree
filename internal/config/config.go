@@ -92,9 +92,12 @@ type ServerConfig struct {
 	ListenAddr   string        // default ":8090"
 	ExternalURL  string        // public-facing URL (for OIDC redirects)
 	InstallURL   string        // URL reachable from client hosts (for install script); defaults to ExternalURL
-	SharedSecret string // secret shared with PAM clients
-	HMACSecret   string // optional separate secret for HMAC signing (session, CSRF, onetap, approval_status); defaults to SharedSecret when empty
-	MetricsToken string // bearer token for /metrics endpoint (optional; empty = unauthenticated)
+	SharedSecret  string // secret shared with PAM clients
+	HMACSecret    string // optional separate secret for HMAC signing (session, CSRF, onetap, approval_status); defaults to SharedSecret when empty
+	SessionSecret string // signs session cookies + CSRF tokens (env: IDENTREE_SESSION_SECRET); falls back to SharedSecret
+	EscrowSecret  string // signs escrow HMAC tokens (env: IDENTREE_ESCROW_SECRET); falls back to SharedSecret
+	LDAPSecret    string // derives per-host LDAP bind passwords (env: IDENTREE_LDAP_SECRET); falls back to SharedSecret
+	MetricsToken  string // bearer token for /metrics endpoint (optional; empty = unauthenticated)
 
 	// ── Session / auth flow ───────────────────────────────────────────────────
 	ChallengeTTL time.Duration // how long a pending challenge lives (default 120s)
@@ -277,11 +280,13 @@ type ServerConfig struct {
 }
 
 // DeriveLDAPBindPassword returns the per-host LDAP bind password for hostname.
-// Derivation: HMAC-SHA256(HMAC-SHA256(sharedSecret, "ldap-bind"), hostname).
+// Derivation: HMAC-SHA256(HMAC-SHA256(ldapSecret, "ldap-bind"), hostname).
 // The outer HMAC over hostname means each host gets a unique credential that
-// rotates automatically when the shared secret rotates — no extra storage needed.
-func DeriveLDAPBindPassword(sharedSecret, hostname string) string {
-	subkey := deriveSubkey(sharedSecret, "ldap-bind")
+// rotates automatically when the secret rotates — no extra storage needed.
+// The ldapSecret parameter should be ServerConfig.LDAPSecret (which falls back
+// to SharedSecret via config loading when IDENTREE_LDAP_SECRET is not set).
+func DeriveLDAPBindPassword(ldapSecret, hostname string) string {
+	subkey := deriveSubkey(ldapSecret, "ldap-bind")
 	h := hmac.New(sha256.New, subkey)
 	h.Write([]byte(hostname))
 	return hex.EncodeToString(h.Sum(nil))
@@ -461,9 +466,12 @@ func LoadServerConfig() (*ServerConfig, error) {
 		ListenAddr:   stringDefault(get("IDENTREE_LISTEN_ADDR"), ":8090"),
 		ExternalURL:  get("IDENTREE_EXTERNAL_URL"),
 		InstallURL:   get("IDENTREE_INSTALL_URL"),
-		SharedSecret: get("IDENTREE_SHARED_SECRET"),
-		HMACSecret:   get("IDENTREE_HMAC_SECRET"),
-		MetricsToken: get("IDENTREE_METRICS_TOKEN"),
+		SharedSecret:  get("IDENTREE_SHARED_SECRET"),
+		HMACSecret:    get("IDENTREE_HMAC_SECRET"),
+		SessionSecret: get("IDENTREE_SESSION_SECRET"),
+		EscrowSecret:  get("IDENTREE_ESCROW_SECRET"),
+		LDAPSecret:    get("IDENTREE_LDAP_SECRET"),
+		MetricsToken:  get("IDENTREE_METRICS_TOKEN"),
 
 		ChallengeTTL:         getDuration("IDENTREE_CHALLENGE_TTL", 120*time.Second),
 		GracePeriod:          getDuration("IDENTREE_GRACE_PERIOD", 0),
@@ -593,6 +601,24 @@ func LoadServerConfig() (*ServerConfig, error) {
 	// InstallURL defaults to ExternalURL so install scripts point to the right place.
 	if cfg.InstallURL == "" {
 		cfg.InstallURL = cfg.ExternalURL
+	}
+
+	// Per-domain secrets fall back to SharedSecret for simple deployments.
+	if cfg.SessionSecret == "" {
+		cfg.SessionSecret = cfg.SharedSecret
+	}
+	if cfg.EscrowSecret == "" {
+		cfg.EscrowSecret = cfg.SharedSecret
+	}
+	if cfg.LDAPSecret == "" {
+		cfg.LDAPSecret = cfg.SharedSecret
+	}
+	// Warn when all three domain secrets are inheriting from the shared secret.
+	if cfg.SharedSecret != "" &&
+		get("IDENTREE_SESSION_SECRET") == "" &&
+		get("IDENTREE_ESCROW_SECRET") == "" &&
+		get("IDENTREE_LDAP_SECRET") == "" {
+		slog.Warn("Using IDENTREE_SHARED_SECRET for all trust domains. Production deployments should set IDENTREE_SESSION_SECRET, IDENTREE_ESCROW_SECRET, and IDENTREE_LDAP_SECRET independently.")
 	}
 
 	// Parse escrow vault map

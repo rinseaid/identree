@@ -81,7 +81,7 @@ func TestHandleAdminSudoRules_MethodNotAllowed(t *testing.T) {
 
 func TestHandleAdminSudoRules_NotBridgeMode(t *testing.T) {
 	s := &Server{
-		cfg:           &config.ServerConfig{APIKey: "some-key", SharedSecret: "test"},
+		cfg:           &config.ServerConfig{APIKey: "some-key", SharedSecret: "test", SessionSecret: "test"},
 		revokedNonces: make(map[string]time.Time),
 		mutationRL:    newMutationRateLimiter(),
 	}

@@ -116,8 +116,9 @@ func newDeployTestServer(t *testing.T, secret string) *Server {
 	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
 	return &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: secret,
-			ChallengeTTL: 5 * time.Minute,
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			ChallengeTTL:  5 * time.Minute,
 		},
 		store:          store,
 		hostRegistry:   NewHostRegistry(""),

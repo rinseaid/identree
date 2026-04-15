@@ -341,8 +341,8 @@ func (s *LDAPServer) handleBind(w *gldap.ResponseWriter, req *gldap.Request) {
 				return
 			}
 			// Password-based path (no mTLS).
-			if s.cfg.SharedSecret != "" {
-				expected := config.DeriveLDAPBindPassword(s.cfg.SharedSecret, hostname)
+			if s.cfg.LDAPSecret != "" {
+				expected := config.DeriveLDAPBindPassword(s.cfg.LDAPSecret, hostname)
 				if subtle.ConstantTimeCompare([]byte(msg.Password), []byte(expected)) == 1 {
 					s.authedConns.Store(req.ConnectionID(), struct{}{})
 					slog.Info("LDAP_BIND_OK provisioned host", "hostname", hostname, "conn", req.ConnectionID())

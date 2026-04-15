@@ -2,7 +2,10 @@ package challenge
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -249,6 +253,11 @@ type ChallengeStore struct {
 	sessionNoncesMap map[string]SessionNonceData // nonce -> OIDC login state
 	sessionNoncesMu  sync.Mutex
 
+	// graceHMACKey is the key used to HMAC-sign grace session values.
+	// When non-nil, grace values are stored as "expiry_unix:hmac_hex" and
+	// verified on read, preventing tampering with persisted grace sessions.
+	graceHMACKey []byte
+
 	// OnExpire is an optional callback invoked when a pending challenge is
 	// reaped (expired). The server wires this up to emit audit events.
 	OnExpire func(username, hostname, code string)
@@ -259,7 +268,9 @@ type ChallengeStore struct {
 type persistedState struct {
 	// Version is the schema version for this state file. Current version is 1.
 	Version                int                         `json:"version"`
-	GraceSessions          map[string]time.Time        `json:"grace_sessions"`
+	// GraceSessions stores HMAC-signed grace values as "expiry_unix:hmac_hex".
+	// Falls back to parsing raw time.Time for backward compatibility with pre-HMAC state files.
+	GraceSessions          map[string]string           `json:"grace_sessions"`
 	RevokeTokensBefore     map[string]time.Time        `json:"revoke_tokens_before"`
 	RotateBreakglassBefore map[string]time.Time        `json:"rotate_breakglass_before_hosts,omitempty"`
 	ActionLog              map[string][]ActionLogEntry  `json:"action_log,omitempty"`
@@ -281,9 +292,19 @@ type persistedState struct {
 	OneTapUsed             map[string]bool              `json:"-"`
 }
 
+// WithGraceHMACKey returns a functional option that sets the grace HMAC key
+// before state is loaded, so persisted grace sessions are verified on load.
+func WithGraceHMACKey(key []byte) func(*ChallengeStore) {
+	return func(s *ChallengeStore) {
+		s.graceHMACKey = key
+	}
+}
+
 // NewChallengeStore creates a new store with the given challenge TTL, grace period,
 // and optional persistence file path. If persistPath is empty, no state is persisted.
-func NewChallengeStore(ttl, gracePeriod time.Duration, persistPath string) *ChallengeStore {
+// opts are applied before loading persisted state, allowing callers to set the
+// grace HMAC key so that HMAC verification happens during state loading.
+func NewChallengeStore(ttl, gracePeriod time.Duration, persistPath string, opts ...func(*ChallengeStore)) *ChallengeStore {
 	s := &ChallengeStore{
 		challenges:         make(map[string]*Challenge),
 		byCode:             make(map[string]string),
@@ -302,6 +323,9 @@ func NewChallengeStore(ttl, gracePeriod time.Duration, persistPath string) *Chal
 		gracePeriod:        gracePeriod,
 		persistPath:        persistPath,
 		stopCh:             make(chan struct{}),
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	if persistPath != "" {
 		s.loadState()
@@ -322,6 +346,55 @@ func (s *ChallengeStore) Stop() {
 		close(s.stopCh)
 	})
 	s.stopWg.Wait()
+}
+
+// SetGraceHMACKey sets the HMAC key used to sign and verify grace session values.
+// Must be called before the store processes any grace sessions.
+func (s *ChallengeStore) SetGraceHMACKey(key []byte) {
+	s.graceHMACKey = key
+}
+
+// computeGraceHMAC returns the hex-encoded HMAC-SHA256 of username, hostname, and expiry.
+func computeGraceHMAC(key []byte, username, hostname string, expiryUnix int64) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(username + "\x00" + hostname + "\x00" + strconv.FormatInt(expiryUnix, 10)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// encodeGraceValue encodes a grace session expiry as "expiry_unix:hmac_hex" when
+// an HMAC key is set, or plain "expiry_unix" otherwise.
+func encodeGraceValue(key []byte, username, hostname string, expiryUnix int64) string {
+	s := strconv.FormatInt(expiryUnix, 10)
+	if len(key) > 0 {
+		return s + ":" + computeGraceHMAC(key, username, hostname, expiryUnix)
+	}
+	return s
+}
+
+// parseGraceValue parses a grace session value. The value format is either
+// "expiry_unix:hmac_hex" (HMAC-signed) or plain "expiry_unix" (legacy).
+// When an HMAC key is provided, the signature must be valid; unsigned legacy
+// values are rejected if a key is set (treat as tampered).
+// Returns the expiry time and true if valid, or zero and false if invalid/tampered.
+func parseGraceValue(val string, hmacKey []byte, username, hostname string) (time.Time, bool) {
+	parts := strings.SplitN(val, ":", 2)
+	expiryUnix, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if len(hmacKey) > 0 {
+		// HMAC key is set — require a valid signature.
+		if len(parts) != 2 {
+			slog.Warn("grace session missing HMAC signature (possible tamper or legacy value)", "user", username, "host", hostname)
+			return time.Time{}, false
+		}
+		expected := computeGraceHMAC(hmacKey, username, hostname, expiryUnix)
+		if !hmac.Equal([]byte(expected), []byte(parts[1])) {
+			slog.Warn("grace session HMAC mismatch (tampered)", "user", username, "host", hostname)
+			return time.Time{}, false
+		}
+	}
+	return time.Unix(expiryUnix, 0), true
 }
 
 // graceKey returns the key used for per-host grace period tracking.
@@ -1671,7 +1744,19 @@ func (s *ChallengeStore) loadState() {
 
 	now := time.Now()
 	ceiling := now.Add(maxGraceSessionTTL)
-	for key, expiry := range state.GraceSessions {
+	for key, val := range state.GraceSessions {
+		// Parse grace value: "expiry_unix:hmac_hex" or legacy "expiry_unix".
+		parts := strings.SplitN(key, "\x00", 2)
+		username := parts[0]
+		hostname := ""
+		if len(parts) == 2 {
+			hostname = parts[1]
+		}
+
+		expiry, ok := parseGraceValue(val, s.graceHMACKey, username, hostname)
+		if !ok {
+			continue
+		}
 		if now.Before(expiry) && expiry.Before(ceiling) {
 			s.lastApproval[key] = expiry
 		}
@@ -1800,13 +1885,26 @@ func (s *ChallengeStore) marshalStateLocked() (data []byte, needsRotation bool) 
 	now := time.Now()
 	state := persistedState{
 		Version:            1,
-		GraceSessions:      make(map[string]time.Time),
+		GraceSessions:      make(map[string]string),
 		RevokeTokensBefore: make(map[string]time.Time),
 		ActionLog:          make(map[string][]ActionLogEntry),
 	}
 	for key, expiry := range s.lastApproval {
 		if now.Before(expiry) {
-			state.GraceSessions[key] = expiry
+			expiryUnix := expiry.Unix()
+			// Parse username and hostname from the grace key.
+			parts := strings.SplitN(key, "\x00", 2)
+			username := parts[0]
+			hostname := ""
+			if len(parts) == 2 {
+				hostname = parts[1]
+			}
+			if len(s.graceHMACKey) > 0 {
+				sig := computeGraceHMAC(s.graceHMACKey, username, hostname, expiryUnix)
+				state.GraceSessions[key] = strconv.FormatInt(expiryUnix, 10) + ":" + sig
+			} else {
+				state.GraceSessions[key] = strconv.FormatInt(expiryUnix, 10)
+			}
 		}
 	}
 	for user, ts := range s.revokeTokensBefore {

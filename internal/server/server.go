@@ -344,6 +344,12 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	// Create the store based on the configured state backend.
 	var challengeStore challenge.Store
 	var storeRedisClient redis.UniversalClient // non-nil when backend=redis; used for SSE and metrics
+	// Derive the grace HMAC key from the session secret (which falls back to SharedSecret).
+	var graceHMACKey []byte
+	if cfg.SessionSecret != "" {
+		graceHMACKey = deriveKey(cfg.SessionSecret, "grace-session")
+	}
+
 	switch cfg.StateBackend {
 	case "redis":
 		var err error
@@ -351,10 +357,18 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		if err != nil {
 			return nil, fmt.Errorf("redis client: %w", err)
 		}
-		challengeStore = challenge.NewRedisStore(storeRedisClient, cfg.RedisKeyPrefix, cfg.ChallengeTTL, cfg.GracePeriod)
+		rs := challenge.NewRedisStore(storeRedisClient, cfg.RedisKeyPrefix, cfg.ChallengeTTL, cfg.GracePeriod)
+		if len(graceHMACKey) > 0 {
+			rs.SetGraceHMACKey(graceHMACKey)
+		}
+		challengeStore = rs
 		slog.Info("state backend: redis", "prefix", cfg.RedisKeyPrefix)
 	default:
-		challengeStore = challenge.NewChallengeStore(cfg.ChallengeTTL, cfg.GracePeriod, cfg.SessionStateFile)
+		var opts []func(*challenge.ChallengeStore)
+		if len(graceHMACKey) > 0 {
+			opts = append(opts, challenge.WithGraceHMACKey(graceHMACKey))
+		}
+		challengeStore = challenge.NewChallengeStore(cfg.ChallengeTTL, cfg.GracePeriod, cfg.SessionStateFile, opts...)
 		slog.Info("state backend: local", "path", cfg.SessionStateFile)
 	}
 

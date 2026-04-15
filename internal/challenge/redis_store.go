@@ -29,6 +29,9 @@ type RedisStore struct {
 	ttl         time.Duration
 	gracePeriod time.Duration
 
+	// graceHMACKey is the key used to HMAC-sign grace session values.
+	graceHMACKey []byte
+
 	stopCh   chan struct{}
 	stopOnce sync.Once
 	stopWg   sync.WaitGroup
@@ -50,6 +53,11 @@ func NewRedisStore(client redis.UniversalClient, prefix string, ttl, gracePeriod
 		s.reconcileLoop()
 	}()
 	return s
+}
+
+// SetGraceHMACKey sets the HMAC key used to sign and verify grace session values.
+func (s *RedisStore) SetGraceHMACKey(key []byte) {
+	s.graceHMACKey = key
 }
 
 // ── Key helpers ─────────────────────────────────────────────────────────────
@@ -118,7 +126,7 @@ return 'ok'
 
 // luaApprove atomically checks status=pending + not expired, sets approved, updates grace, decrements counters.
 // KEYS[1]=challenge:{id} KEYS[2]=pending:{user} KEYS[3]=pending:total KEYS[4]=grace:{key}
-// ARGV[1]=approvedBy ARGV[2]=now_unix ARGV[3]=grace_expiry_unix (0 = no grace) ARGV[4]=grace_ttl_seconds
+// ARGV[1]=approvedBy ARGV[2]=now_unix ARGV[3]=grace_value (opaque string, "" = no grace) ARGV[4]=grace_ttl_seconds
 // ARGV[5]=revokeTokensBefore_unix (0 = not set)
 var luaApprove = redis.NewScript(`
 local data = redis.call('GET', KEYS[1])
@@ -139,10 +147,10 @@ local userPending = redis.call('DECR', KEYS[2])
 if userPending < 0 then redis.call('SET', KEYS[2], '0') end
 local totalPending = redis.call('DECR', KEYS[3])
 if totalPending < 0 then redis.call('SET', KEYS[3], '0') end
-local graceExpiry = tonumber(ARGV[3])
-if graceExpiry > 0 then
+local graceVal = ARGV[3]
+if graceVal ~= '' then
   local graceTTL = tonumber(ARGV[4])
-  redis.call('SET', KEYS[4], tostring(graceExpiry), 'EX', graceTTL)
+  redis.call('SET', KEYS[4], graceVal, 'EX', graceTTL)
 end
 return cjson.encode(c)
 `)
@@ -202,7 +210,7 @@ return 'ok'
 
 // luaConsumeAndApprove atomically consumes one-tap + approves the challenge.
 // KEYS[1]=onetap:{id} KEYS[2]=challenge:{id} KEYS[3]=pending:{user} KEYS[4]=pending:total KEYS[5]=grace:{key}
-// ARGV[1]=ttl_seconds ARGV[2]=approvedBy ARGV[3]=now_unix ARGV[4]=grace_expiry_unix ARGV[5]=grace_ttl_seconds
+// ARGV[1]=ttl_seconds ARGV[2]=approvedBy ARGV[3]=now_unix ARGV[4]=grace_value (opaque, "" = no grace) ARGV[5]=grace_ttl_seconds
 // ARGV[6]=revokeTokensBefore_unix
 var luaConsumeAndApprove = redis.NewScript(`
 local data = redis.call('GET', KEYS[2])
@@ -225,10 +233,10 @@ local userPending = redis.call('DECR', KEYS[3])
 if userPending < 0 then redis.call('SET', KEYS[3], '0') end
 local totalPending = redis.call('DECR', KEYS[4])
 if totalPending < 0 then redis.call('SET', KEYS[4], '0') end
-local graceExpiry = tonumber(ARGV[4])
-if graceExpiry > 0 then
+local graceVal = ARGV[4]
+if graceVal ~= '' then
   local graceTTL = tonumber(ARGV[5])
-  redis.call('SET', KEYS[5], tostring(graceExpiry), 'EX', graceTTL)
+  redis.call('SET', KEYS[5], graceVal, 'EX', graceTTL)
 end
 return cjson.encode(c)
 `)
@@ -248,30 +256,27 @@ redis.call('SET', KEYS[1], cjson.encode(c), 'EX', ttl)
 return 1
 `)
 
-// luaAutoApproveGrace atomically checks grace + challenge pending, approves.
-// KEYS[1]=grace:{key} KEYS[2]=challenge:{id} KEYS[3]=pending:{user} KEYS[4]=pending:total
+// luaAutoApproveChallenge atomically checks challenge is pending + not expired, then approves.
+// Grace period verification is done in Go before calling this script (HMAC verification).
+// KEYS[1]=challenge:{id} KEYS[2]=pending:{user} KEYS[3]=pending:total
 // ARGV[1]=now_unix
-var luaAutoApproveGrace = redis.NewScript(`
-local graceData = redis.call('GET', KEYS[1])
-if not graceData then return redis.error_reply('no_grace') end
-local graceExpiry = tonumber(graceData)
-local now = tonumber(ARGV[1])
-if now >= graceExpiry then return redis.error_reply('grace_expired') end
-local data = redis.call('GET', KEYS[2])
+var luaAutoApproveChallenge = redis.NewScript(`
+local data = redis.call('GET', KEYS[1])
 if not data then return redis.error_reply('not_found') end
 local c = cjson.decode(data)
 if c.status ~= 'pending' then return redis.error_reply('already_resolved') end
+local now = tonumber(ARGV[1])
 if now > tonumber(c.expires_at_unix) then return redis.error_reply('expired') end
 c.status = 'approved'
 c.approved_by = c.username
 c.approved_at_unix = tostring(now)
-local ttl = redis.call('TTL', KEYS[2])
+local ttl = redis.call('TTL', KEYS[1])
 if ttl < 1 then ttl = 60 end
-redis.call('SET', KEYS[2], cjson.encode(c), 'EX', ttl)
-local userPending = redis.call('DECR', KEYS[3])
-if userPending < 0 then redis.call('SET', KEYS[3], '0') end
-local totalPending = redis.call('DECR', KEYS[4])
-if totalPending < 0 then redis.call('SET', KEYS[4], '0') end
+redis.call('SET', KEYS[1], cjson.encode(c), 'EX', ttl)
+local userPending = redis.call('DECR', KEYS[2])
+if userPending < 0 then redis.call('SET', KEYS[2], '0') end
+local totalPending = redis.call('DECR', KEYS[3])
+if totalPending < 0 then redis.call('SET', KEYS[3], '0') end
 return 'ok'
 `)
 
@@ -279,7 +284,7 @@ return 'ok'
 // Runs as a single EVAL to prevent TOCTOU races between reading and modifying the approvals array.
 // KEYS[1]=challenge:{id} KEYS[2]=pending:{user} KEYS[3]=pending:total KEYS[4]=grace:{key}
 // ARGV[1]=approver ARGV[2]=now_unix ARGV[3]=required_approvals
-// ARGV[4]=grace_expiry_unix (0 = no grace) ARGV[5]=grace_ttl_seconds
+// ARGV[4]=grace_value (opaque string, "" = no grace) ARGV[5]=grace_ttl_seconds
 // ARGV[6]=revokeTokensBefore_unix (0 = not set)
 // Returns: JSON array [challenge_json, "0"|"1"] where "1" means fully approved.
 var luaAddApproval = redis.NewScript(`
@@ -308,10 +313,10 @@ if #c.approvals >= required then
   if userPending < 0 then redis.call('SET', KEYS[2], '0') end
   local totalPending = redis.call('DECR', KEYS[3])
   if totalPending < 0 then redis.call('SET', KEYS[3], '0') end
-  local graceExpiry = tonumber(ARGV[4])
-  if graceExpiry > 0 then
+  local graceVal = ARGV[4]
+  if graceVal ~= '' then
     local graceTTL = tonumber(ARGV[5])
-    redis.call('SET', KEYS[4], tostring(graceExpiry), 'EX', graceTTL)
+    redis.call('SET', KEYS[4], graceVal, 'EX', graceTTL)
   end
 end
 local ttl = redis.call('TTL', KEYS[1])
@@ -650,7 +655,7 @@ func (s *RedisStore) Approve(id string, approvedBy string) error {
 	now := time.Now()
 
 	// Determine grace settings.
-	var graceExpiryUnix int64
+	var graceVal string
 	var graceTTLSec int64
 	if s.gracePeriod > 0 {
 		graceDur := time.Duration(c.RequestedGrace)
@@ -658,7 +663,7 @@ func (s *RedisStore) Approve(id string, approvedBy string) error {
 			graceDur = s.gracePeriod
 		}
 		graceExpiry := now.Add(graceDur)
-		graceExpiryUnix = graceExpiry.Unix()
+		graceVal = encodeGraceValue(s.graceHMACKey, c.Username, c.Hostname, graceExpiry.Unix())
 		graceTTLSec = int64(graceDur.Seconds()) + 60
 	}
 
@@ -681,7 +686,7 @@ func (s *RedisStore) Approve(id string, approvedBy string) error {
 		},
 		approvedBy,
 		now.Unix(),
-		graceExpiryUnix,
+		graceVal,
 		graceTTLSec,
 		revokeUnix,
 	).Result()
@@ -713,7 +718,7 @@ func (s *RedisStore) AddApproval(id string, approver string, requiredApprovals i
 	now := time.Now()
 
 	// Determine grace settings.
-	var graceExpiryUnix int64
+	var graceVal string
 	var graceTTLSec int64
 	if s.gracePeriod > 0 {
 		graceDur := time.Duration(c.RequestedGrace)
@@ -721,7 +726,7 @@ func (s *RedisStore) AddApproval(id string, approver string, requiredApprovals i
 			graceDur = s.gracePeriod
 		}
 		graceExpiry := now.Add(graceDur)
-		graceExpiryUnix = graceExpiry.Unix()
+		graceVal = encodeGraceValue(s.graceHMACKey, c.Username, c.Hostname, graceExpiry.Unix())
 		graceTTLSec = int64(graceDur.Seconds()) + 60
 	}
 
@@ -745,7 +750,7 @@ func (s *RedisStore) AddApproval(id string, approver string, requiredApprovals i
 		approver,
 		now.Unix(),
 		requiredApprovals,
-		graceExpiryUnix,
+		graceVal,
 		graceTTLSec,
 		revokeUnix,
 	).Result()
@@ -849,11 +854,23 @@ func (s *RedisStore) AutoApproveIfWithinGracePeriod(username, hostname, id strin
 	if s.gracePeriod <= 0 {
 		return false
 	}
-	now := time.Now()
+	// Read and verify grace session in Go (HMAC verification).
 	grKey := s.graceKey(username, hostname)
-	err := luaAutoApproveGrace.Run(s.ctx(), s.client,
+	v, err := s.client.Get(s.ctx(), grKey).Result()
+	if err != nil {
+		return false
+	}
+	expiry, ok := parseGraceValue(v, s.graceHMACKey, username, hostname)
+	if !ok {
+		return false
+	}
+	now := time.Now()
+	if !now.Before(expiry) {
+		return false
+	}
+	// Grace is valid — atomically approve the challenge.
+	err = luaAutoApproveChallenge.Run(s.ctx(), s.client,
 		[]string{
-			grKey,
 			s.challengeKey(id),
 			s.pendingUserKey(username),
 			s.pendingTotalKey(),
@@ -893,7 +910,7 @@ func (s *RedisStore) ConsumeAndApprove(challengeID, approvedBy string) error {
 	}
 
 	now := time.Now()
-	var graceExpiryUnix int64
+	var graceVal string
 	var graceTTLSec int64
 	if s.gracePeriod > 0 {
 		graceDur := c.RequestedGrace
@@ -901,7 +918,7 @@ func (s *RedisStore) ConsumeAndApprove(challengeID, approvedBy string) error {
 			graceDur = s.gracePeriod
 		}
 		graceExpiry := now.Add(graceDur)
-		graceExpiryUnix = graceExpiry.Unix()
+		graceVal = encodeGraceValue(s.graceHMACKey, c.Username, c.Hostname, graceExpiry.Unix())
 		graceTTLSec = int64(graceDur.Seconds()) + 60
 	}
 
@@ -925,7 +942,7 @@ func (s *RedisStore) ConsumeAndApprove(challengeID, approvedBy string) error {
 		int(s.challengeTTLWithBuffer().Seconds()),
 		approvedBy,
 		now.Unix(),
-		graceExpiryUnix,
+		graceVal,
 		graceTTLSec,
 		revokeUnix,
 	).Result()
@@ -957,11 +974,11 @@ func (s *RedisStore) WithinGracePeriod(username, hostname string) bool {
 	if err != nil {
 		return false
 	}
-	expiryUnix, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
+	expiry, ok := parseGraceValue(v, s.graceHMACKey, username, hostname)
+	if !ok {
 		return false
 	}
-	return time.Now().Before(time.Unix(expiryUnix, 0))
+	return time.Now().Before(expiry)
 }
 
 func (s *RedisStore) GraceRemaining(username, hostname string) time.Duration {
@@ -972,11 +989,11 @@ func (s *RedisStore) GraceRemaining(username, hostname string) time.Duration {
 	if err != nil {
 		return 0
 	}
-	expiryUnix, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
+	expiry, ok := parseGraceValue(v, s.graceHMACKey, username, hostname)
+	if !ok {
 		return 0
 	}
-	remaining := time.Until(time.Unix(expiryUnix, 0))
+	remaining := time.Until(expiry)
 	if remaining < 0 {
 		return 0
 	}
@@ -1010,10 +1027,6 @@ func (s *RedisStore) scanGraceSessions(pattern, filterUsername string) []GraceSe
 			if err != nil {
 				continue
 			}
-			expiryUnix, err := strconv.ParseInt(v, 10, 64)
-			if err != nil || now.After(time.Unix(expiryUnix, 0)) {
-				continue
-			}
 			// Parse username and hostname from key.
 			suffix := strings.TrimPrefix(key, s.prefix+"grace:")
 			parts := strings.SplitN(suffix, "\x00", 2)
@@ -1025,10 +1038,18 @@ func (s *RedisStore) scanGraceSessions(pattern, filterUsername string) []GraceSe
 			if filterUsername != "" && user != filterUsername {
 				continue
 			}
+			hostname := ""
+			if len(parts) == 2 {
+				hostname = parts[1]
+			}
+			expiry, ok := parseGraceValue(v, s.graceHMACKey, user, hostname)
+			if !ok || now.After(expiry) {
+				continue
+			}
 			sessions = append(sessions, GraceSession{
 				Username:  user,
 				Hostname:  host,
-				ExpiresAt: time.Unix(expiryUnix, 0),
+				ExpiresAt: expiry,
 			})
 		}
 		cursor = nextCursor
@@ -1042,7 +1063,8 @@ func (s *RedisStore) scanGraceSessions(pattern, filterUsername string) []GraceSe
 func (s *RedisStore) CreateGraceSession(username, hostname string, duration time.Duration) {
 	expiry := time.Now().Add(duration)
 	ttl := duration + 60*time.Second
-	s.client.Set(s.ctx(), s.graceKey(username, hostname), expiry.Unix(), ttl)
+	val := encodeGraceValue(s.graceHMACKey, username, hostname, expiry.Unix())
+	s.client.Set(s.ctx(), s.graceKey(username, hostname), val, ttl)
 	s.updateGraceGauge()
 }
 
@@ -1052,17 +1074,18 @@ func (s *RedisStore) ExtendGraceSession(username, hostname string) (time.Duratio
 	if err != nil {
 		return 0, nil
 	}
-	expiryUnix, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
+	expiry, ok := parseGraceValue(v, s.graceHMACKey, username, hostname)
+	if !ok {
 		return 0, nil
 	}
-	remaining := time.Until(time.Unix(expiryUnix, 0))
+	remaining := time.Until(expiry)
 	if remaining > s.gracePeriod*3/4 {
 		return remaining, ErrSessionSufficientlyExtended
 	}
 	newExpiry := time.Now().Add(s.gracePeriod)
 	ttl := s.gracePeriod + 60*time.Second
-	s.client.Set(s.ctx(), key, newExpiry.Unix(), ttl)
+	val := encodeGraceValue(s.graceHMACKey, username, hostname, newExpiry.Unix())
+	s.client.Set(s.ctx(), key, val, ttl)
 	return s.gracePeriod, nil
 }
 
@@ -1071,13 +1094,18 @@ func (s *RedisStore) ForceExtendGraceSession(username, hostname string) time.Dur
 		return 0
 	}
 	key := s.graceKey(username, hostname)
-	_, err := s.client.Get(s.ctx(), key).Result()
+	v, err := s.client.Get(s.ctx(), key).Result()
 	if err != nil {
+		return 0
+	}
+	// Verify existing grace session HMAC before extending.
+	if _, ok := parseGraceValue(v, s.graceHMACKey, username, hostname); !ok {
 		return 0
 	}
 	newExpiry := time.Now().Add(s.gracePeriod)
 	ttl := s.gracePeriod + 60*time.Second
-	s.client.Set(s.ctx(), key, newExpiry.Unix(), ttl)
+	val := encodeGraceValue(s.graceHMACKey, username, hostname, newExpiry.Unix())
+	s.client.Set(s.ctx(), key, val, ttl)
 	return s.gracePeriod
 }
 
@@ -1086,8 +1114,12 @@ func (s *RedisStore) ExtendGraceSessionFor(username, hostname string, dur time.D
 		return 0
 	}
 	key := s.graceKey(username, hostname)
-	_, err := s.client.Get(s.ctx(), key).Result()
+	v, err := s.client.Get(s.ctx(), key).Result()
 	if err != nil {
+		return 0
+	}
+	// Verify existing grace session HMAC before extending.
+	if _, ok := parseGraceValue(v, s.graceHMACKey, username, hostname); !ok {
 		return 0
 	}
 	if dur > s.gracePeriod {
@@ -1095,7 +1127,8 @@ func (s *RedisStore) ExtendGraceSessionFor(username, hostname string, dur time.D
 	}
 	newExpiry := time.Now().Add(dur)
 	ttl := dur + 60*time.Second
-	s.client.Set(s.ctx(), key, newExpiry.Unix(), ttl)
+	val := encodeGraceValue(s.graceHMACKey, username, hostname, newExpiry.Unix())
+	s.client.Set(s.ctx(), key, val, ttl)
 	return dur
 }
 

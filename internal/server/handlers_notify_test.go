@@ -40,8 +40,9 @@ func newNotifyTestServer(t *testing.T, secret string) *Server {
 	notifyCfg := &notify.NotificationConfig{}
 	return &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: secret,
-			ChallengeTTL: 5 * time.Minute,
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			ChallengeTTL:  5 * time.Minute,
 		},
 		store:          store,
 		hostRegistry:   NewHostRegistry(""),
@@ -271,8 +272,9 @@ func newNotifyTestServerWithPrefs(t *testing.T, secret string) (*Server, *memPre
 	prefStore := newMemPrefStore()
 	s := &Server{
 		cfg: &config.ServerConfig{
-			SharedSecret: secret,
-			ChallengeTTL: 5 * time.Minute,
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			ChallengeTTL:  5 * time.Minute,
 		},
 		store:            store,
 		hostRegistry:     NewHostRegistry(""),

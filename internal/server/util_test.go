@@ -236,7 +236,9 @@ func TestLdapSyncError(t *testing.T) {
 }
 
 func TestHmacBase(t *testing.T) {
-	s := &Server{cfg: &config.ServerConfig{SharedSecret: "shared", HMACSecret: ""}}
+	// SessionSecret falls back to SharedSecret via config loading, but in tests
+	// we set it directly so hmacBase() uses SessionSecret.
+	s := &Server{cfg: &config.ServerConfig{SharedSecret: "shared", SessionSecret: "shared", HMACSecret: ""}}
 	if got := s.hmacBase(); got != "shared" {
 		t.Errorf("hmacBase() = %q, want 'shared'", got)
 	}

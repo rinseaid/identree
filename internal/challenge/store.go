@@ -9,6 +9,9 @@ type Store interface {
 	Stop()
 	SaveState()
 
+	// SetGraceHMACKey sets the HMAC key used to sign and verify grace session values.
+	SetGraceHMACKey(key []byte)
+
 	// Challenge CRUD
 	Create(username, hostname, breakglassRotateBefore, reason string) (*Challenge, error)
 	Get(id string) (Challenge, bool)
