@@ -168,6 +168,24 @@ test-authentik-validate:
 		"http://localhost:9000/application/o/identree" \
 		ldap://localhost:3896
 
+# ── Keycloak SAML + lldap (bridge mode, SAML SSO) ────────────────────────────
+.PHONY: test-keycloak-saml test-keycloak-saml-down test-keycloak-saml-logs test-keycloak-saml-setup test-keycloak-saml-validate
+
+test-keycloak-saml:
+	docker compose -f test/providers/keycloak-saml/docker-compose.yml up --build -d
+
+test-keycloak-saml-down:
+	docker compose -f test/providers/keycloak-saml/docker-compose.yml down
+
+test-keycloak-saml-logs:
+	docker compose -f test/providers/keycloak-saml/docker-compose.yml logs -f identree
+
+test-keycloak-saml-setup:
+	bash test/providers/keycloak-saml/setup.sh
+
+test-keycloak-saml-validate:
+	bash test/providers/keycloak-saml/validate.sh
+
 # ── Authentik SAML (bridge mode, SAML SSO) ─────────────────────────────────────
 .PHONY: test-authentik-saml test-authentik-saml-down test-authentik-saml-logs test-authentik-saml-setup test-authentik-saml-validate
 
@@ -306,4 +324,4 @@ integration-all-down: integration-full-mode-down integration-lldap-dex-down inte
 # ── Convenience: bring down all environments ──────────────────────────────────
 .PHONY: down-all
 
-down-all: down test-lldap-dex-down test-keycloak-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down test-openldap-dex-down test-authentik-down test-authentik-saml-down test-samba-ad-dex-down test-mtls-down integration-all-down
+down-all: down test-lldap-dex-down test-keycloak-down test-keycloak-saml-down test-kanidm-down test-vault-escrow-down test-infisical-escrow-down test-openldap-dex-down test-authentik-down test-authentik-saml-down test-samba-ad-dex-down test-mtls-down integration-all-down

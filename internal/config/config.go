@@ -243,6 +243,15 @@ type ServerConfig struct {
 	MTLSCAKey   string        // path to CA private key PEM
 	MTLSCertTTL time.Duration // client cert validity (default 365 days)
 
+	// MTLSKMSBackend selects the key management backend for mTLS CA signing.
+	// "" or "local" (default): CA key is loaded from MTLSCAKey on disk.
+	// "vault-transit": signing is delegated to Vault's Transit secrets engine;
+	// MTLSCAKey is not needed (the key lives in Vault).
+	MTLSKMSBackend   string
+	MTLSVaultAddr    string // Vault address for Transit (e.g. "http://vault:8200")
+	MTLSVaultToken   string // Vault token for Transit
+	MTLSVaultKeyName string // Transit key name (e.g. "identree-ca")
+
 	// ── LDAP auto-provisioning ────────────────────────────────────────────────
 	// When LDAPProvisionEnabled is true, GET /api/client/provision returns LDAP
 	// configuration and per-host derived bind credentials so that `identree setup`
@@ -537,9 +546,13 @@ func LoadServerConfig() (*ServerConfig, error) {
 		TLSCertFile: get("IDENTREE_TLS_CERT_FILE"),
 		TLSKeyFile:  get("IDENTREE_TLS_KEY_FILE"),
 
-		MTLSCACert:  get("IDENTREE_MTLS_CA_CERT"),
-		MTLSCAKey:   get("IDENTREE_MTLS_CA_KEY"),
-		MTLSCertTTL: getDuration("IDENTREE_MTLS_CERT_TTL", 365*24*time.Hour),
+		MTLSCACert:       get("IDENTREE_MTLS_CA_CERT"),
+		MTLSCAKey:        get("IDENTREE_MTLS_CA_KEY"),
+		MTLSCertTTL:      getDuration("IDENTREE_MTLS_CERT_TTL", 365*24*time.Hour),
+		MTLSKMSBackend:   get("IDENTREE_MTLS_KMS_BACKEND"),
+		MTLSVaultAddr:    get("IDENTREE_MTLS_VAULT_ADDR"),
+		MTLSVaultToken:   get("IDENTREE_MTLS_VAULT_TOKEN"),
+		MTLSVaultKeyName: get("IDENTREE_MTLS_VAULT_KEY_NAME"),
 
 		WebhookSecret:        get("IDENTREE_WEBHOOK_SECRET"),
 		EnforceOIDCIPBinding: getBool("IDENTREE_OIDC_ENFORCE_IP_BINDING", false),
@@ -736,17 +749,31 @@ func LoadServerConfig() (*ServerConfig, error) {
 		return nil, fmt.Errorf("IDENTREE_AUTH_PROTOCOL must be \"oidc\" or \"saml\" (got %q)", cfg.AuthProtocol)
 	}
 
-	// Enable mTLS when CA cert/key paths are configured (or default them).
-	if cfg.MTLSCACert != "" || cfg.MTLSCAKey != "" {
+	// Enable mTLS when CA cert/key paths are configured (or default them),
+	// or when a KMS backend is configured for remote signing.
+	if cfg.MTLSCACert != "" || cfg.MTLSCAKey != "" || cfg.MTLSKMSBackend == "vault-transit" {
 		cfg.MTLSEnabled = true
 		if cfg.MTLSCACert == "" {
 			cfg.MTLSCACert = "/config/mtls-ca.crt"
 		}
-		if cfg.MTLSCAKey == "" {
+		// CA key path is only needed for local (non-KMS) mode.
+		if cfg.MTLSCAKey == "" && cfg.MTLSKMSBackend != "vault-transit" {
 			cfg.MTLSCAKey = "/config/mtls-ca.key"
 		}
 		if cfg.MTLSCertTTL <= 0 {
 			cfg.MTLSCertTTL = 365 * 24 * time.Hour
+		}
+	}
+	// Validate vault-transit KMS configuration.
+	if cfg.MTLSKMSBackend == "vault-transit" {
+		if cfg.MTLSVaultAddr == "" {
+			return nil, fmt.Errorf("IDENTREE_MTLS_VAULT_ADDR must be set when IDENTREE_MTLS_KMS_BACKEND=vault-transit")
+		}
+		if cfg.MTLSVaultToken == "" {
+			return nil, fmt.Errorf("IDENTREE_MTLS_VAULT_TOKEN must be set when IDENTREE_MTLS_KMS_BACKEND=vault-transit")
+		}
+		if cfg.MTLSVaultKeyName == "" {
+			return nil, fmt.Errorf("IDENTREE_MTLS_VAULT_KEY_NAME must be set when IDENTREE_MTLS_KMS_BACKEND=vault-transit")
 		}
 	}
 

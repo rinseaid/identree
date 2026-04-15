@@ -9,9 +9,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"net/url"
 	"regexp"
 	"runtime"
@@ -505,21 +507,62 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 
 	// ── mTLS client certificate authentication ─────────────────────────────
 	if cfg.MTLSEnabled {
-		ca, caSigner, err := mtls.LoadOrGenerateCA(cfg.MTLSCACert, cfg.MTLSCAKey)
-		if err != nil {
-			return nil, fmt.Errorf("mTLS CA: %w", err)
-		}
-		s.mtlsCA = &ca
-		s.mtlsCASigner = caSigner
-		caCert := ca.Leaf
-		if caCert == nil {
-			caCert, err = x509.ParseCertificate(ca.Certificate[0])
-			if err != nil {
-				return nil, fmt.Errorf("parse mTLS CA leaf: %w", err)
+		var caSigner crypto.Signer
+
+		switch cfg.MTLSKMSBackend {
+		case "vault-transit":
+			// Vault Transit: signing is delegated to Vault; only the CA cert
+			// is loaded from disk.
+			vaultSigner, vErr := mtls.NewVaultTransitSigner(cfg.MTLSVaultAddr, cfg.MTLSVaultToken, cfg.MTLSVaultKeyName)
+			if vErr != nil {
+				return nil, fmt.Errorf("mTLS Vault Transit signer: %w", vErr)
 			}
+			caSigner = vaultSigner
+			slog.Info("mTLS using Vault Transit signer", "addr", cfg.MTLSVaultAddr, "key", cfg.MTLSVaultKeyName)
+
+			// Load the CA cert from disk (it must still be present for TLS config
+			// and certificate chain verification).
+			certData, rErr := os.ReadFile(cfg.MTLSCACert)
+			if rErr != nil {
+				return nil, fmt.Errorf("mTLS CA cert (vault-transit mode): %w", rErr)
+			}
+			block, _ := pem.Decode(certData)
+			if block == nil {
+				return nil, fmt.Errorf("mTLS CA cert: no PEM block found in %s", cfg.MTLSCACert)
+			}
+			caCert, pErr := x509.ParseCertificate(block.Bytes)
+			if pErr != nil {
+				return nil, fmt.Errorf("mTLS CA cert: parse: %w", pErr)
+			}
+			tlsCert := tls.Certificate{
+				Certificate: [][]byte{block.Bytes},
+				Leaf:        caCert,
+			}
+			s.mtlsCA = &tlsCert
+			s.mtlsCASigner = caSigner
+			s.mtlsCACert = caCert
+			slog.Info("mTLS CA loaded (Vault Transit)", "subject", caCert.Subject.CommonName, "not_after", caCert.NotAfter.Format(time.RFC3339))
+
+		default:
+			// Local mode: load or generate the CA cert+key from disk.
+			ca, localSigner, lErr := mtls.LoadOrGenerateCA(cfg.MTLSCACert, cfg.MTLSCAKey)
+			if lErr != nil {
+				return nil, fmt.Errorf("mTLS CA: %w", lErr)
+			}
+			s.mtlsCA = &ca
+			caSigner = localSigner
+			s.mtlsCASigner = caSigner
+			caCert := ca.Leaf
+			if caCert == nil {
+				var pErr error
+				caCert, pErr = x509.ParseCertificate(ca.Certificate[0])
+				if pErr != nil {
+					return nil, fmt.Errorf("parse mTLS CA leaf: %w", pErr)
+				}
+			}
+			s.mtlsCACert = caCert
+			slog.Info("mTLS CA loaded", "subject", caCert.Subject.CommonName, "not_after", caCert.NotAfter.Format(time.RFC3339))
 		}
-		s.mtlsCACert = caCert
-		slog.Info("mTLS CA loaded", "subject", caCert.Subject.CommonName, "not_after", caCert.NotAfter.Format(time.RFC3339))
 
 		// Start background goroutine to update mTLS cert expiry Prometheus gauges.
 		s.startMTLSMetrics(s.stopCh)
