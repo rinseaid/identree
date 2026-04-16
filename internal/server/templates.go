@@ -550,6 +550,8 @@ const sharedCSS = `
     .group-badge-link:hover { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
     /* Pill overflow */
     .pill-cell { display: flex; flex-wrap: nowrap; overflow: clip; gap: 4px; align-items: center; min-width: 0; }
+    .pill-cell .pill { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+    .pill-cell .pill[title]:hover { max-width: none; }
     .pill-more-btn { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 8px; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); font-size: 0.75rem; cursor: pointer; white-space: nowrap; font-family: inherit; }
     .pill-more-btn:hover { background: var(--primary-sub); color: var(--primary); border-color: var(--primary); }
     .pagination-bar { display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 12px; font-size: 0.8125rem; flex-wrap: wrap; }
@@ -1151,6 +1153,8 @@ const dashboardHTML = `<!DOCTYPE html>
     .sessions-table--user .sessions-table-filter,
     .sessions-table--user .sessions-table-row { grid-template-columns: 200px 1.5fr 210px; }
     .sessions-table-row:last-child { border-bottom: none; }
+    .sessions-table-row:nth-child(even) { background: var(--surface); }
+    .sessions-table-row:nth-child(odd) { background: transparent; }
     .sessions-table-row:hover { background: var(--surface-2); }
     @keyframes session-pulse { 0% { background: rgba(34,197,94,0.18); } 100% { background: transparent; } }
     .session-highlight { animation: session-pulse 2s ease-out; }
@@ -1571,6 +1575,8 @@ const historyPageHTML = `<!DOCTYPE html>
     .history-gtable-filter { padding-top: 5px; padding-bottom: 5px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
     .history-gtable-row { padding-top: 9px; padding-bottom: 9px; border-bottom: 1px solid var(--border); align-items: center; }
     .history-gtable-row:last-child { border-bottom: none; }
+    .history-gtable-row:nth-child(even) { background: var(--surface); }
+    .history-gtable-row:nth-child(odd) { background: transparent; }
     .history-gtable-row:hover { background: var(--surface-2); }
     .timeline { margin: 0 0 20px; }
     .timeline-bars { display: flex; align-items: flex-end; gap: 2px; height: 40px; }
@@ -1579,8 +1585,9 @@ const historyPageHTML = `<!DOCTYPE html>
     .timeline-bar.now { background: var(--success); opacity: 0.7; }
     .timeline-bar.timeline-active { opacity: 1; outline: 2px solid var(--primary); outline-offset: 1px; }
     .timeline-bar.timeline-active.now { outline-color: var(--success); }
-    .timeline-axis { position: relative; height: 16px; margin-top: 3px; }
-    .timeline-axis-label { position: absolute; font-size: 0.6875rem; color: var(--text-3); transform: translateX(-50%); white-space: nowrap; }
+    .timeline-axis { position: relative; height: 18px; margin-top: 3px; border-top: 1px solid var(--border); }
+    .timeline-axis-label { position: absolute; font-size: 0.6875rem; color: var(--text-3); transform: translateX(-50%); white-space: nowrap; top: 3px; }
+    .timeline-axis-label::before { content: ''; position: absolute; top: -4px; left: 50%; width: 1px; height: 4px; background: var(--border); }
     .time-range-form { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 12px; font-size: 0.8125rem; color: var(--text-2); flex-wrap: wrap; }
     .time-range-form label { font-weight: 500; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.75rem; white-space: nowrap; }
     .time-range-form input[type="datetime-local"] { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 0.8125rem; padding: 3px 7px; font-family: inherit; min-width: 160px; }
@@ -2803,7 +2810,7 @@ const adminPageHTML = `<!DOCTYPE html>
           <div class="pill-cell">{{if .AllCmds}}<span class="pill cmd">{{call $.T "all_commands"}}</span>{{else}}{{range .CmdList}}<span class="pill cmd">{{.}}</span>{{end}}{{end}}</div>
         </div>
         <div class="gtcol gtcol-hosts" role="cell">
-          <div class="pill-cell">{{if .AllHosts}}<span class="summary-chip all" style="background:var(--host-bg);color:var(--host-fg);border-color:var(--host-fg)">{{call $.T "all_hosts"}}</span>{{else}}{{range .HostList}}<a href="/history?hostname={{.}}" class="pill host">{{.}}</a>{{end}}{{end}}</div>
+          <div class="pill-cell">{{if .AllHosts}}<span class="summary-chip all" style="background:var(--host-bg);color:var(--host-fg);border-color:var(--host-fg)">{{call $.T "all_hosts"}}</span>{{else}}{{range .HostList}}<a href="/history?hostname={{.}}" class="pill host" title="{{.}}">{{.}}</a>{{end}}{{end}}</div>
         </div>
         <div class="gtcol gtcol-members" role="cell">
           <div class="pill-cell">{{range .Members}}<a href="/access?user={{.}}" class="group-badge group-badge-link">{{.}}</a>{{end}}{{if not .Members}}<span class="row-sub" style="font-size:0.8125rem">{{call $.T "no_members"}}</span>{{end}}</div>
@@ -4261,8 +4268,8 @@ const accessPageHTML = `<!DOCTYPE html>
       <div class="access-user-group" data-username="{{.Username}}" data-active-count="{{.ActiveCount}}" data-hostnames="{{range .Hosts}}{{.Hostname}} {{end}}">
         <div class="access-user-row" role="row">
           <div class="gtcol gtcol-auser" role="cell"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
-          <div class="gtcol" role="cell"><div class="pill-cell">{{range .Hosts}}<a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}</div></div>
-          <div class="gtcol" role="cell"><div class="pill-cell">{{if .ActiveCount}}{{range .Hosts}}{{if .Active}}<a href="/?host={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}{{end}}{{end}}</div></div>
+          <div class="gtcol" role="cell"><div class="pill-cell">{{range .Hosts}}<a href="/history?hostname={{.Hostname}}" class="pill host" title="{{.Hostname}}">{{.Hostname}}</a>{{end}}</div></div>
+          <div class="gtcol" role="cell"><div class="pill-cell">{{if .ActiveCount}}{{range .Hosts}}{{if .Active}}<a href="/?host={{.Hostname}}" class="pill host" title="{{.Hostname}}">{{.Hostname}}</a>{{end}}{{end}}{{end}}</div></div>
           <div class="gtcol" role="cell"><span class="access-expand-icon">&#9654;</span></div>
         </div>
         <div class="access-host-rows">
