@@ -31,7 +31,7 @@ var (
 	adminTmpl           = template.Must(template.New("admin").Funcs(templateFuncMap).Parse(adminPageHTML))
 	accessTmpl          = template.Must(template.New("access").Funcs(templateFuncMap).Parse(accessPageHTML))
 	dashboardTmpl       = template.Must(template.New("dashboard").Funcs(templateFuncMap).Parse(dashboardHTML))
-	historyTmpl         = template.Must(template.New("history").Funcs(templateFuncMap).Parse(historyPageHTML))
+	historyTmpl         = template.Must(template.Must(template.New("history").Funcs(templateFuncMap).Parse(historyPageHTML)).Parse(historyRowsHTML))
 )
 // HTML templates
 // All user-controlled values are rendered via html/template (auto-escaped).
@@ -549,17 +549,30 @@ const sharedCSS = `
     .group-badge { display: inline-block; font-size: 0.75rem; padding: 2px 8px; border-radius: 8px; background: var(--surface-2); color: var(--text-2); white-space: nowrap; margin-right: 3px; margin-bottom: 2px; text-decoration: none; border: 1px solid var(--border); }
     .group-badge-link:hover { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
     /* Pill overflow */
-    .pill-cell { display: flex; flex-wrap: nowrap; overflow: clip; gap: 4px; align-items: center; min-width: 0; }
-    .pill-cell .pill { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
-    .pill-cell .pill[title]:hover { max-width: none; }
-    .pill-more-btn { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 8px; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); font-size: 0.75rem; cursor: pointer; white-space: nowrap; font-family: inherit; }
-    .pill-more-btn:hover { background: var(--primary-sub); color: var(--primary); border-color: var(--primary); }
+    .pill-cell { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
     .pagination-bar { display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 12px; font-size: 0.8125rem; flex-wrap: wrap; }
     .pagination-btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 0.8125rem; font-family: inherit; line-height: 1.4; }
     .pagination-btn:hover:not([disabled]) { background: var(--surface-2); color: var(--text); }
     .pagination-btn[disabled] { opacity: 0.4; cursor: default; }
     .pagination-info { color: var(--text-2); font-size: 0.8125rem; }
     .pagination-size-select { padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8125rem; background: var(--surface); color: var(--text); cursor: pointer; font-family: inherit; }
+    /* Infinite-scroll load bar — ported from MCM:
+       position:fixed at bottom of viewport offset by the 240px sidebar, 8rem fade gradient above the buttons,
+       pointer-events:none on the outer wrapper so scroll-through works, auto on the inner button row,
+       and opacity transition for show/hide. A spacer in .main prevents the bar from covering the last row. */
+    .loadbar { position: fixed; bottom: 0; left: 240px; right: 0; z-index: 10; pointer-events: none; transition: opacity 0.2s; display: flex; flex-direction: column; }
+    .loadbar.is-empty { opacity: 0; pointer-events: none; }
+    .loadbar-fade { height: 6rem; background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, var(--bg) 85%); }
+    .loadbar-row { display: flex; justify-content: center; align-items: center; gap: 10px; padding: 0 12px 14px; background: var(--bg); pointer-events: auto; font-size: 0.8125rem; flex-wrap: wrap; }
+    .loadbar-info { color: var(--text-3); font-size: 0.8125rem; }
+    .loadbar-btn { padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 0.8125rem; font-family: inherit; line-height: 1.4; }
+    .loadbar-btn:hover { background: var(--primary-sub); color: var(--primary); border-color: var(--primary); }
+    .loadbar-btn-all { color: var(--primary); border-color: var(--primary); }
+    .loadbar-spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: loadbar-spin 0.6s linear infinite; display: inline-block; vertical-align: -3px; }
+    @keyframes loadbar-spin { to { transform: rotate(360deg); } }
+    @media (max-width: 768px) { .loadbar { left: 0; } }
+    /* Spacer pushes the last row above the fixed loadbar so its fade doesn't eat content. */
+    .main.has-loadbar { padding-bottom: 120px; }
     .admin-req { font-size: 0.6875rem; padding: 2px 7px; border-radius: 5px; background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); white-space: nowrap; font-weight: 600; }
     /* Bulk actions row */
     .bulk-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
@@ -1148,6 +1161,115 @@ const tzOptionsHTML = `
       <option value="Pacific/Auckland" {{if eq .Timezone "Pacific/Auckland"}}selected{{end}}>UTC+12 (Auckland, Fiji)</option>
     </optgroup>`
 
+// infiniteScrollJS defines window.idtInfinite — a shared helper that converts a
+// client-side paginated table into progressive-reveal infinite scroll.
+//
+// Usage:
+//   var ctl = idtInfinite({
+//     tableSelector: '#users-table',
+//     rowSelector:   '.users-table-row',
+//     barId:         'users-loadbar',
+//     pageSize:      30,
+//     getFiltered:   function(){ return [/* row Elements that match current filters */]; },
+//     onHide:        function(row){ /* optional: extra teardown when a row is hidden */ },
+//   });
+//   // when filters change:
+//   ctl.reset();
+const infiniteScrollJS = `
+    <script nonce="{{.CSPNonce}}">
+    // Scroll container is .main (has overflow-y:auto, height:100vh), not window.
+    window.idtScrollEl = function(){ return document.querySelector('.main') || document.scrollingElement || document.documentElement; };
+    // Build the shared MCM-style loadbar DOM: outer wrapper w/ fade gradient and an inner button row.
+    // Consumers set .loadbar-row's innerHTML; outer wrapper stays stable so position:fixed + pointer-events work.
+    window.idtBuildLoadbar = function(bar){
+      bar.classList.add('loadbar');
+      bar.innerHTML = '<div class="loadbar-fade"></div><div class="loadbar-row"></div>';
+      return bar.querySelector('.loadbar-row');
+    };
+    // idtBatchSize — pick a viewport-aware initial batch. MCM's formula:
+    //   max(minPageSize, ceil(visibleArea / rowHeight) + padding)
+    // We measure an actual rendered row instead of hard-coding ROW_HEIGHT so
+    // history (taller rows) and users (slimmer rows) both adapt naturally.
+    window.idtBatchSize = function(rowSelector, minSize){
+      var probe = document.querySelector(rowSelector);
+      var rowH = (probe && probe.getBoundingClientRect().height) || 44;
+      var main = idtScrollEl();
+      var viewport = (main && main.clientHeight) || window.innerHeight;
+      return Math.max(minSize||15, Math.ceil(viewport / rowH) + 5);
+    };
+    window.idtInfinite = function(opts){
+      // pageSize passed from server (DefaultPageSize) acts as a floor — we bump
+      // it up if the viewport is tall enough to want more per batch.
+      var pageSize = idtBatchSize(opts.tableSelector + ' ' + opts.rowSelector, opts.pageSize);
+      var visibleCount = pageSize;
+      var bar = document.getElementById(opts.barId);
+      if(!bar) return {rerender:function(){}, reset:function(){}};
+      var row = idtBuildLoadbar(bar);
+      var main = idtScrollEl();
+      if(main) main.classList.add('has-loadbar');
+      function render(){
+        var rows = opts.getFiltered();
+        var total = rows.length;
+        if(visibleCount > total) visibleCount = total;
+        if(visibleCount < pageSize) visibleCount = Math.min(pageSize, total);
+        var visible = new Set();
+        for(var i=0; i<visibleCount && i<total; i++) visible.add(rows[i]);
+        var allRows = document.querySelectorAll(opts.tableSelector + ' ' + opts.rowSelector);
+        allRows.forEach(function(r){
+          if(visible.has(r)){ r.style.display=''; }
+          else { r.style.display='none'; if(opts.onHide) opts.onHide(r); }
+        });
+        var shown = visible.size;
+        var remaining = total - shown;
+        if(total === 0 || remaining === 0){
+          bar.classList.add('is-empty');
+          row.innerHTML = '';
+          return;
+        }
+        bar.classList.remove('is-empty');
+        var nextBatch = Math.min(pageSize, remaining);
+        row.innerHTML = '<span class="loadbar-info">'+shown+' of '+total+'</span>'+
+          '<button type="button" class="loadbar-btn loadbar-more">Load '+nextBatch+' more</button>'+
+          (remaining > nextBatch ? '<button type="button" class="loadbar-btn loadbar-btn-all loadbar-all">Load all ('+remaining+')</button>' : '');
+        row.querySelector('.loadbar-more').addEventListener('click', function(){ visibleCount += pageSize; render(); });
+        var allBtn = row.querySelector('.loadbar-all');
+        if(allBtn) allBtn.addEventListener('click', function(){ visibleCount = total; render(); });
+      }
+      // Fill-to-scrollable: after the first render, if content doesn't overflow
+      // the viewport, keep revealing more rows (up to 5 top-ups) so scroll-based
+      // auto-load can actually fire. Mirrors MCM's init loop.
+      function fillViewport(){
+        if(!main) return;
+        var fills = 0;
+        while(fills < 5 && main.scrollHeight <= main.clientHeight + 100){
+          var rows = opts.getFiltered();
+          if(visibleCount >= rows.length) break;
+          visibleCount = Math.min(rows.length, visibleCount + pageSize);
+          render();
+          fills++;
+        }
+      }
+      var scrollCooldown = false;
+      function onScroll(){
+        if(scrollCooldown) return;
+        var rows = opts.getFiltered();
+        if(visibleCount >= rows.length) return;
+        var distFromBottom = main.scrollHeight - main.scrollTop - main.clientHeight;
+        if(distFromBottom < 300){
+          scrollCooldown = true;
+          visibleCount = Math.min(rows.length, visibleCount + pageSize);
+          render();
+          setTimeout(function(){ scrollCooldown = false; }, 500);
+        }
+      }
+      if(main) main.addEventListener('scroll', onScroll, {passive:true});
+      return {
+        rerender: function(){ render(); fillViewport(); },
+        reset: function(){ visibleCount = pageSize; render(); fillViewport(); }
+      };
+    };
+    </script>`
+
 const dashboardHTML = `<!DOCTYPE html>
 <html lang="{{.Lang}}" class="{{if eq .Theme "dark"}}theme-dark{{else if eq .Theme "light"}}theme-light{{end}}">
 <head>
@@ -1179,12 +1301,16 @@ const dashboardHTML = `<!DOCTYPE html>
     .sessions-table-row:hover { background: var(--surface-2); }
     @keyframes session-pulse { 0% { background: rgba(34,197,94,0.18); } 100% { background: transparent; } }
     .session-highlight { animation: session-pulse 2s ease-out; }
-    .saction-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 6px; font-size: 0.8125rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1.4; white-space: nowrap; }
+    .saction-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 11px; min-width: 95px; border-radius: 6px; font-size: 0.8125rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1.4; white-space: nowrap; }
     .saction-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--text-3); }
     .saction-btn.saction-danger { color: var(--danger); }
     .saction-btn.saction-danger:hover { background: rgba(220,53,69,0.08); border-color: var(--danger); }
     .saction-btn.saction-primary { color: var(--primary); }
     .saction-btn.saction-primary:hover { background: var(--primary-sub); border-color: rgba(124,58,237,0.4); }
+    .saction-btn.saction-primary-solid { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); font-weight: 600; }
+    .saction-btn.saction-primary-solid:hover { background: var(--primary-h); border-color: var(--primary-h); color: var(--primary-fg); }
+    .saction-btn.saction-rotate-all, .saction-btn.saction-primary-solid { width: 150px !important; min-width: 150px !important; max-width: 150px !important; box-sizing: border-box !important; padding: 2px 11px !important; border-color: transparent !important; }
+    .saction-btn.saction-rotate-all { background: var(--surface-2) !important; }
   </style>
   <script nonce="{{.CSPNonce}}">
   if(!document.cookie.split(';').some(function(c){return c.trim().indexOf('pam_tz=')===0;})){
@@ -1289,6 +1415,8 @@ const dashboardHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
+          {{if .IsAdmin}}<a href="/profile/notifications" class="user-dropdown-item">{{call .T "notify_preferences"}}</a>
+          <div class="user-dropdown-divider"></div>{{end}}
           <form method="POST" action="/signout" class="form-signout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item signout-btn">{{call .T "sign_out"}}</button></form>
         </div>
       </div>
@@ -1353,7 +1481,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="empty-state-centered">{{call .T "no_sudo_session"}}</div>
       {{end}}
     </div>
-    <div class="pagination-bar" id="sessions-admin-pagination"></div>
+    <div id="sessions-admin-loadbar"></div>
     {{if .AllSessions}}
     <div style="display:flex;justify-content:flex-end;margin-top:8px">
       <form method="POST" action="/api/sessions/revoke-all">
@@ -1368,47 +1496,30 @@ const dashboardHTML = `<!DOCTYPE html>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var justMineActive=false,myUsername='';
-      var sessionsAdminPage=1,sessionsAdminPs={{.DefaultPageSize}};
-      function renderSessionsAdminPager(vis){
-        var bar=document.getElementById('sessions-admin-pagination');
-        if(!bar)return;
-        var total=vis.length,totalPages=Math.max(1,Math.ceil(total/sessionsAdminPs));
-        if(sessionsAdminPage>totalPages)sessionsAdminPage=1;
-        var start=(sessionsAdminPage-1)*sessionsAdminPs;
-        var allRows=Array.from(document.querySelectorAll('#sessions-table .sessions-table-row'));
-        allRows.forEach(function(r){r.style.display='none';});
-        vis.slice(start,start+sessionsAdminPs).forEach(function(r){r.style.display='';});
-        if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
-        if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(sessionsAdminPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+sessionsAdminPs,total)+' of '+total+'</span><button class="pagination-btn" '+(sessionsAdminPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===sessionsAdminPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
-        var btns=bar.querySelectorAll('.pagination-btn');
-        if(!btns[0].disabled)btns[0].addEventListener('click',function(){sessionsAdminPage--;filterSessions();});
-        if(!btns[1].disabled)btns[1].addEventListener('click',function(){sessionsAdminPage++;filterSessions();});
-        bar.querySelector('.pagination-size-select').addEventListener('change',function(){sessionsAdminPs=parseInt(this.value);sessionsAdminPage=1;filterSessions();});
-      }
-      function filterSessions(){
+      function getFilteredSessions(){
         var filters={};
         document.querySelectorAll('#sessions-table .gtcol-filter-input').forEach(function(inp){ filters[inp.dataset.col]=inp.value.toLowerCase().trim(); });
         var allRows=Array.from(document.querySelectorAll('#sessions-table .sessions-table-row'));
-        var vis=allRows.filter(function(row){
+        return allRows.filter(function(row){
           for(var col in filters){ if(!filters[col]) continue; var cell=row.querySelector('.gtcol-'+col); if(cell&&cell.textContent.toLowerCase().indexOf(filters[col])===-1){return false;} }
           if(justMineActive&&myUsername){var uc=row.querySelector('.gtcol-suser');if(uc&&uc.textContent.trim().toLowerCase()!==myUsername.toLowerCase()){return false;}}
           return true;
         });
-        renderSessionsAdminPager(vis);
       }
-      document.querySelectorAll('#sessions-table .gtcol-filter-input').forEach(function(inp){ inp.addEventListener('input',filterSessions); });
+      var sessionsAdminCtl=idtInfinite({tableSelector:'#sessions-table',rowSelector:'.sessions-table-row',barId:'sessions-admin-loadbar',pageSize:{{.DefaultPageSize}},getFiltered:getFilteredSessions});
+      sessionsAdminCtl.rerender();
+      document.querySelectorAll('#sessions-table .gtcol-filter-input').forEach(function(inp){ inp.addEventListener('input',sessionsAdminCtl.reset); });
       var tbl=document.getElementById('sessions-table');
       if(tbl){
         var pfu=tbl.dataset.prefilterUser,pfh=tbl.dataset.prefilterHost;
         if(pfu){var inp=tbl.querySelector('.gtcol-filter-input[data-col="suser"]');if(inp){inp.value=pfu;}}
         if(pfh){var inp2=tbl.querySelector('.gtcol-filter-input[data-col="shost"]');if(inp2){inp2.value=pfh;}}
-        if(pfu||pfh){filterSessions();var sfr=document.getElementById('sessions-admin-filter-row');var sft=document.getElementById('sessions-admin-filter-toggle');if(sfr){sfr.style.display='';if(sft)sft.classList.add('active');}}
+        if(pfu||pfh){sessionsAdminCtl.reset();var sfr=document.getElementById('sessions-admin-filter-row');var sft=document.getElementById('sessions-admin-filter-toggle');if(sfr){sfr.style.display='';if(sft)sft.classList.add('active');}}
       }
       var jmt=document.getElementById('just-mine-toggle');
       if(jmt){
         myUsername=jmt.dataset.username||'';
-        function toggleJM(){justMineActive=!justMineActive;jmt.classList.toggle('active',justMineActive);jmt.setAttribute('aria-checked',justMineActive?'true':'false');filterSessions();}
+        function toggleJM(){justMineActive=!justMineActive;jmt.classList.toggle('active',justMineActive);jmt.setAttribute('aria-checked',justMineActive?'true':'false');sessionsAdminCtl.reset();}
         jmt.addEventListener('click',toggleJM);
         jmt.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleJM();}});
       }
@@ -1416,13 +1527,12 @@ const dashboardHTML = `<!DOCTYPE html>
         btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
       });
       var sac=document.getElementById('sessions-admin-clear');
-      if(sac)sac.addEventListener('click',function(){document.querySelectorAll('#sessions-table .gtcol-filter-input').forEach(function(i){i.value='';});filterSessions();});
+      if(sac)sac.addEventListener('click',function(){document.querySelectorAll('#sessions-table .gtcol-filter-input').forEach(function(i){i.value='';});sessionsAdminCtl.reset();});
       (function(){var ftb=document.getElementById('sessions-admin-filter-toggle');var ftr=document.getElementById('sessions-admin-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       document.querySelectorAll('.elevate-toggle').forEach(function(btn){
         btn.addEventListener('click',function(e){e.stopPropagation();var m=btn.parentElement.querySelector('.elevate-menu');var open=m.classList.contains('open');document.querySelectorAll('.elevate-menu.open').forEach(function(x){x.classList.remove('open');});if(!open){var r=btn.getBoundingClientRect();m.style.top=(r.bottom+4)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';m.classList.add('open');}});
       });
       document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
-      filterSessions();
     })();
     </script>
     {{else}}
@@ -1470,7 +1580,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="empty-state-centered">{{call .T "no_sudo_session"}}</div>
       {{end}}
     </div>
-    <div class="pagination-bar" id="sessions-user-pagination"></div>
+    <div id="sessions-user-loadbar"></div>
     {{if .HasActiveSessions}}
     <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:8px">
       <form method="POST" action="/api/sessions/extend-all">
@@ -1490,42 +1600,25 @@ const dashboardHTML = `<!DOCTYPE html>
     <script nonce="{{.CSPNonce}}">
     (function(){
       var activeOnly=false;
-      var sessionsUserPage=1,sessionsUserPs={{.DefaultPageSize}};
-      function renderSessionsUserPager(vis){
-        var bar=document.getElementById('sessions-user-pagination');
-        if(!bar)return;
-        var total=vis.length,totalPages=Math.max(1,Math.ceil(total/sessionsUserPs));
-        if(sessionsUserPage>totalPages)sessionsUserPage=1;
-        var start=(sessionsUserPage-1)*sessionsUserPs;
-        var allRows=Array.from(document.querySelectorAll('#user-sessions-table .sessions-table-row'));
-        allRows.forEach(function(r){r.style.display='none';});
-        vis.slice(start,start+sessionsUserPs).forEach(function(r){r.style.display='';});
-        if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
-        if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(sessionsUserPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+sessionsUserPs,total)+' of '+total+'</span><button class="pagination-btn" '+(sessionsUserPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===sessionsUserPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
-        var btns=bar.querySelectorAll('.pagination-btn');
-        if(!btns[0].disabled)btns[0].addEventListener('click',function(){sessionsUserPage--;filterUser();});
-        if(!btns[1].disabled)btns[1].addEventListener('click',function(){sessionsUserPage++;filterUser();});
-        bar.querySelector('.pagination-size-select').addEventListener('change',function(){sessionsUserPs=parseInt(this.value);sessionsUserPage=1;filterUser();});
-      }
-      function filterUser(){
+      function getFilteredUserSessions(){
         var hostFilter='';
         var hi=document.querySelector('#user-sessions-table .gtcol-filter-input[data-col="shost"]');
         if(hi) hostFilter=hi.value.toLowerCase().trim();
         var allRows=Array.from(document.querySelectorAll('#user-sessions-table .sessions-table-row'));
-        var vis=allRows.filter(function(row){
+        return allRows.filter(function(row){
           if(hostFilter){var hc=row.querySelector('.gtcol-shost');if(hc&&hc.textContent.toLowerCase().indexOf(hostFilter)===-1){return false;}}
           if(activeOnly&&row.dataset.active!=='true'){return false;}
           return true;
         });
-        renderSessionsUserPager(vis);
       }
+      var sessionsUserCtl=idtInfinite({tableSelector:'#user-sessions-table',rowSelector:'.sessions-table-row',barId:'sessions-user-loadbar',pageSize:{{.DefaultPageSize}},getFiltered:getFilteredUserSessions});
+      sessionsUserCtl.rerender();
       var hi=document.querySelector('#user-sessions-table .gtcol-filter-input[data-col="shost"]');
-      if(hi) hi.addEventListener('input',function(){sessionsUserPage=1;filterUser();});
+      if(hi) hi.addEventListener('input',sessionsUserCtl.reset);
       (function(){var ftb=document.getElementById('user-sessions-filter-toggle');var ftr=document.getElementById('user-sessions-filter-row');if(ftr&&ftr.style.display==='none'&&hi&&hi.value){ftr.style.display='';if(ftb)ftb.classList.add('active');}if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       var aot=document.getElementById('active-only-toggle');
       if(aot){
-        function toggleAO(){activeOnly=!activeOnly;aot.classList.toggle('active',activeOnly);aot.setAttribute('aria-checked',activeOnly?'true':'false');sessionsUserPage=1;filterUser();}
+        function toggleAO(){activeOnly=!activeOnly;aot.classList.toggle('active',activeOnly);aot.setAttribute('aria-checked',activeOnly?'true':'false');sessionsUserCtl.reset();}
         aot.addEventListener('click',toggleAO);
         aot.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleAO();}});
       }
@@ -1536,7 +1629,6 @@ const dashboardHTML = `<!DOCTYPE html>
         btn.addEventListener('click',function(e){e.stopPropagation();var m=btn.parentElement.querySelector('.elevate-menu');var open=m.classList.contains('open');document.querySelectorAll('.elevate-menu.open').forEach(function(x){x.classList.remove('open');});if(!open){var r=btn.getBoundingClientRect();m.style.top=(r.bottom+4)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';m.classList.add('open');}});
       });
       document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
-      filterUser();
     })();
     // L5: prevent double-submit on approve/reject forms — intercept click, not submit
     document.querySelectorAll('.list form, .bulk-row form').forEach(function(f){
@@ -1557,9 +1649,28 @@ const dashboardHTML = `<!DOCTYPE html>
     </script>
     {{end}}
 
-  </main>
+  </main>` + infiniteScrollJS + `
 </body>
 </html>`
+
+// historyRowsHTML defines the "historyRows" sub-template used both by the
+// full history page and by the fragment endpoint (/history?fragment=1) that
+// the client fetches when infinite-scrolling past the last rendered row.
+const historyRowsHTML = `{{define "historyRows"}}{{range .History}}
+<div class="history-gtable-row" role="row">
+  <div class="gtcol gtcol-htime" role="cell" style="flex-direction:column;justify-content:center;gap:1px">
+    <span style="font-size:0.8125rem;white-space:nowrap">{{.FormattedTime}}</span>
+    <span class="time-ago hint-muted" style="font-size:0.75rem;white-space:nowrap">{{.TimeAgo}}</span>
+  </div>
+  <div class="gtcol gtcol-haction" role="cell" style="align-items:center;flex-wrap:wrap;gap:3px">
+    <span class="history-action {{.Action}}" style="font-size:0.8125rem">{{.ActionLabel}}{{if .Actor}} <span class="history-actor">({{call $.T "by"}} {{.Actor}})</span>{{end}}</span>
+  </div>
+  {{if $.IsAdmin}}<div class="gtcol gtcol-huser" role="cell" style="align-items:center">{{if .Username}}<a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a>{{end}}</div>{{end}}
+  <div class="gtcol gtcol-hhost" role="cell" style="align-items:center">{{if .Hostname}}<a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}</div>
+  <div class="gtcol gtcol-hcode" role="cell" style="font-family:monospace;font-size:0.8125rem;color:var(--text-2);align-items:center">{{if .Code}}{{.Code}}{{end}}</div>
+  <div class="gtcol gtcol-hreason reason-quote" role="cell" style="align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{if .Reason}}"{{.Reason}}"{{end}}</div>
+</div>
+{{end}}{{end}}`
 
 const historyPageHTML = `<!DOCTYPE html>
 <html lang="{{.Lang}}" class="{{if eq .Theme "dark"}}theme-dark{{else if eq .Theme "light"}}theme-light{{end}}">
@@ -1600,13 +1711,15 @@ const historyPageHTML = `<!DOCTYPE html>
     .history-gtable-row:nth-child(odd) { background: transparent; }
     .history-gtable-row:hover { background: var(--surface-2); }
     .timeline { margin: 0 0 20px; }
+    .timeline-in-table { margin: 0; padding: 10px 12px 6px; border-bottom: 1px solid var(--border); }
+    .timeline-in-table .timeline-bars { height: 32px; }
     .timeline-bars { display: flex; align-items: flex-end; gap: 2px; height: 40px; }
     .timeline-bar { flex: 1; background: var(--primary); border-radius: 2px 2px 0 0; min-height: 2px; opacity: 0.35; transition: opacity 0.15s, transform 0.15s; cursor: pointer; text-decoration: none; display: block; }
     .timeline-bar:hover { opacity: 0.9; transform: scaleY(1.08); transform-origin: bottom; }
     .timeline-bar.now { background: var(--success); opacity: 0.7; }
     .timeline-bar.timeline-active { opacity: 1; outline: 2px solid var(--primary); outline-offset: 1px; }
     .timeline-bar.timeline-active.now { outline-color: var(--success); }
-    .timeline-axis { position: relative; height: 18px; margin-top: 3px; border-top: 1px solid var(--border); }
+    .timeline-axis { position: relative; height: 18px; margin-top: 3px; }
     .timeline-axis-label { position: absolute; font-size: 0.6875rem; color: var(--text-3); transform: translateX(-50%); white-space: nowrap; top: 3px; }
     .timeline-axis-label::before { content: ''; position: absolute; top: -4px; left: 50%; width: 1px; height: 4px; background: var(--border); }
     .time-range-form { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 12px; font-size: 0.8125rem; color: var(--text-2); flex-wrap: wrap; }
@@ -1618,6 +1731,7 @@ const historyPageHTML = `<!DOCTYPE html>
     .time-range-form .time-range-apply:hover { background: var(--primary); color: #fff; }
     .time-range-form .time-range-clear { color: var(--text-3); text-decoration: none; font-size: 0.75rem; padding: 4px 8px; border-radius: 5px; border: 1px solid transparent; white-space: nowrap; }
     .time-range-form .time-range-clear:hover { color: var(--danger); border-color: var(--danger); }
+    .time-range-in-table { margin: 0; border: none; border-radius: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); padding: 5px 10px; }
   </style>
   <script nonce="{{.CSPNonce}}">
   if(!document.cookie.split(';').some(function(c){return c.trim().indexOf('pam_tz=')===0;})){
@@ -1697,6 +1811,101 @@ const historyPageHTML = `<!DOCTYPE html>
       }
       document.querySelectorAll('#history-gtable .gtcol-filter-input').forEach(function(inp){inp.addEventListener('input',filterHistory);});
       if(ffc)ffc.addEventListener('click',function(){document.querySelectorAll('#history-gtable .gtcol-filter-input').forEach(function(inp){inp.value='';});filterHistory();});
+      // Infinite-scroll: fetch /history?page=N+1&fragment=1 as user scrolls
+      // near the bottom of .main; MCM-style fixed loadbar stays visible as fallback.
+      (function(){
+        var container=document.getElementById('history-rows-container');
+        var bar=document.getElementById('history-loadbar');
+        if(!container||!bar)return;
+        var row=idtBuildLoadbar(bar);
+        var main=idtScrollEl();
+        if(main)main.classList.add('has-loadbar');
+        var currentPage=parseInt(container.dataset.page||'1',10);
+        var totalPages=parseInt(container.dataset.totalPages||'1',10);
+        var perPage=parseInt(container.dataset.perPage||'30',10);
+        var totalRows=parseInt(container.dataset.totalRows||'0',10);
+        var hasMore=currentPage<totalPages;
+        function loadedRows(){ return container.querySelectorAll('.history-gtable-row').length; }
+        var loading=false;
+        var scrollCooldown=false;
+        var url=new URL(window.location.href);
+        function queryFor(page){
+          var q=new URLSearchParams(url.search);
+          q.set('page',String(page));
+          q.set('fragment','1');
+          q.set('per_page',String(perPage));
+          return '/history?'+q.toString();
+        }
+        function render(){
+          if(!hasMore){ bar.classList.add('is-empty'); row.innerHTML=''; return; }
+          bar.classList.remove('is-empty');
+          var shown=loadedRows();
+          var remaining=Math.max(0,totalRows-shown);
+          var nextBatch=Math.min(perPage,remaining);
+          row.innerHTML='<span class="loadbar-info">'+shown+' of '+totalRows+' entries</span>'+
+            '<button type="button" class="loadbar-btn loadbar-more">Load '+nextBatch+' more</button>'+
+            (remaining>nextBatch?'<button type="button" class="loadbar-btn loadbar-btn-all loadbar-all">Load all ('+remaining+')</button>':'');
+          row.querySelector('.loadbar-more').addEventListener('click',loadNext);
+          var allBtn=row.querySelector('.loadbar-all');
+          if(allBtn)allBtn.addEventListener('click',function(){loadAll();});
+        }
+        function loadNext(){
+          if(loading||!hasMore)return Promise.resolve();
+          loading=true;
+          row.innerHTML='<span class="loadbar-spinner"></span><span class="loadbar-info">Loading…</span>';
+          var next=currentPage+1;
+          return fetch(queryFor(next),{headers:{'Accept':'text/html'}})
+            .then(function(r){
+              if(!r.ok)throw new Error('HTTP '+r.status);
+              hasMore=r.headers.get('X-Has-More')==='true';
+              return r.text();
+            })
+            .then(function(html){
+              var tpl=document.createElement('template');
+              tpl.innerHTML=html.trim();
+              container.appendChild(tpl.content);
+              currentPage=next;
+              container.dataset.page=String(currentPage);
+              filterHistory();
+              loading=false;
+              render();
+            })
+            .catch(function(err){
+              loading=false;
+              row.innerHTML='<span class="loadbar-info" style="color:var(--danger)">Failed to load: '+err.message+'</span>'+
+                '<button type="button" class="loadbar-btn loadbar-more">Retry</button>';
+              row.querySelector('.loadbar-more').addEventListener('click',loadNext);
+            });
+        }
+        function loadAll(){
+          if(!hasMore)return;
+          loadNext().then(function(){ if(hasMore) loadAll(); });
+        }
+        // Fill-to-scrollable: keep fetching pages until .main is tall enough
+        // to scroll, so scroll-based auto-load can fire later. Capped at 5.
+        function fillViewport(){
+          if(!main||!hasMore)return;
+          var fills=0;
+          function step(){
+            if(fills>=5||!hasMore)return;
+            if(main.scrollHeight>main.clientHeight+100)return;
+            fills++;
+            loadNext().then(step);
+          }
+          step();
+        }
+        function onScroll(){
+          if(scrollCooldown||loading||!hasMore)return;
+          var distFromBottom=main.scrollHeight-main.scrollTop-main.clientHeight;
+          if(distFromBottom<300){
+            scrollCooldown=true;
+            loadNext().finally(function(){ setTimeout(function(){ scrollCooldown=false; },500); });
+          }
+        }
+        if(main) main.addEventListener('scroll',onScroll,{passive:true});
+        render();
+        fillViewport();
+      })();
     })();
   });
   // Poll every 30 seconds and reload if no unsaved filter state; preserve active filter inputs via sessionStorage
@@ -1771,6 +1980,8 @@ const historyPageHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/history" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
+          {{if .IsAdmin}}<a href="/profile/notifications" class="user-dropdown-item">{{call .T "notify_preferences"}}</a>
+          <div class="user-dropdown-divider"></div>{{end}}
           <form method="POST" action="/signout" class="form-signout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item signout-btn">{{call .T "sign_out"}}</button></form>
         </div>
       </div>
@@ -1778,35 +1989,6 @@ const historyPageHTML = `<!DOCTYPE html>
   </nav>
   <main class="main" id="main-content">
     <h1 class="sr-only">{{call .T "history"}} - {{call .T "app_name"}}</h1>
-
-
-    {{if .Timeline}}
-    <div class="timeline">
-      <div class="timeline-bars" id="timeline-bars">
-        {{range .Timeline}}<a href="/history?from={{.HourStartISO}}&to={{.HourEndISO}}&per_page={{$.PerPage}}&user={{$.UserFilter}}" class="timeline-bar{{if .IsNow}} now{{end}}{{if eqInt .HoursAgo $.ActiveHoursAgo}} timeline-active{{end}}" style="height:{{.Height}}px" title="{{.Details}}" aria-label="{{.Details}}" data-hours-ago="{{.HoursAgo}}"></a>{{end}}
-      </div>
-      <div class="timeline-axis" id="timeline-axis"></div>
-    </div>
-    {{end}}
-
-    {{if or .FilterFrom .FilterTo}}
-    <form method="GET" action="/history" class="time-range-form">
-      <input type="hidden" name="q" value="{{.Query}}">
-      <input type="hidden" name="action" value="{{.ActionFilter}}">
-      <input type="hidden" name="hostname" value="{{.HostFilter}}">
-      <input type="hidden" name="user" value="{{.UserFilter}}">
-      <input type="hidden" name="sort" value="{{.Sort}}">
-      <input type="hidden" name="order" value="{{.Order}}">
-      <input type="hidden" name="per_page" value="{{.PerPage}}">
-      <label for="history-from">{{call .T "history_from"}}</label>
-      <input type="datetime-local" id="history-from" name="from" value="{{.FilterFrom}}">
-      <span class="time-range-sep">→</span>
-      <label for="history-to">To</label>
-      <input type="datetime-local" id="history-to" name="to" value="{{.FilterTo}}">
-      <button type="submit" class="time-range-apply">{{call .T "history_apply"}}</button>
-      <a href="/history?q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&sort={{.Sort}}&order={{.Order}}&per_page={{.PerPage}}" class="time-range-clear">Clear</a>
-    </form>
-    {{end}}
 
     {{if .History}}
     <div class="history-gtable" id="history-gtable" role="table" aria-label="{{call .T "history"}}">
@@ -1823,47 +2005,48 @@ const historyPageHTML = `<!DOCTYPE html>
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="haction" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
         {{if .IsAdmin}}<div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="huser" placeholder="{{call .T "search"}}…" autocomplete="off"></div>{{end}}
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="hhost" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
-        <div style="display:flex;justify-content:flex-end;align-items:center;padding:0 6px"><button type="button" class="filter-clear-btn" id="history-filter-clear">{{call .T "clear_filter"}}</button></div>
-        <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="hreason" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
+        <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="hcode" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
+        <div style="display:flex;align-items:center;gap:4px;padding:0 6px;min-width:0"><input type="text" class="gtcol-filter-input" data-col="hreason" placeholder="{{call .T "search"}}…" autocomplete="off" style="flex:1;min-width:0"><button type="button" class="filter-clear-btn" id="history-filter-clear">{{call .T "clear_filter"}}</button></div>
       </div>
-      {{range .History}}
-      <div class="history-gtable-row" role="row">
-        <div class="gtcol gtcol-htime" role="cell">
-          <span style="font-size:0.8125rem">{{.FormattedTime}} <span class="time-ago hint-muted">({{.TimeAgo}})</span></span>
+      {{if .Timeline}}
+      <div class="timeline timeline-in-table">
+        <div class="timeline-bars" id="timeline-bars">
+          {{range .Timeline}}<a href="/history?from={{.HourStartISO}}&to={{.HourEndISO}}&per_page={{$.PerPage}}&user={{$.UserFilter}}" class="timeline-bar{{if .IsNow}} now{{end}}{{if eqInt .HoursAgo $.ActiveHoursAgo}} timeline-active{{end}}" style="height:{{.Height}}px" title="{{.Details}}" aria-label="{{.Details}}" data-hours-ago="{{.HoursAgo}}"></a>{{end}}
         </div>
-        <div class="gtcol gtcol-haction" role="cell" style="align-items:center;flex-wrap:wrap;gap:3px">
-          <span class="history-action {{.Action}}" style="font-size:0.8125rem">{{.ActionLabel}}{{if .Actor}} <span class="history-actor">({{call $.T "by"}} {{.Actor}})</span>{{end}}</span>
-        </div>
-        {{if $.IsAdmin}}<div class="gtcol gtcol-huser" role="cell" style="align-items:center">{{if .Username}}<a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a>{{end}}</div>{{end}}
-        <div class="gtcol gtcol-hhost" role="cell" style="align-items:center">{{if .Hostname}}<a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{end}}</div>
-        <div class="gtcol gtcol-hcode" role="cell" style="font-family:monospace;font-size:0.8125rem;color:var(--text-2);align-items:center">{{if .Code}}{{.Code}}{{end}}</div>
-        <div class="gtcol gtcol-hreason reason-quote" role="cell" style="align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{if .Reason}}"{{.Reason}}"{{end}}</div>
+        <div class="timeline-axis" id="timeline-axis"></div>
       </div>
       {{end}}
-    </div>
-    <div id="filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
-    <div class="pagination">
-      {{if .HasPrev}}<a href="/history?page={{sub .Page 1}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&sort={{.Sort}}&order={{.Order}}&per_page={{.PerPage}}">&#8592; {{call .T "previous"}}</a>{{end}}
-      <span class="page-info">{{call .T "page"}} {{.Page}} {{call .T "of"}} {{.TotalPages}}</span>
-      {{if .HasNext}}<a href="/history?page={{add .Page 1}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&sort={{.Sort}}&order={{.Order}}&per_page={{.PerPage}}">{{call .T "next"}} &#8594;</a>{{end}}
-      <form method="GET" action="/history" class="page-size-form">
+      {{if or .FilterFrom .FilterTo}}
+      <form method="GET" action="/history" class="time-range-form time-range-in-table">
+        <input type="hidden" name="q" value="{{.Query}}">
         <input type="hidden" name="action" value="{{.ActionFilter}}">
         <input type="hidden" name="hostname" value="{{.HostFilter}}">
         <input type="hidden" name="user" value="{{.UserFilter}}">
         <input type="hidden" name="sort" value="{{.Sort}}">
         <input type="hidden" name="order" value="{{.Order}}">
-        <input type="hidden" name="q" value="{{.Query}}">
-        <select name="per_page" class="page-size-select" aria-label="{{call .T "aria_page_size"}}">
-          {{range .PerPageOptions}}<option value="{{.}}" {{if eqInt . $.PerPage}}selected{{end}}>{{.}}</option>{{end}}
-        </select>
-        <button type="submit" class="page-size-btn">{{call .T "go"}}</button>
+        <input type="hidden" name="per_page" value="{{.PerPage}}">
+        <label for="history-from">{{call .T "history_from"}}</label>
+        <input type="datetime-local" id="history-from" name="from" value="{{.FilterFrom}}">
+        <span class="time-range-sep">→</span>
+        <label for="history-to">To</label>
+        <input type="datetime-local" id="history-to" name="to" value="{{.FilterTo}}">
+        <button type="submit" class="time-range-apply">{{call .T "history_apply"}}</button>
+        <a href="/history?q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&sort={{.Sort}}&order={{.Order}}&per_page={{.PerPage}}" class="time-range-clear">Clear</a>
       </form>
+      {{end}}
+      <div id="history-rows-container" data-page="{{.Page}}" data-total-pages="{{.TotalPages}}" data-per-page="{{.PerPage}}" data-total-rows="{{.TotalRows}}">
+      {{template "historyRows" .}}
+      </div>
+    </div>
+    <div id="filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
+    <div id="history-loadbar" class="loadbar"></div>
+    <div class="pagination">
       <span class="export-links"><a href="/api/history/export?format=csv" class="export-link">{{call .T "export_csv"}}</a> <a href="/api/history/export?format=json" class="export-link">{{call .T "export_json"}}</a></span>
     </div>
     {{else}}
     <p class="empty-state">{{call .T "no_activity"}}</p>
     {{end}}
-  </main>
+  </main>` + infiniteScrollJS + `
 </body>
 </html>`
 
@@ -1913,13 +2096,17 @@ const adminPageHTML = `<!DOCTYPE html>
     .history-action.auto_approved, .history-action.elevated, .history-action.extended { color: var(--primary); }
     .history-action.rotated_breakglass { color: var(--text-2); }
     .history-actor { font-size: 0.6875rem; color: var(--text-2); font-weight: 400; }
-    .saction-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 6px; font-size: 0.8125rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1.4; white-space: nowrap; text-decoration: none; }
+    .saction-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 11px; min-width: 95px; border-radius: 6px; font-size: 0.8125rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1.4; white-space: nowrap; text-decoration: none; }
     .saction-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--text-3); }
     .saction-btn.saction-danger { color: var(--danger); }
     .saction-btn.saction-danger:hover { background: rgba(220,53,69,0.08); border-color: var(--danger); }
     .saction-btn.saction-primary { color: var(--primary); }
     .saction-btn.saction-primary:hover { background: var(--primary-sub); border-color: rgba(124,58,237,0.4); }
-    .saction-btn.saction-sessions { min-width: 9rem; justify-content: center; }
+    .saction-btn.saction-primary-solid { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); font-weight: 600; }
+    .saction-btn.saction-primary-solid:hover { background: var(--primary-h); border-color: var(--primary-h); color: var(--primary-fg); }
+    .saction-btn.saction-rotate-all, .saction-btn.saction-primary-solid { width: 150px !important; min-width: 150px !important; max-width: 150px !important; box-sizing: border-box !important; padding: 2px 11px !important; border-color: transparent !important; }
+    .saction-btn.saction-rotate-all { background: var(--surface-2) !important; }
+    .saction-btn.saction-sessions { min-width: 9rem; }
     /* Config page */
     .config-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
     .config-filter-header { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
@@ -2274,6 +2461,8 @@ const adminPageHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/admin" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
+          {{if .IsAdmin}}<a href="/profile/notifications" class="user-dropdown-item">{{call .T "notify_preferences"}}</a>
+          <div class="user-dropdown-divider"></div>{{end}}
           <form method="POST" action="/signout" class="form-signout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item signout-btn">{{call .T "sign_out"}}</button></form>
         </div>
       </div>
@@ -2668,32 +2857,12 @@ const adminPageHTML = `<!DOCTYPE html>
       {{end}}
       {{end}}
     </div>
-    <div class="pagination-bar" id="users-pagination"></div>
+    <div id="users-loadbar"></div>
     <div id="users-filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var usersPage=1,usersPs={{.DefaultPageSize}};
-      function hideRowAndPanel(r){r.style.display='none';var p=r.nextElementSibling;if(p&&p.classList.contains('user-claims-panel')){p.style.display='none';}}
-      function renderUsersPager(vis){
-        var bar=document.getElementById('users-pagination');
-        if(!bar)return;
-        var total=vis.length,totalPages=Math.max(1,Math.ceil(total/usersPs));
-        if(usersPage>totalPages)usersPage=1;
-        var start=(usersPage-1)*usersPs;
-        var allRows=Array.from(document.querySelectorAll('#users-table .users-table-row'));
-        allRows.forEach(function(r){hideRowAndPanel(r);});
-        vis.slice(start,start+usersPs).forEach(function(r){r.style.display='';});
-        var emptyMsg=document.getElementById('users-filter-empty-msg');
-        if(emptyMsg){emptyMsg.style.display=total===0?'':'none';}
-        if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
-        if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(usersPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+usersPs,total)+' of '+total+'</span><button class="pagination-btn" '+(usersPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===usersPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
-        var btns=bar.querySelectorAll('.pagination-btn');
-        if(!btns[0].disabled)btns[0].addEventListener('click',function(){usersPage--;filterUsers();});
-        if(!btns[1].disabled)btns[1].addEventListener('click',function(){usersPage++;filterUsers();});
-        bar.querySelector('.pagination-size-select').addEventListener('change',function(){usersPs=parseInt(this.value);usersPage=1;filterUsers();});
-      }
-      function filterUsers(){
+      function hideRowAndPanel(r){var p=r.nextElementSibling;if(p&&p.classList.contains('user-claims-panel')){p.style.display='none';}}
+      function getFilteredUsers(){
         var filters={};
         document.querySelectorAll('#users-table .gtcol-filter-input').forEach(function(inp){ filters[inp.dataset.col]=inp.value.toLowerCase().trim(); });
         var allRows=Array.from(document.querySelectorAll('#users-table .users-table-row'));
@@ -2701,11 +2870,15 @@ const adminPageHTML = `<!DOCTYPE html>
           for(var col in filters){ if(!filters[col]) continue; var cell=row.querySelector('.gtcol-'+col); if(cell&&cell.textContent.toLowerCase().indexOf(filters[col])===-1){return false;} }
           return true;
         });
-        renderUsersPager(vis);
+        var emptyMsg=document.getElementById('users-filter-empty-msg');
+        if(emptyMsg){emptyMsg.style.display=vis.length===0?'':'none';}
+        return vis;
       }
-      document.querySelectorAll('#users-table .gtcol-filter-input').forEach(function(inp){ inp.addEventListener('input',function(){usersPage=1;filterUsers();}); });
+      var usersCtl=idtInfinite({tableSelector:'#users-table',rowSelector:'.users-table-row',barId:'users-loadbar',pageSize:{{.DefaultPageSize}},getFiltered:getFilteredUsers,onHide:hideRowAndPanel});
+      usersCtl.rerender();
+      document.querySelectorAll('#users-table .gtcol-filter-input').forEach(function(inp){ inp.addEventListener('input',usersCtl.reset); });
       var uc=document.getElementById('users-clear');
-      if(uc)uc.addEventListener('click',function(){document.querySelectorAll('#users-table .gtcol-filter-input').forEach(function(i){i.value='';});usersPage=1;filterUsers();});
+      if(uc)uc.addEventListener('click',function(){document.querySelectorAll('#users-table .gtcol-filter-input').forEach(function(i){i.value='';});usersCtl.reset();});
       (function(){var ftb=document.getElementById('users-filter-toggle');var ftr=document.getElementById('users-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       document.querySelectorAll('.confirm-submit').forEach(function(btn){
         btn.addEventListener('click',function(e){ if(!confirm(btn.dataset.confirm)){ e.preventDefault(); } });
@@ -2773,18 +2946,7 @@ const adminPageHTML = `<!DOCTYPE html>
             .finally(function(){if(saveBtn)saveBtn.disabled=false;});
         });
       });
-      document.querySelectorAll('.pill-cell').forEach(function(cell){
-        var items=Array.from(cell.querySelectorAll('.pill,.group-badge'));
-        if(!items.length)return;
-        items.forEach(function(it){it.style.display='';});
-        var ex=cell.querySelector('.pill-more-btn');if(ex)ex.remove();
-        var maxShow=Math.min(items.length,4);
-        for(var i=maxShow;i<items.length;i++){items[i].style.display='none';}
-        while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){maxShow--;items[maxShow].style.display='none';}
-        var hidden=items.length-maxShow;
-        if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(){items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){items[maxShow-1].style.display='none';maxShow--;hidden++;btn.textContent='+'+hidden+' more';}}
-      });
-      filterUsers();
+      usersCtl.rerender();
     })();
     </script>
     {{else}}
@@ -2823,9 +2985,9 @@ const adminPageHTML = `<!DOCTYPE html>
       {{range .Groups}}
       <div class="group-wrapper">
       <div class="groups-table-row" id="group-{{.Name}}" role="row">
-        <div class="gtcol gtcol-name" role="cell" style="gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between">
+        <div class="gtcol gtcol-name" role="cell" style="gap:8px;align-items:center;flex-wrap:nowrap;justify-content:flex-start">
           <a href="/admin/groups#group-{{.Name}}" class="group-badge group-badge-link">{{.Name}}</a>
-          {{if $.CanEditClaims}}<button type="button" class="claims-toggle-btn" style="margin-left:auto" data-claims-target="gclaims-{{.GroupID}}"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px;vertical-align:-1px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>Claims <span class="claims-chevron">▾</span></button>{{end}}
+          {{if $.CanEditClaims}}<button type="button" class="claims-toggle-btn" data-claims-target="gclaims-{{.GroupID}}"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px;vertical-align:-1px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>Claims <span class="claims-chevron">▾</span></button>{{end}}
         </div>
         <div class="gtcol gtcol-cmds" role="cell">
           <div class="pill-cell">{{if .AllCmds}}<span class="pill cmd">{{call $.T "all_commands"}}</span>{{else}}{{range .CmdList}}<span class="pill cmd">{{.}}</span>{{end}}{{end}}</div>
@@ -2879,33 +3041,13 @@ const adminPageHTML = `<!DOCTYPE html>
       {{end}}
       </div>
     </div>
-    <div class="pagination-bar" id="groups-pagination"></div>
+    <div id="groups-loadbar"></div>
     <div id="groups-filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var groupsPage=1,groupsPs={{.DefaultPageSize}};
-      function renderGroupsPager(vis){
-        var bar=document.getElementById('groups-pagination');
-        if(!bar)return;
-        var total=vis.length,totalPages=Math.max(1,Math.ceil(total/groupsPs));
-        if(groupsPage>totalPages)groupsPage=1;
-        var start=(groupsPage-1)*groupsPs;
-        var allWrappers=Array.from(document.querySelectorAll('.group-wrapper'));
-        allWrappers.forEach(function(r){r.style.display='none';});
-        vis.slice(start,start+groupsPs).forEach(function(r){r.style.display='';});
-        var emptyMsg=document.getElementById('groups-filter-empty-msg');
-        if(emptyMsg){emptyMsg.style.display=total===0?'':'none';}
-        if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
-        if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(groupsPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+groupsPs,total)+' of '+total+'</span><button class="pagination-btn" '+(groupsPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===groupsPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
-        var btns=bar.querySelectorAll('.pagination-btn');
-        if(!btns[0].disabled)btns[0].addEventListener('click',function(){groupsPage--;filterGroups();});
-        if(!btns[1].disabled)btns[1].addEventListener('click',function(){groupsPage++;filterGroups();});
-        bar.querySelector('.pagination-size-select').addEventListener('change',function(){groupsPs=parseInt(this.value);groupsPage=1;filterGroups();});
-      }
-      function filterGroups(){
+      function getFilteredGroups(){
         var filters={};
-        document.querySelectorAll('.gtcol-filter-input').forEach(function(inp){
+        document.querySelectorAll('.groups-table-filter .gtcol-filter-input').forEach(function(inp){
           filters[inp.dataset.col]=inp.value.toLowerCase().trim();
         });
         var allWrappers=Array.from(document.querySelectorAll('.group-wrapper'));
@@ -2917,13 +3059,17 @@ const adminPageHTML = `<!DOCTYPE html>
           }
           return true;
         });
-        renderGroupsPager(vis);
+        var emptyMsg=document.getElementById('groups-filter-empty-msg');
+        if(emptyMsg){emptyMsg.style.display=vis.length===0?'':'none';}
+        return vis;
       }
-      document.querySelectorAll('.gtcol-filter-input').forEach(function(inp){
-        inp.addEventListener('input',function(){groupsPage=1;filterGroups();});
+      var groupsCtl=idtInfinite({tableSelector:'.groups-list',rowSelector:'.group-wrapper',barId:'groups-loadbar',pageSize:{{.DefaultPageSize}},getFiltered:getFilteredGroups});
+      groupsCtl.rerender();
+      document.querySelectorAll('.groups-table-filter .gtcol-filter-input').forEach(function(inp){
+        inp.addEventListener('input',groupsCtl.reset);
       });
       var gc=document.getElementById('groups-clear');
-      if(gc)gc.addEventListener('click',function(){document.querySelectorAll('.gtcol-filter-input').forEach(function(i){i.value='';});groupsPage=1;filterGroups();});
+      if(gc)gc.addEventListener('click',function(){document.querySelectorAll('.groups-table-filter .gtcol-filter-input').forEach(function(i){i.value='';});groupsCtl.reset();});
       (function(){var ftb=document.getElementById('groups-filter-toggle');var ftr=document.getElementById('groups-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       // Claims panel toggles
       function setClaimsToggleState(btn,open){
@@ -2966,18 +3112,7 @@ const adminPageHTML = `<!DOCTYPE html>
             .finally(function(){if(saveBtn)saveBtn.disabled=false;});
         });
       });
-      document.querySelectorAll('.pill-cell').forEach(function(cell){
-        var items=Array.from(cell.querySelectorAll('.pill,.group-badge'));
-        if(!items.length)return;
-        items.forEach(function(it){it.style.display='';});
-        var ex=cell.querySelector('.pill-more-btn');if(ex)ex.remove();
-        var maxShow=Math.min(items.length,4);
-        for(var i=maxShow;i<items.length;i++){items[i].style.display='none';}
-        while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){maxShow--;items[maxShow].style.display='none';}
-        var hidden=items.length-maxShow;
-        if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(){items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){items[maxShow-1].style.display='none';maxShow--;hidden++;btn.textContent='+'+hidden+' more';}}
-      });
-      filterGroups();
+      groupsCtl.rerender();
     })();
     </script>
     {{else}}
@@ -2995,9 +3130,12 @@ const adminPageHTML = `<!DOCTYPE html>
           {{if .GroupFilter}}<a href="/admin/hosts" class="hint-muted">{{call .T "clear_filter"}}</a>{{end}}
         </div>
         <div class="gtcol gtcol-hbreakglass" role="columnheader"><span class="col-sort-link">{{call .T "breakglass"}}</span></div>
-        <div class="gtcol gtcol-hactions" role="columnheader" style="align-items:center;flex-wrap:wrap;gap:8px">
+        <div class="gtcol gtcol-hactions" role="columnheader" style="align-items:center;flex-wrap:wrap;gap:8px;justify-content:space-between">
           <span class="col-sort-link">{{call .T "action"}}</span>
-          {{if .HasEscrowedHosts}}<form method="POST" action="/api/hosts/rotate-all" style="display:inline;margin:0"><input type="hidden" name="username" value="{{.Username}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="saction-btn saction-rotate-all" data-confirm="{{call .T "confirm_rotate_all"}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>{{call .T "rotate_all"}}</button></form>{{end}}
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            {{if .HasEscrowedHosts}}<form method="POST" action="/api/hosts/rotate-all" class="form-signout"><input type="hidden" name="username" value="{{.Username}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="saction-btn saction-rotate-all" data-confirm="{{call .T "confirm_rotate_all"}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>{{call .T "rotate_all"}}</button></form>{{end}}
+            {{if .DeployEnabled}}<button id="deploy-open-btn" type="button" class="saction-btn saction-primary-solid" title="{{call .T "deploy_title"}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>{{call .T "deploy_btn"}}</button>{{end}}
+          </div>
         </div>
       </div>
       <div class="hosts-table-filter" id="hosts-filter-row" style="display:none">
@@ -3032,31 +3170,11 @@ const adminPageHTML = `<!DOCTYPE html>
       </div>
       {{end}}
     </div>
-    <div class="pagination-bar" id="hosts-pagination"></div>
+    <div id="hosts-loadbar"></div>
     <div id="hosts-filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <script nonce="{{.CSPNonce}}">
     (function(){
-      var hostsPage=1,hostsPs={{.DefaultPageSize}};
-      function renderHostsPager(vis){
-        var bar=document.getElementById('hosts-pagination');
-        if(!bar)return;
-        var total=vis.length,totalPages=Math.max(1,Math.ceil(total/hostsPs));
-        if(hostsPage>totalPages)hostsPage=1;
-        var start=(hostsPage-1)*hostsPs;
-        var allRows=Array.from(document.querySelectorAll('#hosts-table .hosts-table-row'));
-        allRows.forEach(function(r){r.style.display='none';});
-        vis.slice(start,start+hostsPs).forEach(function(r){r.style.display='';});
-        var emptyMsg=document.getElementById('hosts-filter-empty-msg');
-        if(emptyMsg){emptyMsg.style.display=total===0?'':'none';}
-        if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
-        if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(hostsPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+hostsPs,total)+' of '+total+'</span><button class="pagination-btn" '+(hostsPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===hostsPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
-        var btns=bar.querySelectorAll('.pagination-btn');
-        if(!btns[0].disabled)btns[0].addEventListener('click',function(){hostsPage--;filterHosts();});
-        if(!btns[1].disabled)btns[1].addEventListener('click',function(){hostsPage++;filterHosts();});
-        bar.querySelector('.pagination-size-select').addEventListener('change',function(){hostsPs=parseInt(this.value);hostsPage=1;filterHosts();});
-      }
-      function filterHosts(){
+      function getFilteredHosts(){
         var filters={};
         document.querySelectorAll('#hosts-table .gtcol-filter-input').forEach(function(inp){ filters[inp.dataset.col]=inp.value.toLowerCase().trim(); });
         var allRows=Array.from(document.querySelectorAll('#hosts-table .hosts-table-row'));
@@ -3064,11 +3182,15 @@ const adminPageHTML = `<!DOCTYPE html>
           for(var col in filters){ if(!filters[col]) continue; var cell=row.querySelector('.gtcol-'+col); if(cell&&cell.textContent.toLowerCase().indexOf(filters[col])===-1){return false;} }
           return true;
         });
-        renderHostsPager(vis);
+        var emptyMsg=document.getElementById('hosts-filter-empty-msg');
+        if(emptyMsg){emptyMsg.style.display=vis.length===0?'':'none';}
+        return vis;
       }
-      document.querySelectorAll('#hosts-table .gtcol-filter-input').forEach(function(inp){ inp.addEventListener('input',function(){hostsPage=1;filterHosts();}); });
+      var hostsCtl=idtInfinite({tableSelector:'#hosts-table',rowSelector:'.hosts-table-row',barId:'hosts-loadbar',pageSize:{{.DefaultPageSize}},getFiltered:getFilteredHosts});
+      hostsCtl.rerender();
+      document.querySelectorAll('#hosts-table .gtcol-filter-input').forEach(function(inp){ inp.addEventListener('input',hostsCtl.reset); });
       var hc=document.getElementById('hosts-clear');
-      if(hc)hc.addEventListener('click',function(){document.querySelectorAll('#hosts-table .gtcol-filter-input').forEach(function(i){i.value='';});hostsPage=1;filterHosts();});
+      if(hc)hc.addEventListener('click',function(){document.querySelectorAll('#hosts-table .gtcol-filter-input').forEach(function(i){i.value='';});hostsCtl.reset();});
       (function(){var ftb=document.getElementById('hosts-filter-toggle');var ftr=document.getElementById('hosts-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       document.querySelectorAll('.saction-rotate,.saction-rotate-all').forEach(function(btn){
         btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
@@ -3149,7 +3271,7 @@ const adminPageHTML = `<!DOCTYPE html>
           if(labelEl&&input&&!input.getAttribute('aria-label')){input.setAttribute('aria-label',labelEl.textContent.trim());}
         });
       });
-      filterHosts();
+      hostsCtl.rerender();
     })();
     </script>
     <div id="reveal-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reveal-modal-title">
@@ -3172,7 +3294,6 @@ const adminPageHTML = `<!DOCTYPE html>
     {{else}}
     <p class="empty-state">{{call .T "no_known_hosts"}}</p>
     {{end}}
-    {{if .DeployEnabled}}<div style="margin-top:14px"><button id="deploy-open-btn" class="btn btn-primary" title="{{call .T "deploy_title"}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>{{call .T "deploy_btn"}}</button></div>{{end}}
 
     {{else if eq .AdminTab "sudo-rules"}}
     {{if .SudoRules}}
@@ -3298,6 +3419,51 @@ const adminPageHTML = `<!DOCTYPE html>
       document.getElementById('sudo-form-card').style.display = 'none';
       document.getElementById('sudo-add-btn').style.display = '';
     }
+    document.querySelectorAll('.confirm-submit').forEach(function(btn){
+      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+    });
+    </script>
+
+    {{else if eq .AdminTab "profile-notifications"}}
+    {{range .FlashErrors}}<div class="banner banner-error" role="alert">{{.}}</div>{{end}}
+
+    <!-- ── My Notification Preferences (profile page) ──────────────────── -->
+    <h3 style="margin-bottom:12px">{{call .T "notify_preferences"}}</h3>
+    <p style="font-size:0.85rem;color:var(--text-3);margin-bottom:12px">{{call .T "notify_preferences_desc"}}</p>
+
+    <div class="info-section">
+      <form method="POST" action="/api/admin/notification-preferences">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
+        <input type="hidden" name="redirect_to" value="/profile/notifications">
+        <table class="info-table" style="width:100%;max-width:640px">
+          <tr>
+            <td class="info-label"><label for="pref-channels">{{call .T "notify_channels"}}</label></td>
+            <td><input type="text" id="pref-channels" name="channels" class="text-input" value="{{if .MyNotifyPref}}{{range $i, $c := .MyNotifyPref.Channels}}{{if $i}}, {{end}}{{$c}}{{end}}{{end}}" placeholder="ops-slack, oncall-ntfy">
+            {{if .ChannelNames}}<p class="hint-muted" style="margin:2px 0">{{call .T "notify_pref_available"}} {{range $i, $n := .ChannelNames}}{{if $i}}, {{end}}{{$n}}{{end}}</p>{{end}}</td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="pref-events">{{call .T "notify_events_label"}}</label></td>
+            <td><input type="text" id="pref-events" name="events" class="text-input" value="{{if .MyNotifyPref}}{{range $i, $e := .MyNotifyPref.Events}}{{if $i}}, {{end}}{{$e}}{{end}}{{end}}" placeholder="* (all) or challenge_created, challenge_approved"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="pref-hosts">{{call .T "notify_hosts_label"}}</label></td>
+            <td><input type="text" id="pref-hosts" name="hosts" class="text-input" value="{{if .MyNotifyPref}}{{range $i, $h := .MyNotifyPref.Hosts}}{{if $i}}, {{end}}{{$h}}{{end}}{{end}}" placeholder="empty = all hosts"></td>
+          </tr>
+          <tr>
+            <td class="info-label"><label for="pref-enabled">{{call .T "notify_pref_enabled_label"}}</label></td>
+            <td><input type="checkbox" id="pref-enabled" name="enabled" value="true" {{if and .MyNotifyPref .MyNotifyPref.Enabled}}checked{{end}}></td>
+          </tr>
+        </table>
+        <div class="modal-actions" style="margin-top:12px">
+          {{if .MyNotifyPref}}<button type="submit" name="action" value="delete" class="btn btn-danger confirm-submit" data-confirm="Remove your notification subscription?" style="margin-right:auto">{{call .T "notify_remove_pref"}}</button>{{end}}
+          <button type="submit" class="btn btn-primary">{{call .T "notify_save_pref"}}</button>
+        </div>
+      </form>
+    </div>
+
+    <script nonce="{{.CSPNonce}}">
     document.querySelectorAll('.confirm-submit').forEach(function(btn){
       btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
     });
@@ -3444,41 +3610,6 @@ const adminPageHTML = `<!DOCTYPE html>
     </div>
     <div style="margin-top:14px">
       <button type="button" id="rt-add-btn" class="btn btn-primary" aria-expanded="false" onclick="document.getElementById('route-form-card').style.display='';this.style.display='none';this.setAttribute('aria-expanded','true')">{{call .T "notify_add_route"}}</button>
-    </div>
-
-    <!-- ── My Notification Preferences ────────────────────────────────── -->
-    <h3 style="margin-top:32px;margin-bottom:12px">{{call .T "notify_preferences"}}</h3>
-    <p style="font-size:0.85rem;color:var(--text-3);margin-bottom:12px">{{call .T "notify_preferences_desc"}}</p>
-
-    <div class="info-section">
-      <form method="POST" action="/api/admin/notification-preferences">
-        <input type="hidden" name="username" value="{{.Username}}">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <input type="hidden" name="csrf_ts" value="{{.CSRFTs}}">
-        <table class="info-table" style="width:100%;max-width:640px">
-          <tr>
-            <td class="info-label"><label for="pref-channels">{{call .T "notify_channels"}}</label></td>
-            <td><input type="text" id="pref-channels" name="channels" class="text-input" value="{{if .MyNotifyPref}}{{range $i, $c := .MyNotifyPref.Channels}}{{if $i}}, {{end}}{{$c}}{{end}}{{end}}" placeholder="ops-slack, oncall-ntfy">
-            {{if .ChannelNames}}<p class="hint-muted" style="margin:2px 0">{{call .T "notify_pref_available"}} {{range $i, $n := .ChannelNames}}{{if $i}}, {{end}}{{$n}}{{end}}</p>{{end}}</td>
-          </tr>
-          <tr>
-            <td class="info-label"><label for="pref-events">{{call .T "notify_events_label"}}</label></td>
-            <td><input type="text" id="pref-events" name="events" class="text-input" value="{{if .MyNotifyPref}}{{range $i, $e := .MyNotifyPref.Events}}{{if $i}}, {{end}}{{$e}}{{end}}{{end}}" placeholder="* (all) or challenge_created, challenge_approved"></td>
-          </tr>
-          <tr>
-            <td class="info-label"><label for="pref-hosts">{{call .T "notify_hosts_label"}}</label></td>
-            <td><input type="text" id="pref-hosts" name="hosts" class="text-input" value="{{if .MyNotifyPref}}{{range $i, $h := .MyNotifyPref.Hosts}}{{if $i}}, {{end}}{{$h}}{{end}}{{end}}" placeholder="empty = all hosts"></td>
-          </tr>
-          <tr>
-            <td class="info-label"><label for="pref-enabled">{{call .T "notify_pref_enabled_label"}}</label></td>
-            <td><input type="checkbox" id="pref-enabled" name="enabled" value="true" {{if and .MyNotifyPref .MyNotifyPref.Enabled}}checked{{end}}></td>
-          </tr>
-        </table>
-        <div class="modal-actions" style="margin-top:12px">
-          {{if .MyNotifyPref}}<button type="submit" name="action" value="delete" class="btn btn-danger confirm-submit" data-confirm="Remove your notification subscription?" style="margin-right:auto">{{call .T "notify_remove_pref"}}</button>{{end}}
-          <button type="submit" class="btn btn-primary">{{call .T "notify_save_pref"}}</button>
-        </div>
-      </form>
     </div>
 
     <script nonce="{{.CSPNonce}}">
@@ -3988,7 +4119,7 @@ const adminPageHTML = `<!DOCTYPE html>
       </div>
     </div>
   </div>
-  {{end}}
+  {{end}}` + infiniteScrollJS + `
 </body>
 </html>`
 
@@ -4030,12 +4161,16 @@ const accessPageHTML = `<!DOCTYPE html>
     .access-status-time { font-weight: 400; color: var(--text-2); font-size: 0.75rem; }
     .access-host-header { display: grid; grid-template-columns: 260px 1fr 220px; gap: 0; padding: 5px 12px 5px 24px; background: var(--bg); border-bottom: 1px solid var(--border); }
     .access-host-header > div { font-size: 0.75rem; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
-    .saction-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 6px; font-size: 0.8125rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1.4; white-space: nowrap; }
+    .saction-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 11px; min-width: 95px; border-radius: 6px; font-size: 0.8125rem; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; line-height: 1.4; white-space: nowrap; }
     .saction-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--text-3); }
     .saction-btn.saction-danger { color: var(--danger); }
     .saction-btn.saction-danger:hover { background: rgba(220,53,69,0.08); border-color: var(--danger); }
     .saction-btn.saction-primary { color: var(--primary); }
     .saction-btn.saction-primary:hover { background: var(--primary-sub); border-color: rgba(124,58,237,0.4); }
+    .saction-btn.saction-primary-solid { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); font-weight: 600; }
+    .saction-btn.saction-primary-solid:hover { background: var(--primary-h); border-color: var(--primary-h); color: var(--primary-fg); }
+    .saction-btn.saction-rotate-all, .saction-btn.saction-primary-solid { width: 150px !important; min-width: 150px !important; max-width: 150px !important; box-sizing: border-box !important; padding: 2px 11px !important; border-color: transparent !important; }
+    .saction-btn.saction-rotate-all { background: var(--surface-2) !important; }
   </style>
   <script nonce="{{.CSPNonce}}">
   if(!document.cookie.split(';').some(function(c){return c.trim().indexOf('pam_tz=')===0;})){
@@ -4063,67 +4198,37 @@ const accessPageHTML = `<!DOCTYPE html>
     (function(){
       var accessJustMeActive=false,accessMyUsername='';
       var accessActiveOnlyActive=false;
-      var accessPage=1,accessPs={{.DefaultPageSize}};
-      function renderAccessPager(vis){
-        var bar=document.getElementById('access-pagination');
-        if(!bar)return;
-        var total=vis.length,totalPages=Math.max(1,Math.ceil(total/accessPs));
-        if(accessPage>totalPages)accessPage=1;
-        var start=(accessPage-1)*accessPs;
-        var isGrouped=document.querySelectorAll('#access-table .access-user-group').length>0;
-        var allEls=isGrouped?Array.from(document.querySelectorAll('#access-table .access-user-group')):Array.from(document.querySelectorAll('#access-table .access-table-row'));
-        allEls.forEach(function(r){r.style.display='none';});
-        vis.slice(start,start+accessPs).forEach(function(r){r.style.display='';});
-        if(totalPages<=1&&total>0){bar.innerHTML='';vis.forEach(function(r){r.style.display='';});return;}
-        if(total===0){bar.innerHTML='';return;}
-        bar.innerHTML='<button class="pagination-btn" '+(accessPage<=1?'disabled':'')+'>&#8592;</button><span class="pagination-info">'+(start+1)+'&#8211;'+Math.min(start+accessPs,total)+' of '+total+'</span><button class="pagination-btn" '+(accessPage>=totalPages?'disabled':'')+'>&#8594;</button><select class="pagination-size-select">'+[15,30,50,100].map(function(n){return'<option value="'+n+'"'+(n===accessPs?' selected':'')+'>'+n+' per page</option>';}).join('')+'</select>';
-        var btns=bar.querySelectorAll('.pagination-btn');
-        if(!btns[0].disabled)btns[0].addEventListener('click',function(){accessPage--;filterAccess();});
-        if(!btns[1].disabled)btns[1].addEventListener('click',function(){accessPage++;filterAccess();});
-        bar.querySelector('.pagination-size-select').addEventListener('change',function(){accessPs=parseInt(this.value);accessPage=1;filterAccess();});
-      }
-      function filterAccess(){
+      var isGrouped=document.querySelectorAll('#access-table .access-user-group').length>0;
+      function getFilteredAccess(){
         var filters={};
         document.querySelectorAll('#access-table .gtcol-filter-input').forEach(function(inp){filters[inp.dataset.col]=inp.value.toLowerCase().trim();});
-        var groups=Array.from(document.querySelectorAll('#access-table .access-user-group'));
-        if(groups.length){
-          var vis=groups.filter(function(grp){
+        if(isGrouped){
+          var groups=Array.from(document.querySelectorAll('#access-table .access-user-group'));
+          return groups.filter(function(grp){
             var uname=(grp.dataset.username||'').toLowerCase();
             if(filters.auser&&uname.indexOf(filters.auser)===-1)return false;
             if(filters.ahosts){var hn=(grp.dataset.hostnames||'').toLowerCase();if(hn.indexOf(filters.ahosts)===-1)return false;}
+            if(filters.asessions){var ahn=(grp.dataset.activeHostnames||'').toLowerCase();if(ahn.indexOf(filters.asessions)===-1)return false;}
             if(accessJustMeActive&&accessMyUsername&&uname!==accessMyUsername.toLowerCase())return false;
             if(accessActiveOnlyActive&&!parseInt(grp.dataset.activeCount||'0'))return false;
             return true;
           });
-          renderAccessPager(vis);
-        } else {
-          var allRows=Array.from(document.querySelectorAll('#access-table .access-table-row'));
-          var vis=allRows.filter(function(row){
-            for(var col in filters){if(!filters[col])continue;var cell=row.querySelector('.gtcol-'+col);if(cell&&cell.textContent.toLowerCase().indexOf(filters[col])===-1){return false;}}
-            if(accessActiveOnlyActive&&row.dataset.active!=='1')return false;
-            return true;
-          });
-          renderAccessPager(vis);
         }
+        var allRows=Array.from(document.querySelectorAll('#access-table .access-table-row'));
+        return allRows.filter(function(row){
+          for(var col in filters){if(!filters[col])continue;var cell=row.querySelector('.gtcol-'+col);if(cell&&cell.textContent.toLowerCase().indexOf(filters[col])===-1){return false;}}
+          if(accessActiveOnlyActive&&row.dataset.active!=='1')return false;
+          return true;
+        });
       }
-      document.querySelectorAll('#access-table .gtcol-filter-input').forEach(function(inp){inp.addEventListener('input',function(){accessPage=1;filterAccess();});});
+      var accessCtl=idtInfinite({tableSelector:'#access-table',rowSelector:isGrouped?'.access-user-group':'.access-table-row',barId:'access-loadbar',pageSize:{{.DefaultPageSize}},getFiltered:getFilteredAccess});
+      accessCtl.rerender();
+      document.querySelectorAll('#access-table .gtcol-filter-input').forEach(function(inp){inp.addEventListener('input',accessCtl.reset);});
       // Expand/collapse user groups
       document.querySelectorAll('.access-user-row').forEach(function(row){
         row.addEventListener('click',function(){
           var grp=row.closest('.access-user-group');
           if(grp){grp.classList.toggle('expanded');
-            // Run pill overflow for newly visible cells
-            grp.querySelectorAll('.access-host-rows .pill-cell').forEach(function(cell){
-              var items=Array.from(cell.querySelectorAll('.pill,.group-badge'));
-              if(!items.length)return;
-              items.forEach(function(it){it.style.display='';});
-              var ex=cell.querySelector('.pill-more-btn');if(ex)ex.remove();
-              var maxShow=Math.min(items.length,4);
-              for(var i=maxShow;i<items.length;i++){items[i].style.display='none';}
-              while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){maxShow--;items[maxShow].style.display='none';}
-              var hidden=items.length-maxShow;
-              if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(e){e.stopPropagation();items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){items[maxShow-1].style.display='none';maxShow--;hidden++;btn.textContent='+'+hidden+' more';}}
-            });
           }
         });
       });
@@ -4133,7 +4238,7 @@ const accessPageHTML = `<!DOCTYPE html>
         var ui=at.querySelector('.gtcol-filter-input[data-col="auser"]');if(ui){ui.value=at.dataset.prefilterUser;}
         var grp=at.querySelector('.access-user-group[data-username="'+at.dataset.prefilterUser+'"]');
         if(grp)grp.classList.add('expanded');
-        filterAccess();
+        accessCtl.reset();
         var afr=document.getElementById('access-admin-filter-row');var aft=document.getElementById('access-admin-filter-toggle');
         if(afr){afr.style.display='';if(aft)aft.classList.add('active');}
       }
@@ -4144,23 +4249,11 @@ const accessPageHTML = `<!DOCTYPE html>
           accessJustMeActive=!accessJustMeActive;
           ajmt.classList.toggle('active',accessJustMeActive);
           ajmt.setAttribute('aria-checked',accessJustMeActive?'true':'false');
-          accessPage=1;
-          filterAccess();
+          accessCtl.reset();
           if(accessJustMeActive&&accessMyUsername){
             var grp=document.querySelector('.access-user-group[data-username="'+accessMyUsername+'"]');
             if(grp&&!grp.classList.contains('expanded')){
               grp.classList.add('expanded');
-              grp.querySelectorAll('.access-host-rows .pill-cell').forEach(function(cell){
-                var items=Array.from(cell.querySelectorAll('.pill,.group-badge'));
-                if(!items.length)return;
-                items.forEach(function(it){it.style.display='';});
-                var ex=cell.querySelector('.pill-more-btn');if(ex)ex.remove();
-                var maxShow=Math.min(items.length,4);
-                for(var i=maxShow;i<items.length;i++){items[i].style.display='none';}
-                while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){maxShow--;items[maxShow].style.display='none';}
-                var hidden=items.length-maxShow;
-                if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(e){e.stopPropagation();items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){items[maxShow-1].style.display='none';maxShow--;hidden++;btn.textContent='+'+hidden+' more';}}
-              });
             }
           }
         }
@@ -4169,33 +4262,21 @@ const accessPageHTML = `<!DOCTYPE html>
       }
       var aaot=document.getElementById('access-active-only-toggle');
       if(aaot){
-        function toggleAAO(){accessActiveOnlyActive=!accessActiveOnlyActive;aaot.classList.toggle('active',accessActiveOnlyActive);aaot.setAttribute('aria-checked',accessActiveOnlyActive?'true':'false');accessPage=1;filterAccess();}
+        function toggleAAO(){accessActiveOnlyActive=!accessActiveOnlyActive;aaot.classList.toggle('active',accessActiveOnlyActive);aaot.setAttribute('aria-checked',accessActiveOnlyActive?'true':'false');accessCtl.reset();}
         aaot.addEventListener('click',toggleAAO);
         aaot.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleAAO();}});
       }
       var aac=document.getElementById('access-admin-clear');
       if(aac)aac.addEventListener('click',function(){
         document.querySelectorAll('#access-table .gtcol-filter-input').forEach(function(i){i.value='';});
-        accessPage=1;
-        filterAccess();
+        accessCtl.reset();
       });
       (function(){var ftb=document.getElementById('access-admin-filter-toggle');var ftr=document.getElementById('access-admin-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       (function(){var ftb=document.getElementById('access-user-filter-toggle');var ftr=document.getElementById('access-user-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
-      filterAccess();
+      accessCtl.rerender();
       document.querySelectorAll('.access-saction-confirm').forEach(function(btn){btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});});
       document.querySelectorAll('.elevate-toggle').forEach(function(btn){
         btn.addEventListener('click',function(e){e.stopPropagation();var m=btn.parentElement.querySelector('.elevate-menu');var open=m.classList.contains('open');document.querySelectorAll('.elevate-menu.open').forEach(function(x){x.classList.remove('open');});if(!open){var r=btn.getBoundingClientRect();m.style.top=(r.bottom+4)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';m.classList.add('open');}});
-      });
-      document.querySelectorAll('.pill-cell').forEach(function(cell){
-        var items=Array.from(cell.querySelectorAll('.pill,.group-badge'));
-        if(!items.length)return;
-        items.forEach(function(it){it.style.display='';});
-        var ex=cell.querySelector('.pill-more-btn');if(ex)ex.remove();
-        var maxShow=Math.min(items.length,4);
-        for(var i=maxShow;i<items.length;i++){items[i].style.display='none';}
-        while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){maxShow--;items[maxShow].style.display='none';}
-        var hidden=items.length-maxShow;
-        if(hidden>0){var btn=document.createElement('button');btn.className='pill-more-btn';btn.type='button';btn.textContent='+'+hidden+' more';btn.addEventListener('click',function(){items.forEach(function(it){it.style.display='';});cell.style.flexWrap='wrap';btn.remove();});cell.appendChild(btn);while(maxShow>1&&cell.scrollWidth>cell.offsetWidth+2){items[maxShow-1].style.display='none';maxShow--;hidden++;btn.textContent='+'+hidden+' more';}}
       });
     })();
     document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
@@ -4226,6 +4307,8 @@ const accessPageHTML = `<!DOCTYPE html>
             <a href="/theme?set=light&from=/access" class="theme-opt{{if eq .Theme "light"}} active{{end}}">{{call .T "theme_light"}}</a>
           </div>
           <div class="user-dropdown-divider"></div>
+          {{if .IsAdmin}}<a href="/profile/notifications" class="user-dropdown-item">{{call .T "notify_preferences"}}</a>
+          <div class="user-dropdown-divider"></div>{{end}}
           <form method="POST" action="/signout" class="form-signout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="csrf_ts" value="{{.CSRFTs}}"><button type="submit" class="user-dropdown-item signout-btn">{{call .T "sign_out"}}</button></form>
         </div>
       </div>
@@ -4281,11 +4364,11 @@ const accessPageHTML = `<!DOCTYPE html>
       <div class="access-table-filter" id="access-admin-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="auser" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="ahosts" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
-        <div></div>
+        <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="asessions" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
         <div style="display:flex;justify-content:flex-end;align-items:center;padding:0 6px"><button type="button" class="filter-clear-btn" id="access-admin-clear">{{call .T "clear_filter"}}</button></div>
       </div>
       {{range .AllUserGroups}}
-      <div class="access-user-group" data-username="{{.Username}}" data-active-count="{{.ActiveCount}}" data-hostnames="{{range .Hosts}}{{.Hostname}} {{end}}">
+      <div class="access-user-group" data-username="{{.Username}}" data-active-count="{{.ActiveCount}}" data-hostnames="{{range .Hosts}}{{.Hostname}} {{end}}" data-active-hostnames="{{range .Hosts}}{{if .Active}}{{.Hostname}} {{end}}{{end}}">
         <div class="access-user-row" role="row">
           <div class="gtcol gtcol-auser" role="cell"><a href="/access?user={{.Username}}" class="pill user">{{.Username}}</a></div>
           <div class="gtcol" role="cell"><div class="pill-cell">{{range .Hosts}}<a href="/history?hostname={{.Hostname}}" class="pill host" title="{{.Hostname}}">{{.Hostname}}</a>{{end}}</div></div>
@@ -4302,8 +4385,17 @@ const accessPageHTML = `<!DOCTYPE html>
           <div class="access-host-row">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{if .Active}}<span class="access-status-pill">{{call $.T "active"}} <span class="access-status-time">({{.Remaining}})</span></span>{{end}}</div>
             <div><div class="pill-cell">{{if .AllCmds}}<span class="pill cmd">{{call $.T "all_commands"}}</span>{{else}}{{range .Commands}}<span class="pill cmd">{{.}}</span>{{end}}{{end}}</div></div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end">
               {{if .Active}}
+              <form method="POST" action="/api/sessions/revoke" class="form-inline">
+                <input type="hidden" name="hostname" value="{{.Hostname}}">
+                <input type="hidden" name="username" value="{{$.Username}}">
+                <input type="hidden" name="session_username" value="{{.Username}}">
+                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
+                <input type="hidden" name="from" value="/access">
+                <button type="submit" class="saction-btn saction-danger access-saction-confirm" data-confirm="{{printf (call $.T "confirm_revoke_session_user") .Username .Hostname}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>{{call $.T "revoke"}}</button>
+              </form>
               <div class="elevate-wrap">
                 <button type="button" class="saction-btn saction-primary elevate-toggle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{{call $.T "extend"}}<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>
                 <form method="POST" action="/api/sessions/extend" class="elevate-menu">
@@ -4317,15 +4409,6 @@ const accessPageHTML = `<!DOCTYPE html>
                   <button type="submit" name="duration" value="max">{{call $.T "max"}}</button>
                 </form>
               </div>
-              <form method="POST" action="/api/sessions/revoke" class="form-inline">
-                <input type="hidden" name="hostname" value="{{.Hostname}}">
-                <input type="hidden" name="username" value="{{$.Username}}">
-                <input type="hidden" name="session_username" value="{{.Username}}">
-                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                <input type="hidden" name="csrf_ts" value="{{$.CSRFTs}}">
-                <input type="hidden" name="from" value="/access">
-                <button type="submit" class="saction-btn saction-danger access-saction-confirm" data-confirm="{{printf (call $.T "confirm_revoke_session_user") .Username .Hostname}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>{{call $.T "revoke"}}</button>
-              </form>
               {{end}}
               {{if not .Active}}
               <div class="elevate-wrap">
@@ -4351,7 +4434,7 @@ const accessPageHTML = `<!DOCTYPE html>
       <div class="empty-state-centered">{{call .T "no_known_hosts"}}</div>
       {{end}}
     </div>
-    <div class="pagination-bar" id="access-pagination"></div>
+    <div id="access-loadbar"></div>
     {{else}}
     <div class="access-table" id="access-table" role="table" aria-label="{{call .T "access"}}">
       <div class="access-table-header" role="row">
@@ -4377,7 +4460,7 @@ const accessPageHTML = `<!DOCTYPE html>
             <span class="access-status-pill">{{call $.T "active"}} <span class="access-status-time">({{.Remaining}})</span></span>
           {{end}}
         </div>
-        <div class="gtcol gtcol-aactions" role="cell" style="gap:6px;flex-wrap:wrap;align-items:center">
+        <div class="gtcol gtcol-aactions" role="cell" style="gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end">
           <div class="elevate-wrap">
             <button type="button" class="saction-btn saction-primary elevate-toggle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>{{call $.T "elevate"}}<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:1px"><polyline points="6 9 12 15 18 9"/></svg></button>
             <form method="POST" action="/api/hosts/elevate" class="elevate-menu">
@@ -4398,7 +4481,7 @@ const accessPageHTML = `<!DOCTYPE html>
       {{end}}
     </div>
     {{end}}
-  </main>
+  </main>` + infiniteScrollJS + `
 </body>
 </html>`
 

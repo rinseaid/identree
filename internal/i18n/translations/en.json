@@ -297,7 +297,7 @@
   "notify_pref_hosts_placeholder": "empty = all hosts",
   "notify_pref_removed": "Notification preferences removed",
   "notify_pref_saved": "Notification preferences saved",
-  "notify_preferences": "My Notification Preferences",
+  "notify_preferences": "Notification preferences",
   "notify_preferences_desc": "Subscribe to notifications about other users' activity. Select channels, event types, and optionally filter by hostname.",
   "notify_remove_pref": "Remove Subscription",
   "notify_route_added": "Route added",

@@ -180,6 +180,101 @@ func (s *Server) handleAdminNotifications(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// handleProfileNotifications renders the per-user notification preferences form
+// at /profile/notifications, linked from the user dropdown menu. Admin-only
+// (matches the save handler's admin gate).
+// GET /profile/notifications
+func (s *Server) handleProfileNotifications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if setLanguageCookie(w, r) {
+		return
+	}
+	lang := detectLanguage(r)
+	t := T(lang)
+
+	username := s.getSessionUser(r)
+	if username == "" {
+		s.setFlashCookie(w, "expired:")
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
+		return
+	}
+	role := s.getSessionRole(r)
+	s.setSessionCookie(w, username, role)
+	if role != "admin" {
+		http.Redirect(w, r, s.baseURL+"/", http.StatusSeeOther)
+		return
+	}
+
+	var flashes []string
+	var flashErrors []string
+	if flashParam := s.getAndClearFlash(w, r); flashParam != "" {
+		for _, f := range strings.Split(flashParam, ",") {
+			parts := strings.SplitN(f, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			switch parts[0] {
+			case "pref_saved":
+				flashes = append(flashes, t("notify_pref_saved"))
+			case "pref_deleted":
+				flashes = append(flashes, t("notify_pref_removed"))
+			}
+		}
+	}
+
+	now := time.Now()
+	csrfTs := strconv.FormatInt(now.Unix(), 10)
+	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
+
+	userTZ := "UTC"
+	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
+		if _, tzErr := time.LoadLocation(c.Value); tzErr == nil {
+			userTZ = c.Value
+		}
+	}
+
+	var myPref *adminnotify.Preference
+	if s.adminNotifyStore != nil {
+		myPref = s.adminNotifyStore.Get(username)
+	}
+
+	var channelNames []string
+	s.notifyCfgMu.RLock()
+	for _, ch := range s.notifyCfg.Channels {
+		channelNames = append(channelNames, ch.Name)
+	}
+	s.notifyCfgMu.RUnlock()
+
+	w.Header().Set("Content-Type", "text/html")
+	if err := adminTmpl.Execute(w, map[string]interface{}{
+		"Username":     username,
+		"Initial":      strings.ToUpper(username[:1]),
+		"Avatar":       getAvatar(r),
+		"Timezone":     userTZ,
+		"Flashes":      flashes,
+		"FlashErrors":  flashErrors,
+		"ActivePage":   "profile",
+		"AdminTab":     "profile-notifications",
+		"BridgeMode":   s.isBridgeMode(),
+		"Theme":        getTheme(r),
+		"CSPNonce":     cspNonce(r),
+		"T":            t,
+		"Lang":         lang,
+		"Languages":    supportedLanguages,
+		"IsAdmin":      true,
+		"MyNotifyPref": myPref,
+		"ChannelNames": channelNames,
+		"Pending":      s.buildAllPendingViews(username, lang),
+		"CSRFToken":    csrfToken,
+		"CSRFTs":       csrfTs,
+	}); err != nil {
+		slog.Error("template execution", "err", err)
+	}
+}
+
 // handleNotifyChannelAdd adds a new notification channel.
 // POST /api/notification/channels/add
 func (s *Server) handleNotifyChannelAdd(w http.ResponseWriter, r *http.Request) {
@@ -440,6 +535,13 @@ func (s *Server) handleAdminNotifyPrefSave(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Redirect target: form may specify /profile/notifications (from the
+	// per-user page linked in the user dropdown) or fall back to the admin page.
+	redirectTo := s.baseURL + "/admin/notifications"
+	if rt := r.FormValue("redirect_to"); rt == "/profile/notifications" {
+		redirectTo = s.baseURL + "/profile/notifications"
+	}
+
 	action := r.FormValue("action")
 	if action == "delete" {
 		if err := s.adminNotifyStore.Delete(adminUser); err != nil {
@@ -447,7 +549,7 @@ func (s *Server) handleAdminNotifyPrefSave(w http.ResponseWriter, r *http.Reques
 		}
 		s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
 		s.setFlashCookie(w, "pref_deleted:")
-		http.Redirect(w, r, s.baseURL+"/admin/notifications", http.StatusSeeOther)
+		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 		return
 	}
 
@@ -473,7 +575,7 @@ func (s *Server) handleAdminNotifyPrefSave(w http.ResponseWriter, r *http.Reques
 	s.publishClusterMessage(clusterMessage{Type: "reload_notify_config"})
 	slog.Info("ADMIN_NOTIFY_PREF_SAVED", "user", adminUser, "channels", pref.Channels, "events", pref.Events)
 	s.setFlashCookie(w, "pref_saved:")
-	http.Redirect(w, r, s.baseURL+"/admin/notifications", http.StatusSeeOther)
+	http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 }
 
 // handleAdminTestNotifyChannel sends a test notification to a specific channel.

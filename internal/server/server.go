@@ -796,6 +796,7 @@ func (s *Server) registerRoutes() {
 
 	// Notification management
 	s.mux.HandleFunc("/admin/notifications", s.handleAdminNotifications)
+	s.mux.HandleFunc("/profile/notifications", s.handleProfileNotifications)
 	s.mux.HandleFunc("/api/notification/channels", s.handleNotifyChannelList)
 	s.mux.HandleFunc("/api/notification/channels/add", s.handleNotifyChannelAdd)
 	s.mux.HandleFunc("/api/notification/channels/delete", s.handleNotifyChannelDelete)

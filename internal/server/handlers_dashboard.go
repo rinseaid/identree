@@ -1574,6 +1574,23 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 
 	perPageOptions := []int{15, 30, 50, 100}
 
+	// Fragment mode — return only the row HTML for infinite-scroll "load more".
+	// Skips the full-page shell so the client can appendChild() the result.
+	if r.URL.Query().Get("fragment") == "1" {
+		w.Header().Set("Content-Type", "text/html")
+		hasMore := "false"
+		if page < totalPages {
+			hasMore = "true"
+		}
+		w.Header().Set("X-Has-More", hasMore)
+		_ = historyTmpl.ExecuteTemplate(w, "historyRows", map[string]interface{}{
+			"History": viewEntries,
+			"IsAdmin": isAdmin,
+			"T":       T(lang),
+		})
+		return
+	}
+
 	historyCSRFTs := strconv.FormatInt(time.Now().Unix(), 10)
 	historyCSRFToken := computeCSRFToken(s.hmacBase(), username, historyCSRFTs)
 	histJustChoices, histRequireJust := s.justificationTemplateData()
@@ -1595,6 +1612,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"Theme":           getTheme(r),
 		"Page":            page,
 		"TotalPages":      totalPages,
+		"TotalRows":       len(history),
 		"HasPrev":         page > 1,
 		"HasNext":         page < totalPages,
 		"Sort":            sortField,
