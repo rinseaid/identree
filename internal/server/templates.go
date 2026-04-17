@@ -1719,6 +1719,8 @@ const historyPageHTML = `<!DOCTYPE html>
     .timeline-bars { display: flex; align-items: flex-end; gap: 2px; height: 40px; }
     .timeline-bar { flex: 1; background: var(--primary); border-radius: 2px 2px 0 0; min-height: 2px; opacity: 0.35; transition: opacity 0.15s, transform 0.15s; cursor: pointer; text-decoration: none; display: block; }
     .timeline-bar:hover { opacity: 0.9; transform: scaleY(1.08); transform-origin: bottom; }
+    .timeline-bar-empty { cursor: default; }
+    .timeline-bar-empty:hover { opacity: 0.35; transform: none; }
     .timeline-bar.now { background: var(--success); opacity: 0.7; }
     .timeline-bar.timeline-active { opacity: 1; outline: 2px solid var(--primary); outline-offset: 1px; }
     .timeline-bar.timeline-active.now { outline-color: var(--success); }
@@ -2014,7 +2016,7 @@ const historyPageHTML = `<!DOCTYPE html>
       {{if .Timeline}}
       <div class="timeline timeline-in-table">
         <div class="timeline-bars" id="timeline-bars">
-          {{range .Timeline}}<a href="/history?from={{.HourStartISO}}&to={{.HourEndISO}}&per_page={{$.PerPage}}&user={{$.UserFilter}}" class="timeline-bar{{if .IsNow}} now{{end}}{{if .IsActive}} timeline-active{{end}}" style="height:{{.Height}}px" title="{{.Details}}" aria-label="{{.Details}}" data-hours-ago="{{.HoursAgo}}"></a>{{end}}
+          {{range .Timeline}}{{if gt .Count 0}}<a href="/history?from={{.HourStartISO}}&to={{.HourEndISO}}&per_page={{$.PerPage}}&user={{$.UserFilter}}" class="timeline-bar{{if .IsNow}} now{{end}}{{if .IsActive}} timeline-active{{end}}" style="height:{{.Height}}px" title="{{.Details}}" aria-label="{{.Details}}" data-hours-ago="{{.HoursAgo}}"></a>{{else}}<span class="timeline-bar timeline-bar-empty{{if .IsNow}} now{{end}}" style="height:{{.Height}}px" title="{{.Details}}" aria-label="{{.Details}}" data-hours-ago="{{.HoursAgo}}"></span>{{end}}{{end}}
         </div>
         <div class="timeline-axis" id="timeline-axis"></div>
       </div>
