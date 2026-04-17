@@ -1405,6 +1405,8 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 			Height:       height,
 			IsNow:        i == 0,
 			HoursAgo:     hoursAgo,
+			HourStart:    hourStart,
+			HourEnd:      hourEnd,
 			Details:      strings.Join(detailParts, "\n"),
 			HourStartISO: hourStart.Format("2006-01-02T15:04"),
 			HourEndISO:   hourEnd.Format("2006-01-02T15:04"),
@@ -1458,6 +1460,18 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, e)
 		}
 		allHistory = filtered
+		// Mark every timeline bar whose hour overlaps the active [from,to] range.
+		// Overlap test: bar.Start < to && bar.End > from (open-open so touching boundaries don't mark).
+		for i := range timeline {
+			overlaps := true
+			if !filterFrom.IsZero() && !timeline[i].HourEnd.After(filterFrom) {
+				overlaps = false
+			}
+			if !filterTo.IsZero() && !timeline[i].HourStart.Before(filterTo) {
+				overlaps = false
+			}
+			timeline[i].IsActive = overlaps
+		}
 	}
 
 	history := allHistory

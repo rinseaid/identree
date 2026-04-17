@@ -1094,7 +1094,10 @@ type timelineEntry struct {
 	Count        int
 	Height       int // bar height in pixels (2-40)
 	IsNow        bool
-	HoursAgo     int    // offset from now (0 = current hour)
+	HoursAgo     int       // offset from now (0 = current hour)
+	HourStart    time.Time // bar's start instant, used to compute IsActive against the filter range
+	HourEnd      time.Time
+	IsActive     bool   // true when the bar's hour overlaps the active [from,to] filter
 	Details      string // rich tooltip text
 	HourStartISO string // "2006-01-02T15:04" for datetime-local input
 	HourEndISO   string // "2006-01-02T15:04" for datetime-local input
@@ -2011,7 +2014,7 @@ const historyPageHTML = `<!DOCTYPE html>
       {{if .Timeline}}
       <div class="timeline timeline-in-table">
         <div class="timeline-bars" id="timeline-bars">
-          {{range .Timeline}}<a href="/history?from={{.HourStartISO}}&to={{.HourEndISO}}&per_page={{$.PerPage}}&user={{$.UserFilter}}" class="timeline-bar{{if .IsNow}} now{{end}}{{if eqInt .HoursAgo $.ActiveHoursAgo}} timeline-active{{end}}" style="height:{{.Height}}px" title="{{.Details}}" aria-label="{{.Details}}" data-hours-ago="{{.HoursAgo}}"></a>{{end}}
+          {{range .Timeline}}<a href="/history?from={{.HourStartISO}}&to={{.HourEndISO}}&per_page={{$.PerPage}}&user={{$.UserFilter}}" class="timeline-bar{{if .IsNow}} now{{end}}{{if .IsActive}} timeline-active{{end}}" style="height:{{.Height}}px" title="{{.Details}}" aria-label="{{.Details}}" data-hours-ago="{{.HoursAgo}}"></a>{{end}}
         </div>
         <div class="timeline-axis" id="timeline-axis"></div>
       </div>
