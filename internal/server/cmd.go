@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -109,6 +111,9 @@ func Main() {
 		case "sign-script":
 			runSignScript()
 			return
+		case "heartbeat":
+			runHeartbeat()
+			return
 		}
 	}
 
@@ -122,6 +127,7 @@ func Main() {
 			"rotate-host-secret": true,
 			"setup": true, "renew-cert": true,
 			"verify-install": true, "sign-script": true,
+			"heartbeat": true,
 		}
 		if !strings.HasPrefix(os.Args[1], "-") && !known[os.Args[1]] {
 			fmt.Fprintf(os.Stderr, "unknown command: %s\nRun 'identree --help' for usage.\n", os.Args[1])
@@ -900,6 +906,56 @@ func runRenewCert() {
 		clientCfg.CACert,
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "identree renew-cert: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runHeartbeat posts a single heartbeat to /api/agent/heartbeat. Designed to
+// be invoked by a systemd timer (or cron) on each managed host so the server
+// has a fresh "last seen" record even when no one has run sudo recently.
+func runHeartbeat() {
+	stripSensitiveEnv()
+
+	clientCfg, err := config.LoadClientConfig(false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identree heartbeat: load client config: %v\n", err)
+		os.Exit(1)
+	}
+	if clientCfg.ServerURL == "" || clientCfg.SharedSecret == "" {
+		fmt.Fprintln(os.Stderr, "identree heartbeat: server_url and shared_secret are required in client config")
+		os.Exit(1)
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		fmt.Fprintf(os.Stderr, "identree heartbeat: cannot determine hostname: %v\n", err)
+		os.Exit(1)
+	}
+
+	body, _ := json.Marshal(map[string]string{
+		"hostname": strings.ToLower(strings.TrimSuffix(hostname, ".")),
+		"version":  version,
+		"os_info":  runtime.GOOS + "/" + runtime.GOARCH,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(clientCfg.ServerURL, "/")+"/api/agent/heartbeat", bytes.NewReader(body))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identree heartbeat: build request: %v\n", err)
+		os.Exit(1)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Shared-Secret", clientCfg.SharedSecret)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identree heartbeat: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "identree heartbeat: server returned %d\n", resp.StatusCode)
 		os.Exit(1)
 	}
 }

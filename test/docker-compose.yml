@@ -52,6 +52,8 @@ services:
       IDENTREE_ESCROW_BACKEND: "local"
       IDENTREE_ESCROW_ENCRYPTION_KEY: "a15da2f0f3efd3feddd42a8fc8107cde5c1969593c4fd016069562a01dfd0f30"
       IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
+      IDENTREE_DATABASE_DRIVER: "sqlite"
+      IDENTREE_DATABASE_DSN: "/data/identree.db"
       IDENTREE_LDAP_UID_MAP_FILE: "/data/uidmap.json"
       IDENTREE_SUDO_RULES_FILE: "/data/sudorules.json"
       IDENTREE_ADMIN_GROUPS: "admins"

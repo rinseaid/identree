@@ -37,6 +37,34 @@ RandomizedDelaySec=3600
 [Install]
 WantedBy=timers.target
 `,
+	"identree-heartbeat.service": `[Unit]
+Description=identree agent heartbeat (managed-host liveness ping)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/identree heartbeat
+SuccessExitStatus=0 1
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+`,
+	"identree-heartbeat.timer": `[Unit]
+Description=identree agent heartbeat — every 60 seconds
+Requires=identree-heartbeat.service
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+RandomizedDelaySec=10s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+`,
 }
 
 // handleDownloadVersion serves the running server's version string.

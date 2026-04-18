@@ -1,0 +1,15 @@
+[Unit]
+Description=identree agent heartbeat (managed-host liveness ping)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/identree heartbeat
+# Don't fail boot on transient server outages.
+SuccessExitStatus=0 1
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true

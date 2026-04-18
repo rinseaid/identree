@@ -299,24 +299,26 @@ fi
 # ── Systemd rotation timer ───────────────────────────────────────────────────
 
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-    for UNIT in identree-rotate.service identree-rotate.timer; do
+    for UNIT in identree-rotate.service identree-rotate.timer identree-heartbeat.service identree-heartbeat.timer; do
         _dl "$DL_URL/download/systemd/$UNIT" "$SYSTEMD_DIR/$UNIT"
     done
     systemctl daemon-reload
     systemctl enable --now identree-rotate.timer
-    echo "Enabled weekly break-glass rotation timer"
+    systemctl enable --now identree-heartbeat.timer
+    echo "Enabled weekly break-glass rotation timer + per-minute heartbeat timer"
 elif command -v crontab >/dev/null 2>&1 || [ -d /etc/cron.d ]; then
     CRON_FILE="/etc/cron.d/identree-rotate"
     if [ -f "$CRON_FILE" ]; then
         echo "Cron job already configured: $CRON_FILE"
     else
-        printf '# identree weekly break-glass rotation\n0 3 * * 0 root /usr/local/bin/identree rotate-breakglass\n' > "$CRON_FILE"
+        printf '# identree weekly break-glass rotation\n0 3 * * 0 root /usr/local/bin/identree rotate-breakglass\n# identree per-minute heartbeat\n* * * * * root /usr/local/bin/identree heartbeat >/dev/null 2>&1\n' > "$CRON_FILE"
         chmod 644 "$CRON_FILE"
-        echo "Installed weekly rotation cron job: $CRON_FILE"
+        echo "Installed rotation + heartbeat cron jobs: $CRON_FILE"
     fi
 else
     echo "Warning: neither systemd nor cron found — run weekly manually:"
     echo "  sudo /usr/local/bin/identree rotate-breakglass"
+    echo "  sudo /usr/local/bin/identree heartbeat   # per-minute via wrapper"
 fi
 
 # ── Auditd monitoring rules (if auditd is present) ───────────────────────────
@@ -428,7 +430,9 @@ fi
 # ── Systemd / cron ────────────────────────────────────────────────────────────
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     systemctl disable --now identree-rotate.timer 2>/dev/null || true
+    systemctl disable --now identree-heartbeat.timer 2>/dev/null || true
     rm -f "$SYSTEMD_DIR/identree-rotate.service" "$SYSTEMD_DIR/identree-rotate.timer"
+    rm -f "$SYSTEMD_DIR/identree-heartbeat.service" "$SYSTEMD_DIR/identree-heartbeat.timer"
     systemctl daemon-reload 2>/dev/null || true
     echo "Disabled and removed systemd units"
 elif [ -f /etc/cron.d/identree-rotate ]; then
