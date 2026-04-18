@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -935,7 +936,7 @@ func runHeartbeat() {
 	body, _ := json.Marshal(map[string]string{
 		"hostname": strings.ToLower(strings.TrimSuffix(hostname, ".")),
 		"version":  version,
-		"os_info":  runtime.GOOS + "/" + runtime.GOARCH,
+		"os_info":  detectOSInfo(),
 	})
 
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(clientCfg.ServerURL, "/")+"/api/agent/heartbeat", bytes.NewReader(body))
@@ -958,6 +959,68 @@ func runHeartbeat() {
 		fmt.Fprintf(os.Stderr, "identree heartbeat: server returned %d\n", resp.StatusCode)
 		os.Exit(1)
 	}
+}
+
+// detectOSInfo returns a human-friendly OS descriptor for the heartbeat
+// payload, e.g. "Ubuntu 24.04 (amd64)" or "Rocky Linux 9.3 (arm64)".
+//
+// Prefers /etc/os-release (the freedesktop.org standard shipped by every
+// mainstream Linux distro). Falls back to GOOS/GOARCH on macOS, Windows,
+// or when the file is missing/unreadable.
+func detectOSInfo() string {
+	arch := runtime.GOARCH
+	if pretty := readOSReleasePretty("/etc/os-release"); pretty != "" {
+		return pretty + " (" + arch + ")"
+	}
+	// /usr/lib/os-release is the symlink target on some distros (Fedora etc.)
+	// but `/etc/os-release` is the canonical path; try the alt as a fallback.
+	if pretty := readOSReleasePretty("/usr/lib/os-release"); pretty != "" {
+		return pretty + " (" + arch + ")"
+	}
+	return runtime.GOOS + "/" + arch
+}
+
+// readOSReleasePretty parses /etc/os-release and returns PRETTY_NAME, or
+// NAME + " " + VERSION_ID when PRETTY_NAME is missing. Returns "" if the
+// file can't be opened or no usable name is found.
+func readOSReleasePretty(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	fields := map[string]string{}
+	scan := bufio.NewScanner(f)
+	scan.Buffer(make([]byte, 0, 64*1024), 64*1024)
+	for scan.Scan() {
+		line := strings.TrimSpace(scan.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		// os-release values may be quoted with " or '.
+		val = strings.TrimSpace(val)
+		if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') && val[len(val)-1] == val[0] {
+			val = val[1 : len(val)-1]
+		}
+		fields[key] = val
+	}
+	if pretty, ok := fields["PRETTY_NAME"]; ok && pretty != "" {
+		return pretty
+	}
+	name := fields["NAME"]
+	ver := fields["VERSION_ID"]
+	if name != "" && ver != "" {
+		return name + " " + ver
+	}
+	if name != "" {
+		return name
+	}
+	return ""
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
