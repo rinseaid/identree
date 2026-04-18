@@ -7,123 +7,12 @@ import (
 	"time"
 )
 
-// ── Stub implementations ────────────────────────────────────────────────────
-//
-// Methods marked `panic("sqlstore: not implemented")` are scheduled for the
-// next implementation session. They exist here so the compile-time
-// `var _ Store = (*SQLStore)(nil)` assertion in sqlstore.go holds.
-//
-// As each method moves from stub to real implementation it should be moved
-// out of this file into a domain-specific sibling (sqlstore_challenge.go,
-// sqlstore_grace.go, etc.) for navigability.
-
-// ── Challenge CRUD ──────────────────────────────────────────────────────────
-
-func (s *SQLStore) Create(username, hostname, breakglassRotateBefore, reason string) (*Challenge, error) {
-	panic("sqlstore: Create not implemented")
-}
-
-func (s *SQLStore) Get(id string) (Challenge, bool) {
-	panic("sqlstore: Get not implemented")
-}
-
-func (s *SQLStore) GetByCode(code string) (Challenge, bool) {
-	panic("sqlstore: GetByCode not implemented")
-}
-
-func (s *SQLStore) SetNonce(id string, nonce string) error {
-	panic("sqlstore: SetNonce not implemented")
-}
-
-func (s *SQLStore) SetRequestedGrace(id string, d time.Duration) {
-	panic("sqlstore: SetRequestedGrace not implemented")
-}
-
-func (s *SQLStore) Approve(id string, approvedBy string) error {
-	panic("sqlstore: Approve not implemented")
-}
-
-func (s *SQLStore) AddApproval(id string, approver string, requiredApprovals int) (bool, error) {
-	panic("sqlstore: AddApproval not implemented")
-}
-
-func (s *SQLStore) SetBreakglassOverride(id string) {
-	panic("sqlstore: SetBreakglassOverride not implemented")
-}
-
-func (s *SQLStore) Deny(id, reason string) error {
-	panic("sqlstore: Deny not implemented")
-}
-
-func (s *SQLStore) AutoApprove(id string) error {
-	panic("sqlstore: AutoApprove not implemented")
-}
-
-func (s *SQLStore) AutoApproveIfWithinGracePeriod(username, hostname, id string) bool {
-	panic("sqlstore: AutoApproveIfWithinGracePeriod not implemented")
-}
-
-// ── One-tap ─────────────────────────────────────────────────────────────────
-
-func (s *SQLStore) ConsumeOneTap(challengeID string) error {
-	panic("sqlstore: ConsumeOneTap not implemented")
-}
-
-func (s *SQLStore) ConsumeAndApprove(challengeID, approvedBy string) error {
-	panic("sqlstore: ConsumeAndApprove not implemented")
-}
-
-// ── Grace sessions ──────────────────────────────────────────────────────────
-
-func (s *SQLStore) WithinGracePeriod(username, hostname string) bool {
-	panic("sqlstore: WithinGracePeriod not implemented")
-}
-
-func (s *SQLStore) GraceRemaining(username, hostname string) time.Duration {
-	panic("sqlstore: GraceRemaining not implemented")
-}
-
-func (s *SQLStore) ActiveSessions(username string) []GraceSession {
-	panic("sqlstore: ActiveSessions not implemented")
-}
-
-func (s *SQLStore) AllActiveSessions() []GraceSession {
-	panic("sqlstore: AllActiveSessions not implemented")
-}
-
-func (s *SQLStore) ActiveSessionsForHost(hostname string) []GraceSession {
-	panic("sqlstore: ActiveSessionsForHost not implemented")
-}
-
-func (s *SQLStore) CreateGraceSession(username, hostname string, duration time.Duration) {
-	panic("sqlstore: CreateGraceSession not implemented")
-}
-
-func (s *SQLStore) ExtendGraceSession(username, hostname string) (time.Duration, error) {
-	panic("sqlstore: ExtendGraceSession not implemented")
-}
-
-func (s *SQLStore) ForceExtendGraceSession(username, hostname string) time.Duration {
-	panic("sqlstore: ForceExtendGraceSession not implemented")
-}
-
-func (s *SQLStore) ExtendGraceSessionFor(username, hostname string, dur time.Duration) time.Duration {
-	panic("sqlstore: ExtendGraceSessionFor not implemented")
-}
-
-func (s *SQLStore) RevokeSession(username, hostname string) {
-	panic("sqlstore: RevokeSession not implemented")
-}
-
-// ── Challenge queries ───────────────────────────────────────────────────────
-
-func (s *SQLStore) PendingChallenges(username string) []Challenge {
-	panic("sqlstore: PendingChallenges not implemented")
-}
-
-func (s *SQLStore) AllPendingChallenges() []Challenge {
-	panic("sqlstore: AllPendingChallenges not implemented")
-}
+// Methods in this file are the "simple" Store interface implementations
+// (single-table reads/writes with no transactional read-modify-write).
+// The richer methods live in:
+//   sqlstore_challenge.go — challenge CRUD + RMW + one-tap + queries
+//   sqlstore_grace.go     — grace session math
+//   sqlstore_cleanup.go   — RemoveHost / RemoveUser
 
 // ── Token revocation ────────────────────────────────────────────────────────
 
@@ -187,12 +76,18 @@ func (s *SQLStore) logActionAt(username, action, hostname, code, actor, reason s
 	if at.IsZero() {
 		at = time.Now()
 	}
+	// The legacy in-memory store omitted Actor when actor == username (self-action);
+	// preserve that surface so the dashboard renders self-actions identically.
+	storedActor := actor
+	if actor == username {
+		storedActor = ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_, err := s.exec(ctx,
 		`INSERT INTO action_log (username, action, hostname, code, actor, reason, ts_unix)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		username, action, hostname, code, actor, reason, at.Unix())
+		username, action, hostname, code, storedActor, reason, at.Unix())
 	logErr("LogAction", err)
 }
 
@@ -285,14 +180,15 @@ func (s *SQLStore) AllActionHistoryWithUsers() []ActionLogEntryWithUser {
 func (s *SQLStore) KnownHosts(username string) []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// Exclude rows whose action is ActionRemovedHost to match the legacy contract.
 	rows, err := s.query(ctx,
 		`SELECT DISTINCT hostname FROM action_log
-		 WHERE username = ? AND hostname <> ''
+		 WHERE username = ? AND hostname <> '' AND hostname <> '(unknown)' AND action <> ?
 		 UNION
 		 SELECT DISTINCT hostname FROM grace_sessions
 		 WHERE username = ? AND hostname <> ''
 		 ORDER BY 1`,
-		username, username)
+		username, ActionRemovedHost, username)
 	if err != nil {
 		logErr("KnownHosts", err)
 		return nil
@@ -312,12 +208,14 @@ func (s *SQLStore) AllKnownHosts() []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
-		`SELECT DISTINCT hostname FROM action_log WHERE hostname <> ''
+		`SELECT DISTINCT hostname FROM action_log
+		 WHERE hostname <> '' AND hostname <> '(unknown)' AND action <> ?
 		 UNION
 		 SELECT DISTINCT hostname FROM grace_sessions WHERE hostname <> ''
 		 UNION
 		 SELECT hostname FROM agents
-		 ORDER BY 1`)
+		 ORDER BY 1`,
+		ActionRemovedHost)
 	if err != nil {
 		logErr("AllKnownHosts", err)
 		return nil
@@ -357,10 +255,6 @@ func (s *SQLStore) UsersWithHostActivity(hostname string) []string {
 		}
 	}
 	return out
-}
-
-func (s *SQLStore) RemoveHost(hostname string) {
-	panic("sqlstore: RemoveHost not implemented")
 }
 
 // ── Escrow ──────────────────────────────────────────────────────────────────
@@ -519,10 +413,6 @@ func (s *SQLStore) AllUsers() []string {
 	return out
 }
 
-func (s *SQLStore) RemoveUser(username string) {
-	panic("sqlstore: RemoveUser not implemented")
-}
-
 // ── Session persistence ─────────────────────────────────────────────────────
 
 func (s *SQLStore) PersistRevokedNonce(nonce string, at time.Time) {
@@ -657,7 +547,6 @@ func (s *SQLStore) GetSessionNonce(nonce string) (SessionNonceData, bool) {
 		return SessionNonceData{}, false
 	}
 	if expiresAt > 0 && expiresAt <= nowUnix() {
-		// Lazily reap expired rows on read.
 		_, _ = s.exec(ctx, `DELETE FROM session_nonces WHERE nonce = ?`, nonce)
 		return SessionNonceData{}, false
 	}

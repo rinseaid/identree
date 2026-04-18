@@ -204,13 +204,7 @@ func NewSQLStore(db *sql.DB, dialect Dialect, ttl, gracePeriod time.Duration, op
 	if err := s.applySchema(context.Background()); err != nil {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
-	// Background reap goroutine — implemented in a follow-up session.
-	// Stub kept so Stop() always has a goroutine to wait on.
-	s.stopWg.Add(1)
-	go func() {
-		defer s.stopWg.Done()
-		<-s.stopCh
-	}()
+	s.startReap()
 	return s, nil
 }
 
