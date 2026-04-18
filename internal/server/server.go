@@ -739,7 +739,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/admin/users", s.handleAdminUsers)
 	s.mux.HandleFunc("/admin/groups", s.handleAdminGroups)
 	s.mux.HandleFunc("/admin/hosts", s.handleAdminHosts)
-	s.mux.HandleFunc("/admin/agents", s.handleAdminAgents)
 	s.mux.HandleFunc("/api/users/remove", s.handleRemoveUser)
 	s.mux.HandleFunc("/api/admin/groups/claims", s.handleUpdateGroupClaims)
 	s.mux.HandleFunc("/api/admin/users/claims", s.handleUpdateUserClaims)

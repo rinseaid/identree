@@ -1863,6 +1863,18 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		EscrowLink         string
 		EscrowRevealable   bool // true when backend supports in-UI reveal
 		Group              string
+
+		// Agent heartbeat fields. Reported is false when no /api/agent/heartbeat
+		// has ever arrived for this host; the dashboard renders "—" in that case.
+		Reported      bool
+		AgentStatus   string // "green" / "amber" / "red"
+		LastSeenAgo   string
+		LastSeenISO   string
+		FirstSeenAgo  string
+		FirstSeenISO  string
+		AgentVersion  string
+		AgentOSInfo   string
+		AgentIP       string
 	}
 
 	// usersForHost returns sorted usernames with sudo access to hostname from Pocket ID claims.
@@ -1920,6 +1932,14 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		allSessionsByHost[sess.Hostname] = append(allSessionsByHost[sess.Hostname], sess)
 	}
 
+	// Bulk-fetch agent heartbeats so we can decorate each host row with last-seen info.
+	allAgents := s.store.ListAgents()
+	agentByHost := make(map[string]challpkg.AgentStatus, len(allAgents))
+	for _, a := range allAgents {
+		agentByHost[a.Hostname] = a
+	}
+	now := time.Now()
+
 	// Collect all group names for the filter dropdown
 	groupFilter := r.URL.Query().Get("group")
 	groupSet := make(map[string]struct{})
@@ -1975,6 +1995,17 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		if hv.Group != "" {
 			groupSet[hv.Group] = struct{}{}
 		}
+		if a, ok := agentByHost[h]; ok {
+			hv.Reported = true
+			hv.AgentStatus = agentStatus(now, a.LastSeen)
+			hv.LastSeenAgo = formatAgo(now.Sub(a.LastSeen))
+			hv.LastSeenISO = a.LastSeen.UTC().Format(time.RFC3339)
+			hv.FirstSeenAgo = formatAgo(now.Sub(a.FirstSeen))
+			hv.FirstSeenISO = a.FirstSeen.UTC().Format(time.RFC3339)
+			hv.AgentVersion = a.Version
+			hv.AgentOSInfo = a.OSInfo
+			hv.AgentIP = a.IP
+		}
 		// Apply group filter if set
 		if groupFilter != "" && hv.Group != groupFilter {
 			continue
@@ -2012,7 +2043,6 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		return less
 	})
 
-	now := time.Now()
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 

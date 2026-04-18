@@ -622,7 +622,16 @@ const sharedCSS = `
     .users-table-row:last-child { border-bottom: none; }
     .users-table-row:hover { background: var(--surface-2); }
     /* Hosts table */
-    .hosts-table { display: grid; grid-template-columns: 200px 2fr auto; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .hosts-table { display: grid; grid-template-columns: 200px 140px 2fr auto; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .host-detail-row { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; border-bottom: 1px solid var(--border); background: var(--surface); }
+    .host-detail-row:last-child { border-bottom: none; }
+    .host-detail-cell { grid-column: 1/-1; padding: 10px 16px 14px 36px; display: flex; flex-wrap: wrap; gap: 14px 24px; font-size: 0.8125rem; color: var(--text-2); align-items: baseline; }
+    .host-detail-cell dt { color: var(--text-3); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; margin-right: 6px; }
+    .host-detail-cell dd { margin: 0; font-family: monospace; }
+    .host-detail-cell dl { margin: 0; display: inline-flex; gap: 4px; align-items: baseline; }
+    .host-expand-btn { background: none; border: none; color: var(--text-3); cursor: pointer; padding: 0; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; transition: transform 0.15s; }
+    .host-expand-btn[aria-expanded="true"] { transform: rotate(90deg); color: var(--text); }
+    .host-expand-btn:hover { color: var(--text); }
     .hosts-table-header { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); align-items: center; }
     .hosts-table-header > .gtcol { padding: 8px 0; }
     .hosts-table-header > .gtcol:first-child { padding-left: 12px; }
@@ -637,26 +646,12 @@ const sharedCSS = `
     .hosts-table-row > .gtcol:last-child { padding-right: 12px; }
     .hosts-table-row:last-child { border-bottom: none; }
     .hosts-table-row:hover { background: var(--surface-2); }
-    /* Agents table */
-    .agents-table { display: grid; grid-template-columns: minmax(140px, 1.4fr) 110px minmax(80px, 0.9fr) minmax(70px, 0.8fr) minmax(110px, 1fr) minmax(110px, 1fr) minmax(80px, 0.9fr); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-    .agents-table-header { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); align-items: center; }
-    .agents-table-header > .gtcol { padding: 8px 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-3); }
-    .agents-table-header > .gtcol:first-child { padding-left: 12px; }
-    .agents-table-header > .gtcol:last-child { padding-right: 12px; }
-    .agents-table-row { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; border-bottom: 1px solid var(--border); align-items: center; font-size: 0.8125rem; }
-    .agents-table-row > .gtcol { padding: 10px 0; align-items: center; }
-    .agents-table-row > .gtcol:first-child { padding-left: 12px; }
-    .agents-table-row > .gtcol:last-child { padding-right: 12px; }
-    .agents-table-row:last-child { border-bottom: none; }
-    .agents-table-row:nth-child(even) { background: var(--surface); }
-    .agents-table-row:hover { background: var(--surface-2); }
+    /* Agent status pill (used inline in the hosts table last-seen column) */
     .agent-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; white-space: nowrap; border: 1px solid; }
     .agent-pill.green { background: var(--chip-host-bg); color: var(--success); border-color: var(--chip-host-border); }
     .agent-pill.amber { background: rgba(217, 119, 6, 0.12); color: var(--warning); border-color: rgba(217, 119, 6, 0.28); }
     .agent-pill.red   { background: rgba(220, 38, 38, 0.10); color: var(--danger); border-color: rgba(220, 38, 38, 0.26); }
     .agent-pill .agent-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-    .agent-cell-mono { font-family: monospace; font-size: 0.8125rem; color: var(--text-2); }
-    .agent-cell-time { white-space: nowrap; color: var(--text-2); }
     /* Session count pill */
     .session-count { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 12px; background: var(--primary-sub); color: var(--primary); font-size: 0.8125rem; font-weight: 600; text-decoration: none; border: 1px solid rgba(124,58,237,0.18); }
     .session-count:hover { background: var(--primary); color: var(--primary-fg); }
@@ -1145,7 +1140,6 @@ const sidebarNavHTML = `
         <a href="/admin/users" class="sub-item{{if eq .AdminTab "users"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>{{call .T "users"}}</a>
         <a href="/admin/groups" class="sub-item{{if eq .AdminTab "groups"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{{call .T "groups"}}</a>
         <a href="/admin/hosts" class="sub-item{{if eq .AdminTab "hosts"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>{{call .T "hosts"}}</a>
-        <a href="/admin/agents" class="sub-item{{if eq .AdminTab "agents"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/></svg>{{call .T "agents"}}</a>
         {{if .BridgeMode}}<a href="/admin/sudo-rules" class="sub-item{{if eq .AdminTab "sudo-rules"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>{{call .T "sudo_rules"}}</a>{{end}}
         <a href="/admin/notifications" class="sub-item{{if eq .AdminTab "notifications"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>{{call .T "notify_tab"}}</a>
         <a href="/admin/policies" class="sub-item{{if eq .AdminTab "policies"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>{{call .T "policies_tab"}}</a>
@@ -3152,6 +3146,7 @@ const adminPageHTML = `<!DOCTYPE html>
           {{if .AllGroups}}<form method="GET" action="/admin/hosts" style="display:inline;margin:0"><select name="group" class="col-filter-select" aria-label="{{call .T "aria_filter_group"}}"><option value="">{{call .T "all_groups"}}</option>{{range .AllGroups}}<option value="{{.}}" {{if eq . $.GroupFilter}}selected{{end}}>{{.}}</option>{{end}}</select></form>{{end}}
           {{if .GroupFilter}}<a href="/admin/hosts" class="hint-muted">{{call .T "clear_filter"}}</a>{{end}}
         </div>
+        <div class="gtcol gtcol-hlastseen" role="columnheader"><span class="col-sort-link">{{call .T "agents_last_seen"}}</span></div>
         <div class="gtcol gtcol-hbreakglass" role="columnheader"><span class="col-sort-link">{{call .T "breakglass"}}</span></div>
         <div class="gtcol gtcol-hactions" role="columnheader" style="align-items:center;flex-wrap:wrap;gap:8px;justify-content:space-between">
           <span class="col-sort-link">{{call .T "action"}}</span>
@@ -3163,13 +3158,18 @@ const adminPageHTML = `<!DOCTYPE html>
       </div>
       <div class="hosts-table-filter" id="hosts-filter-row" style="display:none">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="hhost" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
+        <div class="gtcol-filter-wrap"></div>
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="hbreakglass" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
         <div style="display:flex;justify-content:flex-end;align-items:center;padding:0 6px"><button type="button" class="filter-clear-btn" id="hosts-clear">{{call .T "clear_filter"}}</button></div>
       </div>
       {{range .Hosts}}
       <div class="hosts-table-row" role="row">
         <div class="gtcol gtcol-hhost" role="cell" style="flex-wrap:wrap;gap:4px;align-items:center">
+          {{if .Reported}}<button type="button" class="host-expand-btn" aria-expanded="false" aria-label="Toggle agent details" data-host="{{.Hostname}}"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>{{end}}
           <a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{if .Group}}<span class="host-group">{{.Group}}</span>{{end}}
+        </div>
+        <div class="gtcol gtcol-hlastseen" role="cell" title="{{.LastSeenISO}}">
+          {{if .Reported}}<span class="agent-pill {{.AgentStatus}}" style="margin-right:6px"><span class="agent-dot"></span>{{if eq .AgentStatus "green"}}{{call $.T "agents_status_online"}}{{else if eq .AgentStatus "amber"}}{{call $.T "agents_status_stale"}}{{else}}{{call $.T "agents_status_offline"}}{{end}}</span><span class="hint-muted" style="font-size:0.75rem">{{.LastSeenAgo}} {{call $.T "ago"}}</span>{{else}}<span style="color:var(--text-3)">--</span>{{end}}
         </div>
         <div class="gtcol gtcol-hbreakglass" role="cell">
           {{if .Escrowed}}
@@ -3191,6 +3191,16 @@ const adminPageHTML = `<!DOCTYPE html>
           <button class="saction-btn saction-danger remove-host-btn" data-hostname="{{.Hostname}}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>{{call $.T "remove_host"}}</button>
         </div>
       </div>
+      {{if .Reported}}
+      <div class="host-detail-row" id="host-detail-{{.Hostname}}" style="display:none" role="row">
+        <div class="host-detail-cell">
+          <dl><dt>{{call $.T "version"}}</dt><dd>{{if .AgentVersion}}{{.AgentVersion}}{{else}}--{{end}}</dd></dl>
+          <dl><dt>{{call $.T "os_arch"}}</dt><dd>{{if .AgentOSInfo}}{{.AgentOSInfo}}{{else}}--{{end}}</dd></dl>
+          <dl><dt>IP</dt><dd>{{if .AgentIP}}{{.AgentIP}}{{else}}--{{end}}</dd></dl>
+          <dl><dt>{{call $.T "agents_first_seen"}}</dt><dd title="{{.FirstSeenISO}}">{{.FirstSeenAgo}} {{call $.T "ago"}}</dd></dl>
+        </div>
+      </div>
+      {{end}}
       {{end}}
     </div>
     <div id="hosts-loadbar"></div>
@@ -3209,7 +3219,14 @@ const adminPageHTML = `<!DOCTYPE html>
         if(emptyMsg){emptyMsg.style.display=vis.length===0?'':'none';}
         return vis;
       }
-      var hostsCtl=idtInfinite({tableSelector:'#hosts-table',rowSelector:'.hosts-table-row',barId:'hosts-loadbar',pageSize:{{.DefaultPageSize}},getFiltered:getFilteredHosts});
+      function hideDetailFor(row){
+        var btn=row.querySelector('.host-expand-btn');
+        if(!btn)return;
+        var detail=document.getElementById('host-detail-'+btn.dataset.host);
+        if(detail)detail.style.display='none';
+        btn.setAttribute('aria-expanded','false');
+      }
+      var hostsCtl=idtInfinite({tableSelector:'#hosts-table',rowSelector:'.hosts-table-row',barId:'hosts-loadbar',pageSize:{{.DefaultPageSize}},getFiltered:getFilteredHosts,onHide:hideDetailFor});
       hostsCtl.rerender();
       document.querySelectorAll('#hosts-table .gtcol-filter-input').forEach(function(inp){ inp.addEventListener('input',hostsCtl.reset); });
       var hc=document.getElementById('hosts-clear');
@@ -3217,6 +3234,16 @@ const adminPageHTML = `<!DOCTYPE html>
       (function(){var ftb=document.getElementById('hosts-filter-toggle');var ftr=document.getElementById('hosts-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       document.querySelectorAll('.saction-rotate,.saction-rotate-all').forEach(function(btn){
         btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+      });
+      // Per-host expand toggle: reveal the agent details row underneath.
+      document.querySelectorAll('#hosts-table .host-expand-btn').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          var detail=document.getElementById('host-detail-'+btn.dataset.host);
+          if(!detail)return;
+          var open=btn.getAttribute('aria-expanded')==='true';
+          btn.setAttribute('aria-expanded', open?'false':'true');
+          detail.style.display=open?'none':'';
+        });
       });
       document.querySelectorAll('.reveal-password-btn').forEach(function(btn){
         btn.addEventListener('click',function(){
@@ -3761,37 +3788,6 @@ const adminPageHTML = `<!DOCTYPE html>
       setTimeout(function(){el.style.transition='opacity 0.4s';el.style.opacity='0';setTimeout(function(){el.remove()},500)},5000);
     });
     </script>
-
-    {{else if eq .AdminTab "agents"}}
-    <h3 style="margin-bottom:12px">{{call .T "agents_title"}}</h3>
-    <p style="font-size:0.875rem;color:var(--text-3);margin-bottom:16px">{{call .T "agents_description"}}</p>
-
-    {{if .Agents}}
-    <div class="agents-table" role="table" aria-label="{{call .T "agents_title"}}">
-      <div class="agents-table-header" role="row">
-        <div class="gtcol" role="columnheader">{{call .T "host"}}</div>
-        <div class="gtcol" role="columnheader">{{call .T "agents_status"}}</div>
-        <div class="gtcol" role="columnheader">{{call .T "agents_last_seen"}}</div>
-        <div class="gtcol" role="columnheader">{{call .T "version"}}</div>
-        <div class="gtcol" role="columnheader">{{call .T "os_arch"}}</div>
-        <div class="gtcol" role="columnheader">IP</div>
-        <div class="gtcol" role="columnheader">{{call .T "agents_first_seen"}}</div>
-      </div>
-      {{range .Agents}}
-      <div class="agents-table-row" role="row">
-        <div class="gtcol" role="cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
-        <div class="gtcol" role="cell"><span class="agent-pill {{.Status}}"><span class="agent-dot"></span>{{if eq .Status "green"}}{{call $.T "agents_status_online"}}{{else if eq .Status "amber"}}{{call $.T "agents_status_stale"}}{{else}}{{call $.T "agents_status_offline"}}{{end}}</span></div>
-        <div class="gtcol agent-cell-time" role="cell" title="{{.LastSeenISO}}">{{.LastSeenAgo}} {{call $.T "ago"}}</div>
-        <div class="gtcol" role="cell">{{if .Version}}<span class="agent-cell-mono">{{.Version}}</span>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</div>
-        <div class="gtcol" role="cell">{{if .OSInfo}}<span class="agent-cell-mono">{{.OSInfo}}</span>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</div>
-        <div class="gtcol" role="cell">{{if .IP}}<span class="agent-cell-mono">{{.IP}}</span>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</div>
-        <div class="gtcol agent-cell-time" role="cell" title="{{.FirstSeenISO}}">{{.FirstSeenAgo}} {{call $.T "ago"}}</div>
-      </div>
-      {{end}}
-    </div>
-    {{else}}
-    <p class="empty-state">{{call .T "agents_empty"}}</p>
-    {{end}}
 
     {{end}}
   </main>
