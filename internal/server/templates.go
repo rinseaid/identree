@@ -637,6 +637,26 @@ const sharedCSS = `
     .hosts-table-row > .gtcol:last-child { padding-right: 12px; }
     .hosts-table-row:last-child { border-bottom: none; }
     .hosts-table-row:hover { background: var(--surface-2); }
+    /* Agents table */
+    .agents-table { display: grid; grid-template-columns: minmax(140px, 1.4fr) 110px minmax(80px, 0.9fr) minmax(70px, 0.8fr) minmax(110px, 1fr) minmax(110px, 1fr) minmax(80px, 0.9fr); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .agents-table-header { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); align-items: center; }
+    .agents-table-header > .gtcol { padding: 8px 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-3); }
+    .agents-table-header > .gtcol:first-child { padding-left: 12px; }
+    .agents-table-header > .gtcol:last-child { padding-right: 12px; }
+    .agents-table-row { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; border-bottom: 1px solid var(--border); align-items: center; font-size: 0.8125rem; }
+    .agents-table-row > .gtcol { padding: 10px 0; align-items: center; }
+    .agents-table-row > .gtcol:first-child { padding-left: 12px; }
+    .agents-table-row > .gtcol:last-child { padding-right: 12px; }
+    .agents-table-row:last-child { border-bottom: none; }
+    .agents-table-row:nth-child(even) { background: var(--surface); }
+    .agents-table-row:hover { background: var(--surface-2); }
+    .agent-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; white-space: nowrap; border: 1px solid; }
+    .agent-pill.green { background: var(--chip-host-bg); color: var(--success); border-color: var(--chip-host-border); }
+    .agent-pill.amber { background: rgba(217, 119, 6, 0.12); color: var(--warning); border-color: rgba(217, 119, 6, 0.28); }
+    .agent-pill.red   { background: rgba(220, 38, 38, 0.10); color: var(--danger); border-color: rgba(220, 38, 38, 0.26); }
+    .agent-pill .agent-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .agent-cell-mono { font-family: monospace; font-size: 0.8125rem; color: var(--text-2); }
+    .agent-cell-time { white-space: nowrap; color: var(--text-2); }
     /* Session count pill */
     .session-count { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 12px; background: var(--primary-sub); color: var(--primary); font-size: 0.8125rem; font-weight: 600; text-decoration: none; border: 1px solid rgba(124,58,237,0.18); }
     .session-count:hover { background: var(--primary); color: var(--primary-fg); }
@@ -3747,33 +3767,27 @@ const adminPageHTML = `<!DOCTYPE html>
     <p style="font-size:0.875rem;color:var(--text-3);margin-bottom:16px">{{call .T "agents_description"}}</p>
 
     {{if .Agents}}
-    <div class="info-table-wrap">
-      <table class="info-table" style="width:100%;font-size:0.8125rem">
-        <thead>
-          <tr>
-            <th>{{call .T "host"}}</th>
-            <th>{{call .T "agents_status"}}</th>
-            <th>{{call .T "agents_last_seen"}}</th>
-            <th>{{call .T "version"}}</th>
-            <th>{{call .T "os_arch"}}</th>
-            <th>IP</th>
-            <th>{{call .T "agents_first_seen"}}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{range .Agents}}
-          <tr>
-            <td><strong>{{.Hostname}}</strong></td>
-            <td>{{if eq .Status "green"}}<span style="color:var(--success);font-weight:600">●</span> {{call $.T "agents_status_online"}}{{else if eq .Status "amber"}}<span style="color:var(--warning);font-weight:600">●</span> {{call $.T "agents_status_stale"}}{{else}}<span style="color:var(--danger);font-weight:600">●</span> {{call $.T "agents_status_offline"}}{{end}}</td>
-            <td title="{{.LastSeenISO}}">{{.LastSeenAgo}} {{call $.T "ago"}}</td>
-            <td>{{if .Version}}<code>{{.Version}}</code>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
-            <td>{{if .OSInfo}}<code>{{.OSInfo}}</code>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
-            <td>{{if .IP}}<code>{{.IP}}</code>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
-            <td title="{{.FirstSeenISO}}">{{.FirstSeenAgo}} {{call $.T "ago"}}</td>
-          </tr>
-          {{end}}
-        </tbody>
-      </table>
+    <div class="agents-table" role="table" aria-label="{{call .T "agents_title"}}">
+      <div class="agents-table-header" role="row">
+        <div class="gtcol" role="columnheader">{{call .T "host"}}</div>
+        <div class="gtcol" role="columnheader">{{call .T "agents_status"}}</div>
+        <div class="gtcol" role="columnheader">{{call .T "agents_last_seen"}}</div>
+        <div class="gtcol" role="columnheader">{{call .T "version"}}</div>
+        <div class="gtcol" role="columnheader">{{call .T "os_arch"}}</div>
+        <div class="gtcol" role="columnheader">IP</div>
+        <div class="gtcol" role="columnheader">{{call .T "agents_first_seen"}}</div>
+      </div>
+      {{range .Agents}}
+      <div class="agents-table-row" role="row">
+        <div class="gtcol" role="cell"><a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a></div>
+        <div class="gtcol" role="cell"><span class="agent-pill {{.Status}}"><span class="agent-dot"></span>{{if eq .Status "green"}}{{call $.T "agents_status_online"}}{{else if eq .Status "amber"}}{{call $.T "agents_status_stale"}}{{else}}{{call $.T "agents_status_offline"}}{{end}}</span></div>
+        <div class="gtcol agent-cell-time" role="cell" title="{{.LastSeenISO}}">{{.LastSeenAgo}} {{call $.T "ago"}}</div>
+        <div class="gtcol" role="cell">{{if .Version}}<span class="agent-cell-mono">{{.Version}}</span>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</div>
+        <div class="gtcol" role="cell">{{if .OSInfo}}<span class="agent-cell-mono">{{.OSInfo}}</span>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</div>
+        <div class="gtcol" role="cell">{{if .IP}}<span class="agent-cell-mono">{{.IP}}</span>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</div>
+        <div class="gtcol agent-cell-time" role="cell" title="{{.FirstSeenISO}}">{{.FirstSeenAgo}} {{call $.T "ago"}}</div>
+      </div>
+      {{end}}
     </div>
     {{else}}
     <p class="empty-state">{{call .T "agents_empty"}}</p>
