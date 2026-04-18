@@ -216,7 +216,7 @@
   "host_required": "Host ist erforderlich.",
   "agents": "Agents",
   "agents_title": "Agent fleet",
-  "agents_description": "Hosts that have sent an /api/agent/heartbeat ping. Green = under 5 min, amber = 5-60 min, red = over an hour.",
+  "agents_description": "Hosts that have sent an /api/agent/heartbeat ping. Green = under 10 min, amber = 10-60 min, red = over an hour.",
   "agents_status": "Status",
   "agents_status_online": "Online",
   "agents_status_stale": "Stale",

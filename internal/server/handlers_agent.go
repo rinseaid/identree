@@ -110,15 +110,16 @@ func (s *Server) handleAgentList(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"agents": out})
 }
 
-// agentStatus classifies the host's last_seen as green (<5m), amber
-// (5–60m), or red (>60m).
+// agentStatus classifies the host's last_seen as green (<10m), amber
+// (10–60m), or red (>=60m). Heartbeats fire every 5 minutes, so 10
+// minutes gives one missed-ping headroom before flipping to amber.
 func agentStatus(now, lastSeen time.Time) string {
 	if lastSeen.IsZero() {
 		return "red"
 	}
 	delta := now.Sub(lastSeen)
 	switch {
-	case delta < 5*time.Minute:
+	case delta < 10*time.Minute:
 		return "green"
 	case delta < 60*time.Minute:
 		return "amber"

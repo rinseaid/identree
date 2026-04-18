@@ -123,8 +123,8 @@ func TestAgentStatus_Classification(t *testing.T) {
 		expected string
 	}{
 		{1 * time.Minute, "green"},
-		{4*time.Minute + 59*time.Second, "green"},
-		{6 * time.Minute, "amber"},
+		{9*time.Minute + 59*time.Second, "green"},
+		{11 * time.Minute, "amber"},
 		{59 * time.Minute, "amber"},
 		{61 * time.Minute, "red"},
 		{24 * time.Hour, "red"},

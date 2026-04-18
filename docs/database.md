@@ -89,10 +89,10 @@ older than 35 minutes.
 
 ## Agent heartbeats
 
-Each managed host pings `POST /api/agent/heartbeat` once a minute (via
-the systemd timer installed by `install.sh`, or by `identree heartbeat`
-from cron). The server records the host in the `agents` table with its
-version and OS info.
+Each managed host pings `POST /api/agent/heartbeat` every 5 minutes
+(via the systemd timer installed by `install.sh`, or by `identree
+heartbeat` from cron). The server records the host in the `agents`
+table with its version and OS info.
 
 Query the fleet with `GET /api/agents` (admin session):
 
@@ -118,9 +118,12 @@ curl -s --cookie pam_session=... https://identree/api/agents | jq
 
 | Status | Window |
 |---|---|
-| `green` | <5 minutes |
-| `amber` | 5–60 minutes |
+| `green` | <10 minutes |
+| `amber` | 10–60 minutes |
 | `red` | ≥60 minutes |
+
+Green is heartbeat-cadence + one missed ping (5min × 2), so a single
+missed packet doesn't flip a healthy host amber.
 
 To add the heartbeat timer to an existing host that was provisioned
 before this feature shipped:

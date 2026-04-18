@@ -53,14 +53,14 @@ PrivateTmp=true
 PrivateDevices=true
 `,
 	"identree-heartbeat.timer": `[Unit]
-Description=identree agent heartbeat — every 60 seconds
+Description=identree agent heartbeat — every 5 minutes
 Requires=identree-heartbeat.service
 
 [Timer]
 OnBootSec=30s
-OnUnitActiveSec=60s
-RandomizedDelaySec=10s
-AccuracySec=5s
+OnUnitActiveSec=5min
+RandomizedDelaySec=60s
+AccuracySec=15s
 
 [Install]
 WantedBy=timers.target
