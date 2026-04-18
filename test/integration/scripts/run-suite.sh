@@ -289,6 +289,94 @@ for ((round=1; round<=ROUNDS; round++)); do
     echo ""
 done
 
+# ── Agent heartbeat round-trip ────────────────────────────────────────────────
+# Each host container ships /usr/local/bin/identree. Fire one heartbeat from
+# every host and verify each shows up in /api/agents with a populated os_info
+# field (proving /etc/os-release detection works on every supported distro).
+
+echo ""
+echo "==> Triggering agent heartbeat from each host..."
+
+case "$STACK" in
+    full-mode)     CONTAINER_PREFIX="integ-full" ;;
+    lldap-dex)     CONTAINER_PREFIX="integ-lldap-dex" ;;
+    vault-escrow)  CONTAINER_PREFIX="integ-vault" ;;
+esac
+
+# Hostname → container suffix mapping (the hostname uses ubuntu22 vs container
+# ubuntu2204 etc., so the lookup is explicit).
+hostname_to_container() {
+    case "$1" in
+        *ubuntu22*)  echo "${CONTAINER_PREFIX}-ubuntu2204" ;;
+        *ubuntu24*)  echo "${CONTAINER_PREFIX}-ubuntu2404" ;;
+        *debian12*)  echo "${CONTAINER_PREFIX}-debian12" ;;
+        *fedora41*)  echo "${CONTAINER_PREFIX}-fedora41" ;;
+        *rocky9*)    echo "${CONTAINER_PREFIX}-rocky9" ;;
+        *) echo "" ;;
+    esac
+}
+
+# Expected distro substring in the os_info for each host (matches PRETTY_NAME).
+hostname_to_distro_match() {
+    case "$1" in
+        *ubuntu22*) echo "Ubuntu 22" ;;
+        *ubuntu24*) echo "Ubuntu 24" ;;
+        *debian12*) echo "Debian" ;;
+        *fedora41*) echo "Fedora" ;;
+        *rocky9*)   echo "Rocky" ;;
+        *) echo "" ;;
+    esac
+}
+
+heartbeat_ok=0
+heartbeat_failed=0
+for host in $HOSTNAMES; do
+    container=$(hostname_to_container "$host")
+    if [ -z "$container" ] || ! docker inspect "$container" >/dev/null 2>&1; then
+        echo "    ⨯ $host: container not running (skipping)"
+        heartbeat_failed=$((heartbeat_failed + 1))
+        continue
+    fi
+    if docker exec "$container" identree heartbeat >/dev/null 2>&1; then
+        echo "    ✓ $host (via $container)"
+        heartbeat_ok=$((heartbeat_ok + 1))
+    else
+        echo "    ⨯ $host: heartbeat exit non-zero"
+        heartbeat_failed=$((heartbeat_failed + 1))
+    fi
+done
+
+echo ""
+echo "==> Verifying /api/agents reflects every heartbeating host..."
+agents_json=$(curl -sf -b "$COOKIE_JAR" "${IDENTREE_URL}/api/agents" || echo "")
+if [ -z "$agents_json" ]; then
+    echo "    ⨯ /api/agents returned empty — admin session may have expired"
+    agents_failed=1
+else
+    agents_failed=0
+    for host in $HOSTNAMES; do
+        want_distro=$(hostname_to_distro_match "$host")
+        # Pluck this host's os_info via python (jq isn't guaranteed in CI).
+        os_info=$(printf '%s' "$agents_json" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for a in d.get('agents',[]):
+    if a.get('hostname')=='$host':
+        print(a.get('os_info',''))
+        break
+")
+        if [ -z "$os_info" ]; then
+            echo "    ⨯ $host: no agent record"
+            agents_failed=$((agents_failed + 1))
+        elif [ -n "$want_distro" ] && [[ "$os_info" != *"$want_distro"* ]]; then
+            echo "    ⨯ $host: os_info=$os_info (expected to contain '$want_distro')"
+            agents_failed=$((agents_failed + 1))
+        else
+            echo "    ✓ $host: $os_info"
+        fi
+    done
+fi
+
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 
 [ -f "${COOKIE_JAR:-}" ] && rm -f "$COOKIE_JAR"
@@ -331,5 +419,12 @@ echo "  Manually approved:   ${approved_count}"
 echo "  Rejected:            ${rejected_count}"
 echo "  Errors/failed:       ${failed_count}"
 echo ""
+echo "  Agent heartbeats:    ${heartbeat_ok} ok, ${heartbeat_failed} failed"
+echo "  Agent verification:  $([ "${agents_failed:-0}" -eq 0 ] && echo "all hosts present" || echo "${agents_failed} host(s) missing or wrong distro")"
+echo ""
 echo "  identree dashboard:  ${IDENTREE_URL}"
 echo "═══════════════════════════════════════════════════════════════"
+
+if [ "${heartbeat_failed:-0}" -gt 0 ] || [ "${agents_failed:-0}" -gt 0 ]; then
+    exit 1
+fi
