@@ -390,10 +390,15 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 
 	// ── SSE broadcaster ─────────────────────────────────────────────────────
-	// v1: in-process broadcaster. SQLite is single-node by definition; Postgres
-	// HA cross-replica fan-out is implemented by the LISTEN/NOTIFY broadcaster
-	// in a follow-up commit.
-	s.sseBroadcaster = &localBroadcaster{server: s}
+	// SQLite: in-process delivery only (single-node).
+	// Postgres: dedicated pgx.Conn LISTENing on identree_sse and
+	// identree_cluster so events fan out across HA replicas.
+	if cfg.DatabaseDriver == "postgres" {
+		s.sseBroadcaster = newPgListenBroadcaster(s, cfg.DatabaseDSN, sqlStore.DB())
+		slog.Info("cluster broadcaster: postgres LISTEN/NOTIFY", "channels", []string{pgChannelSSE, pgChannelCluster})
+	} else {
+		s.sseBroadcaster = &localBroadcaster{server: s}
+	}
 
 	// ── Audit streamer ──────────────────────────────────────────────────────
 	if sinks, err := initAuditSinks(cfg); err != nil {
@@ -734,6 +739,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/admin/users", s.handleAdminUsers)
 	s.mux.HandleFunc("/admin/groups", s.handleAdminGroups)
 	s.mux.HandleFunc("/admin/hosts", s.handleAdminHosts)
+	s.mux.HandleFunc("/admin/agents", s.handleAdminAgents)
 	s.mux.HandleFunc("/api/users/remove", s.handleRemoveUser)
 	s.mux.HandleFunc("/api/admin/groups/claims", s.handleUpdateGroupClaims)
 	s.mux.HandleFunc("/api/admin/users/claims", s.handleUpdateUserClaims)

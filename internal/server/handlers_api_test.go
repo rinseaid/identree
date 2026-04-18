@@ -17,8 +17,9 @@ import (
 // noopBroadcaster is a no-op SSEBroadcaster for tests.
 type noopBroadcaster struct{}
 
-func (noopBroadcaster) Broadcast(string, string) {}
-func (noopBroadcaster) Close()                   {}
+func (noopBroadcaster) Broadcast(string, string)      {}
+func (noopBroadcaster) PublishCluster(clusterMessage) {}
+func (noopBroadcaster) Close()                        {}
 
 // newAPITestServer builds a minimal *Server suitable for handleCreateChallenge
 // and handlePollChallenge tests. Uses a local ChallengeStore with a temp dir.

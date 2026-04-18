@@ -1125,6 +1125,7 @@ const sidebarNavHTML = `
         <a href="/admin/users" class="sub-item{{if eq .AdminTab "users"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>{{call .T "users"}}</a>
         <a href="/admin/groups" class="sub-item{{if eq .AdminTab "groups"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{{call .T "groups"}}</a>
         <a href="/admin/hosts" class="sub-item{{if eq .AdminTab "hosts"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>{{call .T "hosts"}}</a>
+        <a href="/admin/agents" class="sub-item{{if eq .AdminTab "agents"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/></svg>{{call .T "agents"}}</a>
         {{if .BridgeMode}}<a href="/admin/sudo-rules" class="sub-item{{if eq .AdminTab "sudo-rules"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>{{call .T "sudo_rules"}}</a>{{end}}
         <a href="/admin/notifications" class="sub-item{{if eq .AdminTab "notifications"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>{{call .T "notify_tab"}}</a>
         <a href="/admin/policies" class="sub-item{{if eq .AdminTab "policies"}} active{{end}}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>{{call .T "policies_tab"}}</a>
@@ -3740,6 +3741,43 @@ const adminPageHTML = `<!DOCTYPE html>
       setTimeout(function(){el.style.transition='opacity 0.4s';el.style.opacity='0';setTimeout(function(){el.remove()},500)},5000);
     });
     </script>
+
+    {{else if eq .AdminTab "agents"}}
+    <h3 style="margin-bottom:12px">{{call .T "agents_title"}}</h3>
+    <p style="font-size:0.875rem;color:var(--text-3);margin-bottom:16px">{{call .T "agents_description"}}</p>
+
+    {{if .Agents}}
+    <div class="info-table-wrap">
+      <table class="info-table" style="width:100%;font-size:0.8125rem">
+        <thead>
+          <tr>
+            <th>{{call .T "host"}}</th>
+            <th>{{call .T "agents_status"}}</th>
+            <th>{{call .T "agents_last_seen"}}</th>
+            <th>{{call .T "version"}}</th>
+            <th>{{call .T "os_arch"}}</th>
+            <th>IP</th>
+            <th>{{call .T "agents_first_seen"}}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Agents}}
+          <tr>
+            <td><strong>{{.Hostname}}</strong></td>
+            <td>{{if eq .Status "green"}}<span style="color:var(--success);font-weight:600">●</span> {{call $.T "agents_status_online"}}{{else if eq .Status "amber"}}<span style="color:var(--warning);font-weight:600">●</span> {{call $.T "agents_status_stale"}}{{else}}<span style="color:var(--danger);font-weight:600">●</span> {{call $.T "agents_status_offline"}}{{end}}</td>
+            <td title="{{.LastSeenISO}}">{{.LastSeenAgo}} {{call $.T "ago"}}</td>
+            <td>{{if .Version}}<code>{{.Version}}</code>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
+            <td>{{if .OSInfo}}<code>{{.OSInfo}}</code>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
+            <td>{{if .IP}}<code>{{.IP}}</code>{{else}}<span style="color:var(--text-3)">--</span>{{end}}</td>
+            <td title="{{.FirstSeenISO}}">{{.FirstSeenAgo}} {{call $.T "ago"}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <p class="empty-state">{{call .T "agents_empty"}}</p>
+    {{end}}
 
     {{end}}
   </main>
