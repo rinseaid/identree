@@ -2003,7 +2003,7 @@ const historyPageHTML = `<!DOCTYPE html>
         {{if .IsAdmin}}<div class="gtcol gtcol-huser" role="columnheader" style="gap:8px;align-items:center"><a href="/history?sort=user&order={{if eq .Sort "user"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "user"}} active{{end}}">{{call .T "user"}}{{if eq .Sort "user"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a><div class="toggle-wrap" id="history-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>{{end}}
         <div class="gtcol gtcol-hhost" role="columnheader"><a href="/history?sort=hostname&order={{if eq .Sort "hostname"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "hostname"}} active{{end}}">{{call .T "host"}}{{if eq .Sort "hostname"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
         <div class="gtcol gtcol-hcode" role="columnheader"><a href="/history?sort=code&order={{if eq .Sort "code"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "code"}} active{{end}}">{{call .T "code"}}{{if eq .Sort "code"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
-        <div class="gtcol gtcol-hreason" role="columnheader"><span class="col-sort-link">{{call .T "reason"}}</span></div>
+        <div class="gtcol gtcol-hreason" role="columnheader" style="gap:10px;align-items:center"><span class="col-sort-link">{{call .T "reason"}}</span><span class="export-links"><a href="/api/history/export?format=csv" class="export-link">{{call .T "export_csv"}}</a> <a href="/api/history/export?format=json" class="export-link">{{call .T "export_json"}}</a></span></div>
       </div>
       <div class="history-gtable-filter" id="history-filter-row" style="display:none" data-prefilter-host="{{.HostFilter}}" data-prefilter-user="{{.UserFilter}}" data-prefilter-action="{{.ActionFilter}}">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="htime" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -2045,9 +2045,6 @@ const historyPageHTML = `<!DOCTYPE html>
     </div>
     <div id="filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <div id="history-loadbar" class="loadbar"></div>
-    <div class="pagination">
-      <span class="export-links"><a href="/api/history/export?format=csv" class="export-link">{{call .T "export_csv"}}</a> <a href="/api/history/export?format=json" class="export-link">{{call .T "export_json"}}</a></span>
-    </div>
     {{else}}
     <p class="empty-state">{{call .T "no_activity"}}</p>
     {{end}}
