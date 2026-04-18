@@ -488,6 +488,78 @@ func TestSQLStore_GraceHMAC(t *testing.T) {
 	}
 }
 
+func TestSQLStore_SetRequestedGrace(t *testing.T) {
+	s := newTestSQLStore(t)
+	c, err := s.Create("alice", "h", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got, _ := s.Get(c.ID); got.RequestedGrace != 0 {
+		t.Errorf("RequestedGrace initial: got %v, want 0", got.RequestedGrace)
+	}
+
+	s.SetRequestedGrace(c.ID, 45*time.Minute)
+	got, ok := s.Get(c.ID)
+	if !ok {
+		t.Fatal("Get: not found")
+	}
+	if got.RequestedGrace != 45*time.Minute {
+		t.Errorf("RequestedGrace: got %v, want 45m", got.RequestedGrace)
+	}
+}
+
+func TestSQLStore_SetBreakglassOverride(t *testing.T) {
+	s := newTestSQLStore(t)
+	c, err := s.Create("alice", "h", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got, _ := s.Get(c.ID); got.BreakglassOverride {
+		t.Error("BreakglassOverride initial: got true, want false")
+	}
+
+	s.SetBreakglassOverride(c.ID)
+	got, _ := s.Get(c.ID)
+	if !got.BreakglassOverride {
+		t.Error("BreakglassOverride after set: got false, want true")
+	}
+}
+
+func TestSQLStore_SetChallengePolicy(t *testing.T) {
+	s := newTestSQLStore(t)
+	c, err := s.Create("alice", "h", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	s.SetChallengePolicy(c.ID, "two-admin", 2, true, true)
+	got, _ := s.Get(c.ID)
+	if got.PolicyName != "two-admin" {
+		t.Errorf("PolicyName: got %q, want two-admin", got.PolicyName)
+	}
+	if got.RequiredApprovals != 2 {
+		t.Errorf("RequiredApprovals: got %d, want 2", got.RequiredApprovals)
+	}
+	if !got.RequireAdmin {
+		t.Error("RequireAdmin: got false, want true")
+	}
+	if !got.BreakglassBypassAllowed {
+		t.Error("BreakglassBypassAllowed: got false, want true")
+	}
+
+	// Re-apply with false booleans — verifies boolToInt(false)=0 round-trips
+	// and the UPDATE genuinely overwrites rather than only OR-ing flags.
+	s.SetChallengePolicy(c.ID, "solo", 1, false, false)
+	got, _ = s.Get(c.ID)
+	if got.PolicyName != "solo" || got.RequiredApprovals != 1 {
+		t.Errorf("policy re-apply: got name=%q approvals=%d", got.PolicyName, got.RequiredApprovals)
+	}
+	if got.RequireAdmin || got.BreakglassBypassAllowed {
+		t.Errorf("policy re-apply flags: got require_admin=%v bypass=%v, want both false",
+			got.RequireAdmin, got.BreakglassBypassAllowed)
+	}
+}
+
 // TestSQLStore_ConcurrentApprove fires N goroutines all attempting to
 // Approve the same pending challenge. Exactly one must succeed; the rest
 // must see ErrAlreadyResolved (the row-level lock turned the race into

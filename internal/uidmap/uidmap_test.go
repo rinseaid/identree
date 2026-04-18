@@ -147,6 +147,124 @@ func TestUIDMap_Persistence(t *testing.T) {
 	}
 }
 
+// TestNewUIDMap_RejectsWorldWritable guards the hardening check against a
+// tampered/misconfigured uidmap file. Writing would be a privilege boundary
+// escape vector.
+func TestNewUIDMap_RejectsWorldWritable(t *testing.T) {
+	path := tmpPath(t)
+	if err := os.WriteFile(path, []byte(`{"uids":{},"gids":{},"nextUID":100000,"nextGID":100000}`), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	// Chmod explicitly — WriteFile's mode is masked by the process umask.
+	if err := os.Chmod(path, 0666); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	if _, err := NewUIDMap(path, 100000, 100000); err == nil {
+		t.Fatal("NewUIDMap on group/world writable file: want error, got nil")
+	}
+}
+
+func TestNewUIDMap_RejectsNonRegularFile(t *testing.T) {
+	// A directory trips the !IsRegular branch.
+	dir := t.TempDir()
+	if _, err := NewUIDMap(dir, 100000, 100000); err == nil {
+		t.Fatal("NewUIDMap on directory: want error, got nil")
+	}
+}
+
+func TestNewUIDMap_RejectsCorruptJSON(t *testing.T) {
+	path := tmpPath(t)
+	if err := os.WriteFile(path, []byte("not-json"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := NewUIDMap(path, 100000, 100000); err == nil {
+		t.Fatal("NewUIDMap on corrupt JSON: want error, got nil")
+	}
+}
+
+// TestNewUIDMap_ClampsInvalidEntries covers the security-sensitive sanitisation:
+// a corrupted/hand-edited file could contain UID<=0 (which maps to root on
+// POSIX NFS clients) or values above maxUID. Those entries must be dropped
+// and NextUID/NextGID must be bumped above all remaining valid entries.
+func TestNewUIDMap_ClampsInvalidEntries(t *testing.T) {
+	path := tmpPath(t)
+	// Handcraft a file with both invalid (-1, 0, >maxUID) and valid entries,
+	// plus a NextUID that's lower than an existing valid entry.
+	raw := `{
+	  "uids": {"bad-neg": -1, "bad-zero": 0, "bad-huge": 9999999999, "good": 300000},
+	  "gids": {"bad-neg": -1, "good": 300001},
+	  "nextUID": 100000,
+	  "nextGID": 100000
+	}`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	m, err := NewUIDMap(path, 200000, 200000)
+	if err != nil {
+		t.Fatalf("NewUIDMap: %v", err)
+	}
+	// Invalid entries were dropped: requesting them yields a fresh assignment
+	// that is strictly above the retained valid entry (300000).
+	freshUID := m.UID("bad-neg")
+	if freshUID <= 300000 {
+		t.Errorf("reassigned UID for bad-neg = %d, want > 300000 (above retained 'good')", freshUID)
+	}
+	// The 'good' entry is preserved.
+	if got := m.UID("good"); got != 300000 {
+		t.Errorf("retained UID for 'good' = %d, want 300000", got)
+	}
+	if got := m.GID("good"); got != 300001 {
+		t.Errorf("retained GID for 'good' = %d, want 300001", got)
+	}
+}
+
+// TestUIDMap_FlushForceWritesEvenWhenClean covers the semantic difference
+// between Flush and FlushForce: the former is a no-op when dirty=false, the
+// latter unconditionally persists. Callers rely on FlushForce during shutdown
+// to capture any state a prior clean Flush may have skipped.
+func TestUIDMap_FlushForceWritesEvenWhenClean(t *testing.T) {
+	path := tmpPath(t)
+	m, err := NewUIDMap(path, 100000, 100000)
+	if err != nil {
+		t.Fatalf("NewUIDMap: %v", err)
+	}
+
+	// Clean map: Flush is a no-op (covered elsewhere). FlushForce must still
+	// create the file.
+	if err := m.FlushForce(); err != nil {
+		t.Fatalf("FlushForce: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat after FlushForce: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Fatal("FlushForce wrote empty file")
+	}
+	// FlushForce must also clear the dirty flag (it calls flushLocked).
+	if m.dirty {
+		t.Error("FlushForce did not clear dirty flag")
+	}
+
+	// Mutate without flushing, then FlushForce again — content must reflect
+	// the new assignment (not just the initial empty state).
+	m.UID("user-force-a")
+	if err := m.FlushForce(); err != nil {
+		t.Fatalf("FlushForce #2: %v", err)
+	}
+	reloaded, err := NewUIDMap(path, 100000, 100000)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	// Reloading must see user-force-a's UID. If FlushForce had skipped writing
+	// (treating dirty=false as "nothing to do"), the reload would re-assign.
+	got := reloaded.UID("user-force-a")
+	orig := m.UID("user-force-a")
+	if got != orig {
+		t.Errorf("FlushForce did not persist dirty state: reload got %d, original %d", got, orig)
+	}
+}
+
 func TestUIDMap_FlushNoOpWhenClean(t *testing.T) {
 	path := tmpPath(t)
 	m, err := NewUIDMap(path, 100000, 100000)

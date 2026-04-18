@@ -1559,3 +1559,483 @@ func assertStringSliceEqual(t *testing.T, got, want []string) {
 		}
 	}
 }
+
+// ── TestConfigurePAM (real function) ────────────────────────────────────────
+
+func TestConfigurePAM_RealFunction(t *testing.T) {
+	// withTempPAMFiles redirects pamFiles to temp paths, optionally creating
+	// them with the provided content. Returns the created paths.
+	withTempPAMFiles := func(t *testing.T, contents map[string]string) []string {
+		t.Helper()
+		dir := t.TempDir()
+		orig := pamFiles
+		var paths []string
+		for name, content := range contents {
+			p := filepath.Join(dir, name)
+			if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+				t.Fatalf("write %s: %v", p, err)
+			}
+			paths = append(paths, p)
+		}
+		// Also include a non-existent path to exercise the stat-missing branch.
+		paths = append(paths, filepath.Join(dir, "does-not-exist"))
+		pamFiles = paths
+		t.Cleanup(func() { pamFiles = orig })
+		return paths
+	}
+
+	t.Run("inserts pamLine into existing files and skips missing ones", func(t *testing.T) {
+		paths := withTempPAMFiles(t, map[string]string{
+			"sudo":   "# sudo pam\nauth required pam_unix.so\naccount required pam_unix.so\n",
+			"sudo-i": "# sudo-i pam\n@include common-auth\n",
+		})
+
+		if err := configurePAM(false, false); err != nil {
+			t.Fatalf("configurePAM: %v", err)
+		}
+
+		for _, p := range paths[:2] {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatalf("read %s: %v", p, err)
+			}
+			if !strings.Contains(string(data), pamLine) {
+				t.Errorf("%s missing pamLine after configurePAM:\n%s", p, data)
+			}
+		}
+	})
+
+	t.Run("idempotent when called twice", func(t *testing.T) {
+		paths := withTempPAMFiles(t, map[string]string{
+			"sudo": "auth required pam_unix.so\n",
+		})
+
+		if err := configurePAM(false, false); err != nil {
+			t.Fatalf("configurePAM (1st): %v", err)
+		}
+		first, _ := os.ReadFile(paths[0])
+
+		if err := configurePAM(false, false); err != nil {
+			t.Fatalf("configurePAM (2nd): %v", err)
+		}
+		second, _ := os.ReadFile(paths[0])
+
+		if string(first) != string(second) {
+			t.Errorf("file changed on second call (not idempotent):\n1st: %q\n2nd: %q", first, second)
+		}
+		// Exactly one copy of pamLine.
+		if n := strings.Count(string(second), pamLine); n != 1 {
+			t.Errorf("pamLine count = %d, want 1", n)
+		}
+	})
+
+	t.Run("dryRun does not write", func(t *testing.T) {
+		paths := withTempPAMFiles(t, map[string]string{
+			"sudo": "auth required pam_unix.so\n",
+		})
+		orig, _ := os.ReadFile(paths[0])
+
+		if err := configurePAM(true, false); err != nil {
+			t.Fatalf("configurePAM: %v", err)
+		}
+		got, _ := os.ReadFile(paths[0])
+		if string(got) != string(orig) {
+			t.Error("dry-run modified file")
+		}
+	})
+
+	t.Run("all files missing returns nil", func(t *testing.T) {
+		dir := t.TempDir()
+		orig := pamFiles
+		pamFiles = []string{filepath.Join(dir, "nope1"), filepath.Join(dir, "nope2")}
+		t.Cleanup(func() { pamFiles = orig })
+
+		if err := configurePAM(false, false); err != nil {
+			t.Errorf("expected nil error when all PAM files missing, got: %v", err)
+		}
+	})
+}
+
+// ── TestWriteTLSCACert (real function) ──────────────────────────────────────
+
+func TestWriteTLSCACert(t *testing.T) {
+	const pem = "-----BEGIN CERTIFICATE-----\ntestcert\n-----END CERTIFICATE-----\n"
+
+	// withTempTargets redirects tlsCACertTargets to temp dirs. The createDirs
+	// slice controls which target directories actually exist.
+	withTempTargets := func(t *testing.T, createDirs []bool) (string, []string) {
+		t.Helper()
+		root := t.TempDir()
+		orig := tlsCACertTargets
+		newTargets := make([]struct{ dir, file string }, len(createDirs))
+		var expectedPaths []string
+		for i, create := range createDirs {
+			d := filepath.Join(root, fmt.Sprintf("target-%d", i))
+			newTargets[i] = struct{ dir, file string }{dir: d, file: "identree.crt"}
+			if create {
+				if err := os.MkdirAll(d, 0755); err != nil {
+					t.Fatalf("mkdir %s: %v", d, err)
+				}
+				expectedPaths = append(expectedPaths, filepath.Join(d, "identree.crt"))
+			}
+		}
+		tlsCACertTargets = newTargets
+		t.Cleanup(func() { tlsCACertTargets = orig })
+		return root, expectedPaths
+	}
+
+	t.Run("writes to all existing target directories", func(t *testing.T) {
+		_, expected := withTempTargets(t, []bool{true, true})
+
+		if err := writeTLSCACert(pem, false); err != nil {
+			t.Fatalf("writeTLSCACert: %v", err)
+		}
+
+		for _, p := range expected {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatalf("ReadFile %s: %v", p, err)
+			}
+			if string(data) != pem {
+				t.Errorf("%s content mismatch: got %q", p, data)
+			}
+			info, _ := os.Stat(p)
+			if info.Mode().Perm() != 0644 {
+				t.Errorf("%s perms = %04o, want 0644", p, info.Mode().Perm())
+			}
+		}
+	})
+
+	t.Run("skips missing target directories", func(t *testing.T) {
+		_, expected := withTempTargets(t, []bool{true, false})
+
+		if err := writeTLSCACert(pem, false); err != nil {
+			t.Fatalf("writeTLSCACert: %v", err)
+		}
+		if len(expected) != 1 {
+			t.Fatalf("test setup: expected 1 existing target, got %d", len(expected))
+		}
+		if _, err := os.Stat(expected[0]); err != nil {
+			t.Errorf("file not written to existing target: %v", err)
+		}
+	})
+
+	t.Run("idempotent when called twice", func(t *testing.T) {
+		_, expected := withTempTargets(t, []bool{true})
+
+		if err := writeTLSCACert(pem, false); err != nil {
+			t.Fatalf("writeTLSCACert (1st): %v", err)
+		}
+		if err := writeTLSCACert(pem, false); err != nil {
+			t.Fatalf("writeTLSCACert (2nd): %v", err)
+		}
+		data, _ := os.ReadFile(expected[0])
+		if string(data) != pem {
+			t.Error("content changed after second call")
+		}
+	})
+
+	t.Run("dryRun does not write", func(t *testing.T) {
+		_, expected := withTempTargets(t, []bool{true})
+
+		if err := writeTLSCACert(pem, true); err != nil {
+			t.Fatalf("writeTLSCACert: %v", err)
+		}
+		if _, err := os.Stat(expected[0]); !os.IsNotExist(err) {
+			t.Error("dry-run created file")
+		}
+	})
+
+	t.Run("no target dirs exist returns nil", func(t *testing.T) {
+		withTempTargets(t, []bool{false, false})
+
+		if err := writeTLSCACert(pem, false); err != nil {
+			t.Errorf("expected nil error when no target dirs exist, got: %v", err)
+		}
+	})
+}
+
+// ── TestInstallAuditdRules (real function) ──────────────────────────────────
+
+func TestInstallAuditdRules(t *testing.T) {
+	// withFakePATH creates a tempdir containing a fake `augenrules` script that
+	// records its args to a file, and prepends that dir to PATH.
+	withFakePATH := func(t *testing.T, scriptBody string) string {
+		t.Helper()
+		dir := t.TempDir()
+		script := filepath.Join(dir, "augenrules")
+		if err := os.WriteFile(script, []byte(scriptBody), 0755); err != nil {
+			t.Fatalf("write fake augenrules: %v", err)
+		}
+		origPath := os.Getenv("PATH")
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
+		return dir
+	}
+
+	// redirectAuditdPath sends auditdRulesPath into a subdir so MkdirAll works.
+	redirectAuditdPath := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		orig := auditdRulesPath
+		auditdRulesPath = filepath.Join(dir, "rules.d", "identree.rules")
+		t.Cleanup(func() { auditdRulesPath = orig })
+		return dir
+	}
+
+	t.Run("writes rules file and invokes augenrules", func(t *testing.T) {
+		fakeDir := withFakePATH(t, "#!/bin/sh\necho \"$@\" > \""+t.TempDir()+"/unused\"\nexit 0\n")
+		_ = fakeDir
+		redirectAuditdPath(t)
+
+		if err := installAuditdRules(false); err != nil {
+			t.Fatalf("installAuditdRules: %v", err)
+		}
+
+		data, err := os.ReadFile(auditdRulesPath)
+		if err != nil {
+			t.Fatalf("rules file not written: %v", err)
+		}
+		if string(data) != AuditdRules {
+			t.Error("rules file content mismatch")
+		}
+		info, _ := os.Stat(auditdRulesPath)
+		if info.Mode().Perm() != 0640 {
+			t.Errorf("rules perms = %04o, want 0640", info.Mode().Perm())
+		}
+	})
+
+	t.Run("missing augenrules skips gracefully", func(t *testing.T) {
+		// Point PATH at an empty dir so augenrules cannot be found.
+		empty := t.TempDir()
+		t.Setenv("PATH", empty)
+		redirectAuditdPath(t)
+
+		if err := installAuditdRules(false); err != nil {
+			t.Errorf("expected nil when augenrules missing, got: %v", err)
+		}
+		if _, err := os.Stat(auditdRulesPath); !os.IsNotExist(err) {
+			t.Error("rules file should not be written when augenrules missing")
+		}
+	})
+
+	t.Run("dryRun does not write or exec", func(t *testing.T) {
+		// Use a script that would fail if invoked — dry-run must not call it.
+		withFakePATH(t, "#!/bin/sh\nexit 99\n")
+		redirectAuditdPath(t)
+
+		if err := installAuditdRules(true); err != nil {
+			t.Errorf("dry-run returned error: %v", err)
+		}
+		if _, err := os.Stat(auditdRulesPath); !os.IsNotExist(err) {
+			t.Error("dry-run wrote rules file")
+		}
+	})
+
+	t.Run("augenrules failure propagates error", func(t *testing.T) {
+		withFakePATH(t, "#!/bin/sh\nexit 3\n")
+		redirectAuditdPath(t)
+
+		err := installAuditdRules(false)
+		if err == nil {
+			t.Error("expected error when augenrules exits non-zero")
+		}
+		// File should still have been written before the exec.
+		if _, statErr := os.Stat(auditdRulesPath); statErr != nil {
+			t.Errorf("rules file not written: %v", statErr)
+		}
+	})
+}
+
+// ── TestRenewCert ───────────────────────────────────────────────────────────
+
+func TestRenewCert(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("test uses non-root branch checks")
+	}
+
+	t.Run("requires root", func(t *testing.T) {
+		err := RenewCert("http://example.com", "secret", "", "", "")
+		if err == nil || !strings.Contains(err.Error(), "must be run as root") {
+			t.Errorf("expected root error, got: %v", err)
+		}
+	})
+}
+
+// TestRenewCert_Logic tests the HTTP+write pipeline by simulating root-gated
+// execution via a helper that bypasses the uid check through running against a
+// real test server. Because we cannot fake os.Getuid at the unit-test layer,
+// we verify the HTTP/parse logic via a narrow helper that replicates the
+// server interaction, and cover file-writing separately.
+//
+// Instead, we drive RenewCert end-to-end only when running as root. Since CI
+// runs as non-root, we still exercise its validation branches and leave the
+// HTTP/write portion documented but partially uncovered. The pure HTTP/parse
+// logic is already covered by TestFetchProvision, which shares the same
+// request/response shape.
+
+// ── TestRenewCertCore ───────────────────────────────────────────────────────
+
+func TestRenewCertCore(t *testing.T) {
+	t.Run("empty serverURL returns error", func(t *testing.T) {
+		err := renewCert("", "secret", "", "", "")
+		if err == nil || !strings.Contains(err.Error(), "IDENTREE_SERVER_URL") {
+			t.Errorf("expected serverURL error, got: %v", err)
+		}
+	})
+
+	t.Run("successful renewal writes cert/key/CA", func(t *testing.T) {
+		dir := t.TempDir()
+		overrideSetupPaths(t, dir)
+
+		prov := provisionResponse{
+			ClientCert: "new-client-cert",
+			ClientKey:  "new-client-key",
+			CACert:     "new-ca-cert",
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/client/provision" {
+				t.Errorf("path = %s", r.URL.Path)
+			}
+			if r.Header.Get("X-Shared-Secret") != "s" {
+				t.Errorf("missing shared secret header")
+			}
+			if r.Header.Get("X-Hostname") == "" {
+				t.Error("missing hostname header")
+			}
+			json.NewEncoder(w).Encode(prov)
+		}))
+		defer srv.Close()
+
+		if err := renewCert(srv.URL, "s", "", "", ""); err != nil {
+			t.Fatalf("renewCert: %v", err)
+		}
+
+		cert, _ := os.ReadFile(mtlsClientCertPath)
+		if string(cert) != "new-client-cert" {
+			t.Errorf("cert = %q", cert)
+		}
+		key, _ := os.ReadFile(mtlsClientKeyPath)
+		if string(key) != "new-client-key" {
+			t.Errorf("key = %q", key)
+		}
+		ca, _ := os.ReadFile(mtlsCACertPath)
+		if string(ca) != "new-ca-cert" {
+			t.Errorf("CA = %q", ca)
+		}
+		info, _ := os.Stat(mtlsClientKeyPath)
+		if info.Mode().Perm() != 0600 {
+			t.Errorf("key perms = %04o, want 0600", info.Mode().Perm())
+		}
+	})
+
+	t.Run("server returns error status", func(t *testing.T) {
+		dir := t.TempDir()
+		overrideSetupPaths(t, dir)
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+		}))
+		defer srv.Close()
+
+		err := renewCert(srv.URL, "s", "", "", "")
+		if err == nil || !strings.Contains(err.Error(), "403") {
+			t.Errorf("expected 403 error, got: %v", err)
+		}
+	})
+
+	t.Run("server response without client cert fails", func(t *testing.T) {
+		dir := t.TempDir()
+		overrideSetupPaths(t, dir)
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(provisionResponse{LDAPUrl: "ldap://x"})
+		}))
+		defer srv.Close()
+
+		err := renewCert(srv.URL, "s", "", "", "")
+		if err == nil || !strings.Contains(err.Error(), "mTLS") {
+			t.Errorf("expected mTLS-missing error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid JSON response", func(t *testing.T) {
+		dir := t.TempDir()
+		overrideSetupPaths(t, dir)
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("not-json"))
+		}))
+		defer srv.Close()
+
+		err := renewCert(srv.URL, "s", "", "", "")
+		if err == nil || !strings.Contains(err.Error(), "parse") {
+			t.Errorf("expected parse error, got: %v", err)
+		}
+	})
+
+	t.Run("unreachable server returns connection error", func(t *testing.T) {
+		dir := t.TempDir()
+		overrideSetupPaths(t, dir)
+
+		// Use a TCP port we know is closed on localhost.
+		err := renewCert("http://127.0.0.1:1/", "s", "", "", "")
+		if err == nil || !strings.Contains(err.Error(), "connecting to server") {
+			t.Errorf("expected connection error, got: %v", err)
+		}
+	})
+
+	t.Run("existing client cert/key loaded without crashing", func(t *testing.T) {
+		dir := t.TempDir()
+		overrideSetupPaths(t, dir)
+
+		// Provide invalid cert/key files — the code logs a warning and
+		// continues without mTLS. Ensure that branch executes.
+		os.MkdirAll(filepath.Dir(mtlsClientCertPath), 0755)
+		os.WriteFile(mtlsClientCertPath, []byte("not a cert"), 0644)
+		os.WriteFile(mtlsClientKeyPath, []byte("not a key"), 0600)
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(provisionResponse{
+				ClientCert: "c", ClientKey: "k",
+			})
+		}))
+		defer srv.Close()
+
+		if err := renewCert(srv.URL, "s", mtlsClientCertPath, mtlsClientKeyPath, ""); err != nil {
+			t.Errorf("expected success when existing cert is invalid (fallback), got: %v", err)
+		}
+	})
+
+	t.Run("caCert path loaded when present", func(t *testing.T) {
+		dir := t.TempDir()
+		overrideSetupPaths(t, dir)
+
+		// Write a syntactically-valid PEM so AppendCertsFromPEM succeeds,
+		// exercising the tlsCfg.RootCAs branch.
+		caPEM := `-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIQIRi6zePL6mKjOipn+dNuaTAKBggqhkjOPQQDAjASMRAw
+DgYDVQQKEwdBY21lIENvMB4XDTE3MTAyMDE5NDMwNloXDTE4MTAyMDE5NDMwNlow
+EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD0d
+7VNhbWvZLWPuj/RtHFjvtJBEwOkhbN/BnnE8rnZR8+sbwnc/KhCk3FhnpHZnQz7B
+5aETbbIgmuvewdjvSBSjYzBhMA4GA1UdDwEB/wQEAwICpDATBgNVHSUEDDAKBggr
+BgEFBQcDATAPBgNVHRMBAf8EBTADAQH/MCkGA1UdEQQiMCCCDmxvY2FsaG9zdDo1
+NDUzgg4xMjcuMC4wLjE6NTQ1MzAKBggqhkjOPQQDAgNIADBFAiEA2zpJEPQyz6/l
+Wf86aX6PepsntZv2GYlA5UpabfT2EZICICpJ5h/iI+i341gBmLiAFQOyTDT+/wQc
+6MF9+Yw1Yy0t
+-----END CERTIFICATE-----
+`
+		caPath := filepath.Join(dir, "test-ca.pem")
+		os.WriteFile(caPath, []byte(caPEM), 0644)
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(provisionResponse{
+				ClientCert: "c", ClientKey: "k",
+			})
+		}))
+		defer srv.Close()
+
+		if err := renewCert(srv.URL, "s", "", "", caPath); err != nil {
+			t.Errorf("renewCert with CA path: %v", err)
+		}
+	})
+}

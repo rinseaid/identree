@@ -413,15 +413,19 @@ func writeSSSDConfig(prov *provisionResponse, hostname string, dryRun, force boo
 	return nil
 }
 
+// tlsCACertTargets lists the candidate OS trust store locations for the CA
+// cert. Declared as a var so tests can redirect to a temp directory.
+// Debian/Ubuntu: /usr/local/share/ca-certificates/identree.crt
+// RHEL/Fedora:   /etc/pki/ca-trust/source/anchors/identree.crt
+// We write to every path whose directory exists.
+var tlsCACertTargets = []struct{ dir, file string }{
+	{"/usr/local/share/ca-certificates", "identree.crt"},
+	{"/etc/pki/ca-trust/source/anchors", "identree.crt"},
+}
+
 // writeTLSCACert writes the PEM CA certificate to the OS trust store location.
 func writeTLSCACert(pemCert string, dryRun bool) error {
-	// Debian/Ubuntu: /usr/local/share/ca-certificates/identree.crt
-	// RHEL/Fedora:   /etc/pki/ca-trust/source/anchors/identree.crt
-	// We write to both paths when both directories exist.
-	targets := []struct{ dir, file string }{
-		{"/usr/local/share/ca-certificates", "identree.crt"},
-		{"/etc/pki/ca-trust/source/anchors", "identree.crt"},
-	}
+	targets := tlsCACertTargets
 	wrote := false
 	for _, t := range targets {
 		if _, err := os.Stat(t.dir); os.IsNotExist(err) {
@@ -561,7 +565,12 @@ func RenewCert(serverURL, sharedSecret, clientCert, clientKey, caCert string) er
 	if os.Getuid() != 0 {
 		return fmt.Errorf("must be run as root")
 	}
+	return renewCert(serverURL, sharedSecret, clientCert, clientKey, caCert)
+}
 
+// renewCert is the uid-independent core of RenewCert, factored out so tests
+// can exercise the HTTP + file-write pipeline without requiring root.
+func renewCert(serverURL, sharedSecret, clientCert, clientKey, caCert string) error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf("hostname: %w", err)
@@ -636,9 +645,11 @@ func RenewCert(serverURL, sharedSecret, clientCert, clientKey, caCert string) er
 		return fmt.Errorf("server did not return mTLS client certificate (mTLS may not be enabled)")
 	}
 
-	// Write new cert/key files.
-	if err := os.MkdirAll("/etc/identree", 0755); err != nil {
-		return fmt.Errorf("mkdir /etc/identree: %w", err)
+	// Write new cert/key files. Derive the parent dir from the cert path so
+	// tests can redirect all outputs to a temp directory.
+	certDir := filepath.Dir(mtlsClientCertPath)
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", certDir, err)
 	}
 
 	if err := atomicWrite(mtlsClientCertPath, []byte(prov.ClientCert), 0644); err != nil {

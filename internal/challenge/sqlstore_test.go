@@ -329,6 +329,100 @@ func TestSQLStore_KnownHostsAndUsers(t *testing.T) {
 	}
 }
 
+func TestSQLStore_SaveStateClearsDirty(t *testing.T) {
+	s := newTestSQLStore(t)
+
+	// A write marks the store dirty.
+	s.LogAction("alice", ActionApproved, "h", "C1", "")
+	if !s.dirty.Load() {
+		t.Fatal("expected dirty=true after write")
+	}
+	s.SaveState()
+	if s.dirty.Load() {
+		t.Error("SaveState did not clear dirty flag")
+	}
+}
+
+func TestSQLStore_DB(t *testing.T) {
+	s := newTestSQLStore(t)
+	db := s.DB()
+	if db == nil {
+		t.Fatal("DB(): got nil")
+	}
+	// Proves the handle is live by pinging through it directly.
+	if err := db.Ping(); err != nil {
+		t.Errorf("DB().Ping: %v", err)
+	}
+}
+
+// TestSQLStore_UpsertSuffix verifies the ON CONFLICT fragment is what the
+// callers concatenate into INSERT statements. A regression here would break
+// upsertGrace + every upsert path silently until a runtime SQL error fires.
+func TestSQLStore_UpsertSuffix(t *testing.T) {
+	cases := []struct {
+		name    string
+		dialect Dialect
+	}{
+		{"sqlite", DialectSQLite},
+		{"postgres", DialectPostgres},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &SQLStore{dialect: tc.dialect}
+			got := s.upsertSuffix("username, hostname", "expiry_unix = excluded.expiry_unix")
+			want := " ON CONFLICT (username, hostname) DO UPDATE SET expiry_unix = excluded.expiry_unix"
+			if got != want {
+				t.Errorf("upsertSuffix:\n got=%q\nwant=%q", got, want)
+			}
+		})
+	}
+}
+
+// TestSQLStore_WithSQLGraceHMACKey verifies the functional option is applied
+// at construction time so grace HMACs are written/verified from the first
+// write. Without this, the first CreateGraceSession would land with an empty
+// MAC and subsequent reads (with the key now set) would drop it as invalid.
+func TestSQLStore_WithSQLGraceHMACKey(t *testing.T) {
+	driver, dsn := backendForTest(t)
+	db, dialect, err := Open(SQLConfig{Driver: driver, DSN: dsn})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	key := []byte("construction-time-key")
+	s, err := NewSQLStore(db, dialect, 5*time.Minute, 30*time.Minute, WithSQLGraceHMACKey(key))
+	if err != nil {
+		t.Fatalf("NewSQLStore: %v", err)
+	}
+	t.Cleanup(s.Stop)
+	if dialect == DialectPostgres {
+		truncateAllTables(t, db)
+	}
+
+	if got := s.currentGraceHMACKey(); string(got) != string(key) {
+		t.Errorf("graceHMACKey after option: got %q, want %q", got, key)
+	}
+
+	// End-to-end: write with the key present, then read back successfully.
+	s.CreateGraceSession("alice", "h", 10*time.Minute)
+	if !s.WithinGracePeriod("alice", "h") {
+		t.Error("WithinGracePeriod after Create with keyed store: want true")
+	}
+
+	// The stored row must have a non-empty HMAC — proving the key was active
+	// on the write path (not only on the verify path).
+	var mac string
+	if err := s.queryRow(t.Context(),
+		`SELECT hmac_hex FROM grace_sessions WHERE username = ? AND hostname = ?`,
+		"alice", "h").Scan(&mac); err != nil {
+		t.Fatalf("scan hmac: %v", err)
+	}
+	if mac == "" {
+		t.Error("stored hmac_hex is empty; WithSQLGraceHMACKey did not take effect at construction")
+	}
+}
+
 func TestSQLStore_RevokeTokensBefore(t *testing.T) {
 	s := newTestSQLStore(t)
 

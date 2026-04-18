@@ -1,11 +1,13 @@
 package notify
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -234,6 +236,59 @@ func TestLoadNotificationConfigRejectsWorldWritable(t *testing.T) {
 	_, err := LoadNotificationConfig(path)
 	if err == nil {
 		t.Fatal("expected error for world-writable file")
+	}
+}
+
+func TestRunChannelCommandSuccess(t *testing.T) {
+	// Use a command that prints its environment-derived value and exits 0.
+	ch := Channel{Name: "custom", Backend: "custom", Command: `test "$NOTIFY_USERNAME" = "alice"`}
+	data := WebhookData{Event: "challenge_created", Username: "alice", ApprovalURL: "https://a"}
+	if err := runChannelCommand(ch, data, 5e9); err != nil {
+		t.Fatalf("runChannelCommand: %v", err)
+	}
+}
+
+func TestRunChannelCommandFailure(t *testing.T) {
+	ch := Channel{Name: "fail", Backend: "custom", Command: `echo boom >&2; exit 7`}
+	err := runChannelCommand(ch, WebhookData{}, 5e9)
+	if err == nil {
+		t.Fatal("expected error from failing command")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("error should include stderr: %v", err)
+	}
+}
+
+func TestRunChannelCommandDeliverIntegration(t *testing.T) {
+	ch := Channel{Name: "custom", Backend: "custom", Command: `exit 0`}
+	if err := Deliver(ch, WebhookData{Event: "test"}, 5e9); err != nil {
+		t.Fatalf("Deliver custom: %v", err)
+	}
+}
+
+func TestLimitedWriter(t *testing.T) {
+	var buf bytes.Buffer
+	lw := &limitedWriter{w: &buf, n: 5}
+	// First write fits.
+	n, err := lw.Write([]byte("abc"))
+	if err != nil || n != 3 {
+		t.Fatalf("write1 n=%d err=%v", n, err)
+	}
+	// Second write is truncated to remaining budget.
+	n, err = lw.Write([]byte("defgh"))
+	if err != nil {
+		t.Fatalf("write2 err=%v", n)
+	}
+	if buf.String() != "abcde" {
+		t.Errorf("buf = %q, want %q", buf.String(), "abcde")
+	}
+	// Further writes silently discarded but report full length.
+	n, err = lw.Write([]byte("xyz"))
+	if err != nil || n != 3 {
+		t.Errorf("discard write n=%d err=%v", n, err)
+	}
+	if buf.String() != "abcde" {
+		t.Errorf("buf mutated after limit: %q", buf.String())
 	}
 }
 
