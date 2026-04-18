@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
+	"github.com/rinseaid/identree/internal/pocketid"
 	"github.com/rinseaid/identree/internal/policy"
 )
 
@@ -1228,5 +1230,1013 @@ func TestHostRegistryPath_Custom(t *testing.T) {
 	got := hostRegistryPath()
 	if got != "/custom/hosts.json" {
 		t.Errorf("expected /custom/hosts.json, got %q", got)
+	}
+}
+
+// ── Claims-mutation test infrastructure ──────────────────────────────────────
+
+// newAdminClaimsTestServer wires newAdminTestServer to a real httptest PocketID
+// backend so handlers reach their real work (claim persistence) rather than
+// short-circuiting on a nil client.
+func newAdminClaimsTestServer(t *testing.T, secret string, handler http.Handler) (*Server, *httptest.Server) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	s := newAdminTestServer(t, secret)
+	s.cfg.APIKey = "test-api-key" // so isBridgeMode() is false
+	s.pocketIDClient = pocketid.NewPocketIDClient(ts.URL, "test-api-key")
+	return s, ts
+}
+
+// ── handleRemoveUser — privilege + side effects ──────────────────────────────
+
+func TestHandleRemoveUser_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/users/remove", nil)
+	w := httptest.NewRecorder()
+	s.handleRemoveUser(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleRemoveUser_InvalidUsername(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	form := url.Values{"target_user": {"bad user!@#"}}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/remove", form)
+	w := httptest.NewRecorder()
+	s.handleRemoveUser(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for malformed username, got %d", w.Code)
+	}
+}
+
+func TestHandleRemoveUser_SelfRemovalRejected(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	form := url.Values{"target_user": {"admin1"}}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/remove", form)
+	w := httptest.NewRecorder()
+	s.handleRemoveUser(w, r)
+	// Admins can't remove themselves — guard against accidental self-lockout.
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for self-removal, got %d", w.Code)
+	}
+}
+
+func TestHandleRemoveUser_HappyPath_ClearsSessionsAndLogsAction(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+
+	// Pre-populate state that must be scrubbed.
+	s.store.CreateGraceSession("target1", "host-a", 10*time.Minute)
+	s.store.CreateGraceSession("target1", "host-b", 10*time.Minute)
+	s.store.LogAction("target1", challpkg.ActionAutoApproved, "host-a", "code1", "target1")
+
+	before := s.store.RevokeTokensBefore("target1")
+
+	form := url.Values{"target_user": {"target1"}}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/remove", form)
+	w := httptest.NewRecorder()
+	s.handleRemoveUser(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// All sessions for the user must be gone.
+	if sess := s.store.ActiveSessions("target1"); len(sess) != 0 {
+		t.Errorf("expected 0 active sessions after removal, got %d", len(sess))
+	}
+
+	// A revoke-tokens-before timestamp must now exist (or be advanced). This
+	// invalidates any previously-issued token the user had.
+	after := s.store.RevokeTokensBefore("target1")
+	if !after.After(before) && after.IsZero() {
+		t.Errorf("expected RevokeTokensBefore to be set/advanced, before=%v after=%v", before, after)
+	}
+
+	// The target is recorded in removedUsers so PocketID re-merge suppresses it
+	// for up to 10 minutes.
+	s.removedUsersMu.Lock()
+	_, recorded := s.removedUsers["target1"]
+	s.removedUsersMu.Unlock()
+	if !recorded {
+		t.Error("expected target1 to be tracked in removedUsers")
+	}
+}
+
+// ── handleUpdateUserClaims — privilege + validation ──────────────────────────
+
+func TestHandleUpdateUserClaims_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/users/claims", nil)
+	w := httptest.NewRecorder()
+	s.handleUpdateUserClaims(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// TestHandleUpdateUserClaims_NonAdminCannotElevateSelf is the core privilege-
+// escalation regression: a regular user submitting their own user_id with a
+// crafted loginShell / ssh_keys payload must be rejected with 403, no matter
+// how the form is built. This protects against a user flipping themselves into
+// a privileged state by exploiting claim editing.
+func TestHandleUpdateUserClaims_NonAdminCannotElevateSelf(t *testing.T) {
+	const secret = "test-secret"
+	// A pocketID backend that records any PUT so we can assert it never happened.
+	var puts int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/custom-claims/user/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			puts++
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	form := url.Values{
+		"user_id":    {"a0000000-0000-0000-0000-000000000001"},
+		"loginShell": {"/bin/evil"},
+		"ssh_keys":   {"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHgpB example@evil"},
+	}
+	// Non-admin role; CSRF/session are otherwise valid.
+	r := buildFormRequest(secret, "bob", "user", "/api/admin/users/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateUserClaims(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if puts != 0 {
+		t.Errorf("expected 0 PUTs to PocketID, got %d (privilege escalation)", puts)
+	}
+}
+
+func TestHandleUpdateUserClaims_InvalidUserID(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	s.cfg.APIKey = "test-api-key"
+	s.pocketIDClient = pocketid.NewPocketIDClient("http://127.0.0.1:0", "key")
+	form := url.Values{"user_id": {"../../etc/passwd"}}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateUserClaims(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid user_id, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateUserClaims_PocketIDNotConfigured(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	// pocketIDClient is nil.
+	form := url.Values{"user_id": {"a0000000-0000-0000-0000-000000000001"}}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateUserClaims(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateUserClaims_LoginShellTooLong(t *testing.T) {
+	const secret = "test-secret"
+	userID := "a0000000-0000-0000-0000-000000000001"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users/"+userID, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{"id": userID, "username": "alice"})
+		w.Write(b)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	form := url.Values{
+		"user_id":    {userID},
+		"loginShell": {"/" + strings.Repeat("a", 300)},
+	}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateUserClaims(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for over-long loginShell, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleUpdateUserClaims_BadLoginShellChars(t *testing.T) {
+	const secret = "test-secret"
+	userID := "a0000000-0000-0000-0000-000000000001"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users/"+userID, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{"id": userID, "username": "alice"})
+		w.Write(b)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	// Shell with shell-metacharacters must be rejected — prevents injection into
+	// the LDAP-sourced loginShell attribute.
+	form := url.Values{
+		"user_id":    {userID},
+		"loginShell": {"/bin/sh; rm -rf /"},
+	}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateUserClaims(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for shell with metachars, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleUpdateUserClaims_HomeDirectoryTraversal(t *testing.T) {
+	const secret = "test-secret"
+	userID := "a0000000-0000-0000-0000-000000000001"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users/"+userID, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{"id": userID, "username": "alice"})
+		w.Write(b)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	form := url.Values{
+		"user_id":       {userID},
+		"homeDirectory": {"/home/../etc"},
+	}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateUserClaims(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for .. traversal, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateUserClaims_InvalidSSHKey(t *testing.T) {
+	const secret = "test-secret"
+	userID := "a0000000-0000-0000-0000-000000000001"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users/"+userID, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{"id": userID, "username": "alice"})
+		w.Write(b)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	form := url.Values{
+		"user_id":  {userID},
+		"ssh_keys": {"not-a-real-ssh-key"},
+	}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateUserClaims(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid SSH key, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleUpdateUserClaims_HappyPath_PreservesUnmanagedClaims(t *testing.T) {
+	const secret = "test-secret"
+	userID := "a0000000-0000-0000-0000-000000000001"
+	var putBody []pocketid.Claim
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users/"+userID, func(w http.ResponseWriter, r *http.Request) {
+		// Existing user has an SSH key AND a non-managed claim; the latter MUST
+		// survive the PUT.
+		b, _ := json.Marshal(map[string]any{
+			"id": userID, "username": "alice",
+			"customClaims": []map[string]string{
+				{"key": "sshPublicKey", "value": "old-key"},
+				{"key": "loginShell", "value": "/bin/sh"},
+				{"key": "unmanagedCustom", "value": "preserve-me"},
+			},
+		})
+		w.Write(b)
+	})
+	mux.HandleFunc("/api/custom-claims/user/"+userID, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&putBody)
+		w.WriteHeader(http.StatusOK)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	form := url.Values{
+		"user_id":    {userID},
+		"loginShell": {"/bin/bash"},
+	}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateUserClaims(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the request body PUT back to PocketID contains the preserved
+	// unmanaged claim AND the new loginShell, but NOT the stale SSH key (it's
+	// an editable-user-claim class so it gets rewritten from the form).
+	foundUnmanaged := false
+	foundShell := false
+	for _, c := range putBody {
+		if c.Key == "unmanagedCustom" && c.Value == "preserve-me" {
+			foundUnmanaged = true
+		}
+		if c.Key == "loginShell" && c.Value == "/bin/bash" {
+			foundShell = true
+		}
+	}
+	if !foundUnmanaged {
+		t.Errorf("unmanaged claim not preserved in PUT body: %+v", putBody)
+	}
+	if !foundShell {
+		t.Errorf("new loginShell not present in PUT body: %+v", putBody)
+	}
+
+	// Audit: an action log entry was recorded for the change. The handler logs
+	// under the acting admin's username with the target's username in the
+	// hostname column, so we fetch by admin and check both hostname and action.
+	hist := s.store.ActionHistory("admin1", 10)
+	foundAudit := false
+	for _, e := range hist {
+		if e.Action == challpkg.ActionClaimsUpdated && e.Hostname == "alice" {
+			foundAudit = true
+			break
+		}
+	}
+	if !foundAudit {
+		t.Errorf("expected claims_updated audit entry for target 'alice' by admin1, got %+v", hist)
+	}
+}
+
+// ── handleUpdateGroupClaims — privilege + side effects ───────────────────────
+
+func TestHandleUpdateGroupClaims_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/groups/claims", nil)
+	w := httptest.NewRecorder()
+	s.handleUpdateGroupClaims(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// Non-admin cannot modify group sudoCommands to grant themselves ALL.
+func TestHandleUpdateGroupClaims_NonAdminCannotElevate(t *testing.T) {
+	const secret = "test-secret"
+	var puts int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/custom-claims/user-group/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			puts++
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+	form := url.Values{
+		"group_id":     {"b0000000-0000-0000-0000-000000000001"},
+		"sudoCommands": {"ALL"},
+	}
+	r := buildFormRequest(secret, "bob", "user", "/api/admin/groups/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateGroupClaims(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin, got %d", w.Code)
+	}
+	if puts != 0 {
+		t.Errorf("expected no PUT calls on non-admin rejection, got %d", puts)
+	}
+}
+
+func TestHandleUpdateGroupClaims_InvalidGroupID(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	s.cfg.APIKey = "test-api-key"
+	s.pocketIDClient = pocketid.NewPocketIDClient("http://127.0.0.1:0", "key")
+	form := url.Values{"group_id": {"' OR 1=1 --"}}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/groups/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateGroupClaims(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateGroupClaims_PocketIDNotConfigured(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	form := url.Values{"group_id": {"b0000000-0000-0000-0000-000000000001"}}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/groups/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateGroupClaims(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateGroupClaims_RejectsOverlongSudoCommands(t *testing.T) {
+	const secret = "test-secret"
+	groupID := "b0000000-0000-0000-0000-000000000001"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/user-groups/"+groupID, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{"id": groupID, "name": "g"})
+		w.Write(b)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	form := url.Values{
+		"group_id":     {groupID},
+		"sudoCommands": {strings.Repeat("a", 5000)},
+	}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/groups/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateGroupClaims(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for oversize sudoCommands, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateGroupClaims_RejectsInjectionCharacters(t *testing.T) {
+	const secret = "test-secret"
+	groupID := "b0000000-0000-0000-0000-000000000001"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/user-groups/"+groupID, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{"id": groupID, "name": "g"})
+		w.Write(b)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	// A newline in a sudoers claim value would let an attacker inject a new
+	// sudoers line. Must be rejected.
+	form := url.Values{
+		"group_id":     {groupID},
+		"sudoCommands": {"/bin/ls\nALL=(ALL) NOPASSWD: ALL"},
+	}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/groups/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateGroupClaims(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for newline in claim, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleUpdateGroupClaims_HappyPath(t *testing.T) {
+	const secret = "test-secret"
+	groupID := "b0000000-0000-0000-0000-000000000001"
+	var putBody []pocketid.Claim
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/user-groups/"+groupID, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{
+			"id": groupID, "name": "ops",
+			"customClaims": []map[string]string{
+				{"key": "unmanagedCustom", "value": "keep-me"},
+				{"key": "sudoCommands", "value": "/old"},
+			},
+		})
+		w.Write(b)
+	})
+	mux.HandleFunc("/api/custom-claims/user-group/"+groupID, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&putBody)
+		w.WriteHeader(http.StatusOK)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	form := url.Values{
+		"group_id":     {groupID},
+		"sudoCommands": {"/usr/bin/ls,/usr/bin/cat"},
+	}
+	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/groups/claims", form)
+	w := httptest.NewRecorder()
+	s.handleUpdateGroupClaims(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	foundUnmanaged := false
+	foundNewCmds := false
+	for _, c := range putBody {
+		if c.Key == "unmanagedCustom" && c.Value == "keep-me" {
+			foundUnmanaged = true
+		}
+		if c.Key == "sudoCommands" && c.Value == "/usr/bin/ls,/usr/bin/cat" {
+			foundNewCmds = true
+		}
+	}
+	if !foundUnmanaged {
+		t.Errorf("unmanaged claim not preserved: %+v", putBody)
+	}
+	if !foundNewCmds {
+		t.Errorf("new sudoCommands not present: %+v", putBody)
+	}
+}
+
+// ── handleGetUserClaims ──────────────────────────────────────────────────────
+
+func TestHandleGetUserClaims_NonAdmin(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/user-claims?user_id=a0000000-0000-0000-0000-000000000001", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "bob", "user", ts)})
+	w := httptest.NewRecorder()
+	s.handleGetUserClaims(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestHandleGetUserClaims_RefererRequired(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	s.cfg.ExternalURL = "https://auth.example.com"
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/user-claims?user_id=a0000000-0000-0000-0000-000000000001", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "admin1", "admin", ts)})
+	// Wrong Referer should be forbidden.
+	r.Header.Set("Referer", "https://evil.example.com/attack")
+	w := httptest.NewRecorder()
+	s.handleGetUserClaims(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for foreign referer, got %d", w.Code)
+	}
+}
+
+func TestHandleGetUserClaims_PocketIDNotConfigured(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	s.cfg.ExternalURL = "https://auth.example.com"
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/user-claims?user_id=a0000000-0000-0000-0000-000000000001", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "admin1", "admin", ts)})
+	r.Header.Set("Referer", "https://auth.example.com/admin/users")
+	w := httptest.NewRecorder()
+	s.handleGetUserClaims(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestHandleGetUserClaims_InvalidUserID(t *testing.T) {
+	const secret = "test-secret"
+	mux := http.NewServeMux()
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+	s.cfg.ExternalURL = "https://auth.example.com"
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/user-claims?user_id=../../etc/passwd", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "admin1", "admin", ts)})
+	r.Header.Set("Referer", "https://auth.example.com/admin/users")
+	w := httptest.NewRecorder()
+	s.handleGetUserClaims(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleGetUserClaims_HappyPath_SplitsClaimClasses(t *testing.T) {
+	const secret = "test-secret"
+	userID := "a0000000-0000-0000-0000-000000000001"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users/"+userID, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{
+			"id": userID, "username": "alice",
+			"customClaims": []map[string]string{
+				{"key": "sshPublicKey", "value": "ssh-ed25519 AAAA alice@host"},
+				{"key": "sshPublicKey1", "value": "ssh-ed25519 BBBB alice@host2"},
+				{"key": "loginShell", "value": "/bin/bash"},
+				{"key": "organization", "value": "Acme"},
+			},
+		})
+		w.Write(b)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+	s.cfg.ExternalURL = "https://auth.example.com"
+
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/user-claims?user_id="+userID, nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "admin1", "admin", ts)})
+	r.Header.Set("Referer", "https://auth.example.com/admin/users")
+	w := httptest.NewRecorder()
+	s.handleGetUserClaims(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		SSHKeys     []string         `json:"ssh_keys"`
+		OtherClaims []pocketid.Claim `json:"other_claims"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.SSHKeys) != 2 {
+		t.Errorf("expected 2 SSH keys, got %d: %v", len(resp.SSHKeys), resp.SSHKeys)
+	}
+	if len(resp.OtherClaims) != 2 {
+		t.Errorf("expected 2 other claims, got %d: %v", len(resp.OtherClaims), resp.OtherClaims)
+	}
+}
+
+// ── handleAdminUsers & handleAdminGroups — admin-role rendering ──────────────
+
+func TestHandleAdminUsers_AdminRenders(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	s.cfg.ExternalURL = "https://auth.example.com"
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "admin-user", "admin", ts)})
+	w := httptest.NewRecorder()
+	s.handleAdminUsers(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for admin GET, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/html" {
+		t.Errorf("expected text/html, got %q", ct)
+	}
+}
+
+func TestHandleAdminUsers_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	r := httptest.NewRequest(http.MethodPost, "/admin/users", nil)
+	w := httptest.NewRecorder()
+	s.handleAdminUsers(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminUsers_RendersFlashMessage(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "admin-user", "admin", ts)})
+	r.AddCookie(&http.Cookie{Name: "pam_flash", Value: "removed_user:bob"})
+	w := httptest.NewRecorder()
+	s.handleAdminUsers(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "bob") {
+		t.Error("expected flash message containing 'bob' in rendered page")
+	}
+}
+
+func TestHandleAdminUsers_NoSession_RedirectsWithExpiredFlash(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	r := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	w := httptest.NewRecorder()
+	s.handleAdminUsers(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d", w.Code)
+	}
+	// Flash cookie must be set to "expired:" so the login page shows the
+	// "session expired" banner instead of silently redirecting.
+	var found bool
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "pam_flash" && strings.HasPrefix(c.Value, "expired") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected pam_flash=expired cookie on no-session redirect")
+	}
+}
+
+func TestHandleAdminUsers_NonAdmin_Redirects(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "bob", "user", ts)})
+	w := httptest.NewRecorder()
+	s.handleAdminUsers(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303 for non-admin, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminUsers_WithPocketIDAndSort(t *testing.T) {
+	const secret = "test-secret"
+	// PocketID backend: return two users with claims (SSH key, loginShell,
+	// homeDirectory, other) plus group permissions so that pidUsers merging,
+	// claim classification, sudoGroups filtering, and all sort branches are
+	// exercised.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
+		page := map[string]any{
+			"data": []map[string]any{
+				{"id": "a0000000-0000-0000-0000-000000000001", "username": "alice",
+					"customClaims": []map[string]string{
+						{"key": "sshPublicKey", "value": "ssh-ed25519 AAAA..."},
+						{"key": "loginShell", "value": "/bin/bash"},
+						{"key": "homeDirectory", "value": "/home/alice"},
+						{"key": "department", "value": "eng"},
+					}},
+				{"id": "a0000000-0000-0000-0000-000000000002", "username": "bob",
+					"customClaims": []map[string]string{}},
+			},
+			"pagination": map[string]int{"totalPages": 1},
+		}
+		b, _ := json.Marshal(page)
+		w.Write(b)
+	})
+	mux.HandleFunc("/api/users/", func(w http.ResponseWriter, r *http.Request) {
+		// Per-user detail endpoint hit by AllAdminUsers.
+		w.Write([]byte(`{"id":"x","username":"x","customClaims":[]}`))
+	})
+	mux.HandleFunc("/api/user-groups", func(w http.ResponseWriter, r *http.Request) {
+		page := map[string]any{
+			"data": []map[string]any{
+				{"id": "b0000000-0000-0000-0000-000000000001", "name": "ops"},
+			},
+			"pagination": map[string]int{"totalPages": 1},
+		}
+		b, _ := json.Marshal(page)
+		w.Write(b)
+	})
+	mux.HandleFunc("/api/user-groups/b0000000-0000-0000-0000-000000000001", func(w http.ResponseWriter, r *http.Request) {
+		// GetUserPermissions fetches group details + members.
+		w.Write([]byte(`{"id":"b0000000-0000-0000-0000-000000000001","name":"ops","customClaims":[{"key":"sudoCommands","value":"ALL"}]}`))
+	})
+	mux.HandleFunc("/api/user-groups/b0000000-0000-0000-0000-000000000001/users", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"a0000000-0000-0000-0000-000000000001","username":"alice"}],"pagination":{"totalPages":1}}`))
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	// Give bob some identree activity so he isn't filtered out for lacking sudo groups.
+	s.store.LogAction("bob", challpkg.ActionApproved, "hostname", "", "")
+
+	ts := time.Now().Unix()
+	for _, sortQ := range []string{"name", "sessions", "lastactive"} {
+		for _, dir := range []string{"asc", "desc"} {
+			u := "/admin/users?sort=" + sortQ + "&dir=" + dir
+			r := httptest.NewRequest(http.MethodGet, u, nil)
+			r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "admin1", "admin", ts)})
+			r.AddCookie(&http.Cookie{Name: "pam_tz", Value: "America/New_York"})
+			w := httptest.NewRecorder()
+			s.handleAdminUsers(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("sort=%s dir=%s: expected 200, got %d", sortQ, dir, w.Code)
+			}
+		}
+	}
+}
+
+func TestHandleAdminGroups_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	r := httptest.NewRequest(http.MethodPost, "/admin/groups", nil)
+	w := httptest.NewRecorder()
+	s.handleAdminGroups(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminGroups_NonAdminForbidden(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "bob", "user", ts)})
+	w := httptest.NewRecorder()
+	s.handleAdminGroups(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminGroups_BridgeMode_Redirects(t *testing.T) {
+	const secret = "test-secret"
+	s := newAdminTestServer(t, secret)
+	// APIKey empty -> isBridgeMode true -> redirect to /admin/sudo-rules.
+	ts := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "admin1", "admin", ts)})
+	w := httptest.NewRecorder()
+	s.handleAdminGroups(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 in bridge mode, got %d", w.Code)
+	}
+	if !strings.HasSuffix(w.Header().Get("Location"), "/admin/sudo-rules") {
+		t.Errorf("expected redirect to /admin/sudo-rules, got %q", w.Header().Get("Location"))
+	}
+}
+
+func TestHandleAdminGroups_AdminRenders(t *testing.T) {
+	const secret = "test-secret"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/user-groups", func(w http.ResponseWriter, r *http.Request) {
+		page := map[string]any{
+			"data": []map[string]any{
+				{"id": "b0000000-0000-0000-0000-000000000001", "name": "ops"},
+				{"id": "b0000000-0000-0000-0000-000000000002", "name": "no-sudo"},
+			},
+			"pagination": map[string]int{"totalPages": 1},
+		}
+		b, _ := json.Marshal(page)
+		w.Write(b)
+	})
+	mux.HandleFunc("/api/user-groups/b0000000-0000-0000-0000-000000000001", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{
+			"id": "b0000000-0000-0000-0000-000000000001", "name": "ops",
+			"customClaims": []map[string]string{{"key": "sudoCommands", "value": "ALL"}},
+		})
+		w.Write(b)
+	})
+	mux.HandleFunc("/api/user-groups/b0000000-0000-0000-0000-000000000002", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(map[string]any{
+			"id": "b0000000-0000-0000-0000-000000000002", "name": "no-sudo",
+			"customClaims": []map[string]string{{"key": "other", "value": "x"}},
+		})
+		w.Write(b)
+	})
+	s, _ := newAdminClaimsTestServer(t, secret, mux)
+
+	tsu := time.Now().Unix()
+	r := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: makeCookie(secret, "admin1", "admin", tsu)})
+	w := httptest.NewRecorder()
+	s.handleAdminGroups(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "ops") {
+		t.Error("expected 'ops' group in rendered page")
+	}
+}
+
+// ── applyLiveConfigUpdates — observable side effects ─────────────────────────
+
+// newLiveConfigTestServer returns a server with ApprovalPoliciesFile set to a
+// non-empty path. applyLiveConfigUpdates holds cfgMu.Lock() and calls
+// reloadPolicies(path); when the path is empty, reloadPolicies falls back to
+// reading cfg under RLock, which deadlocks against the held write lock. Real
+// deployments almost always have a path set, so this mirrors production.
+func newLiveConfigTestServer(t *testing.T, secret string) *Server {
+	t.Helper()
+	s := newAdminTestServer(t, secret)
+	s.cfg.ApprovalPoliciesFile = "/nonexistent-policies.yaml"
+	return s
+}
+
+// applyLiveCfg is a test helper that merges the policies-file key into vals so
+// the handler doesn't clobber s.cfg.ApprovalPoliciesFile to "" (which would then
+// cause reloadPolicies to take RLock under the held write Lock = deadlock).
+func applyLiveCfg(s *Server, vals map[string]string, actor string) {
+	if _, ok := vals["IDENTREE_APPROVAL_POLICIES_FILE"]; !ok {
+		vals["IDENTREE_APPROVAL_POLICIES_FILE"] = "/nonexistent-policies.yaml"
+	}
+	s.applyLiveConfigUpdates(vals, actor)
+}
+
+func TestApplyLiveConfigUpdates_UpdatesDurations(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	s.cfg.ChallengeTTL = 5 * time.Minute
+	s.cfg.GracePeriod = 10 * time.Minute
+	s.cfg.OneTapMaxAge = 5 * time.Minute
+
+	vals := map[string]string{
+		"IDENTREE_CHALLENGE_TTL":   "15m",
+		"IDENTREE_GRACE_PERIOD":    "30m",
+		"IDENTREE_ONE_TAP_MAX_AGE": "20m",
+	}
+	applyLiveCfg(s, vals, "admin1")
+
+	if s.cfg.ChallengeTTL != 15*time.Minute {
+		t.Errorf("ChallengeTTL: got %v, want 15m", s.cfg.ChallengeTTL)
+	}
+	if s.cfg.GracePeriod != 30*time.Minute {
+		t.Errorf("GracePeriod: got %v, want 30m", s.cfg.GracePeriod)
+	}
+	if s.cfg.OneTapMaxAge != 20*time.Minute {
+		t.Errorf("OneTapMaxAge: got %v, want 20m", s.cfg.OneTapMaxAge)
+	}
+}
+
+func TestApplyLiveConfigUpdates_IgnoresOutOfBounds(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	s.cfg.ChallengeTTL = 5 * time.Minute
+	// 1s is below the 30s minimum; should be ignored.
+	applyLiveCfg(s, map[string]string{"IDENTREE_CHALLENGE_TTL": "1s"}, "admin1")
+	if s.cfg.ChallengeTTL != 5*time.Minute {
+		t.Errorf("expected ChallengeTTL to stay 5m after out-of-bounds update, got %v", s.cfg.ChallengeTTL)
+	}
+}
+
+func TestApplyLiveConfigUpdates_AdminGroupsLockoutPrevention(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	s.cfg.AdminGroups = []string{"admins", "ops"}
+	// Submitting an empty value must NOT wipe AdminGroups, or the last admin
+	// would lock themselves out.
+	applyLiveCfg(s, map[string]string{"IDENTREE_ADMIN_GROUPS": ""}, "admin1")
+	if len(s.cfg.AdminGroups) != 2 {
+		t.Errorf("expected AdminGroups preserved against lockout, got %v", s.cfg.AdminGroups)
+	}
+}
+
+func TestApplyLiveConfigUpdates_AdminGroupsUpdated(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	s.cfg.AdminGroups = []string{"old-admins"}
+	applyLiveCfg(s, map[string]string{"IDENTREE_ADMIN_GROUPS": "admins, ops"}, "admin1")
+	if len(s.cfg.AdminGroups) != 2 || s.cfg.AdminGroups[0] != "admins" || s.cfg.AdminGroups[1] != "ops" {
+		t.Errorf("expected [admins ops], got %v", s.cfg.AdminGroups)
+	}
+}
+
+func TestApplyLiveConfigUpdates_RequireJustification(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	s.cfg.RequireJustification = false
+	applyLiveCfg(s, map[string]string{"IDENTREE_REQUIRE_JUSTIFICATION": "true"}, "admin1")
+	if !s.cfg.RequireJustification {
+		t.Error("expected RequireJustification=true")
+	}
+	applyLiveCfg(s, map[string]string{"IDENTREE_REQUIRE_JUSTIFICATION": "false"}, "admin1")
+	if s.cfg.RequireJustification {
+		t.Error("expected RequireJustification=false")
+	}
+}
+
+func TestApplyLiveConfigUpdates_JustificationChoices(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	applyLiveCfg(s, map[string]string{
+		"IDENTREE_JUSTIFICATION_CHOICES": "incident, maintenance , rotation",
+	}, "admin1")
+	if len(s.cfg.JustificationChoices) != 3 {
+		t.Fatalf("expected 3 justification choices, got %d: %v", len(s.cfg.JustificationChoices), s.cfg.JustificationChoices)
+	}
+	if s.cfg.JustificationChoices[1] != "maintenance" {
+		t.Errorf("expected trimmed value 'maintenance', got %q", s.cfg.JustificationChoices[1])
+	}
+}
+
+func TestApplyLiveConfigUpdates_EscrowFields(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	applyLiveCfg(s, map[string]string{
+		"IDENTREE_ESCROW_BACKEND": "vault",
+		"IDENTREE_ESCROW_URL":     "https://vault.example.com",
+		"IDENTREE_ESCROW_AUTH_ID": "role-id",
+		"IDENTREE_ESCROW_PATH":    "secret/identree",
+		"IDENTREE_ESCROW_WEB_URL": "https://vault.example.com/ui",
+	}, "admin1")
+	if string(s.cfg.EscrowBackend) != "vault" {
+		t.Errorf("EscrowBackend: got %q, want vault", s.cfg.EscrowBackend)
+	}
+	if s.cfg.EscrowURL != "https://vault.example.com" {
+		t.Errorf("EscrowURL: got %q", s.cfg.EscrowURL)
+	}
+	if s.cfg.EscrowAuthID != "role-id" {
+		t.Errorf("EscrowAuthID: got %q", s.cfg.EscrowAuthID)
+	}
+	if s.cfg.EscrowPath != "secret/identree" {
+		t.Errorf("EscrowPath: got %q", s.cfg.EscrowPath)
+	}
+}
+
+func TestApplyLiveConfigUpdates_DefaultPageSizeClamped(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	applyLiveCfg(s, map[string]string{"IDENTREE_DEFAULT_PAGE_SIZE": "10000"}, "admin1")
+	if s.cfg.DefaultPageSize != 500 {
+		t.Errorf("expected clamp to 500, got %d", s.cfg.DefaultPageSize)
+	}
+	applyLiveCfg(s, map[string]string{"IDENTREE_DEFAULT_PAGE_SIZE": "0"}, "admin1")
+	if s.cfg.DefaultPageSize != 1 {
+		t.Errorf("expected clamp to 1, got %d", s.cfg.DefaultPageSize)
+	}
+}
+
+func TestApplyLiveConfigUpdates_BreakglassToggle(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	applyLiveCfg(s, map[string]string{"IDENTREE_CLIENT_BREAKGLASS_ENABLED": "true"}, "admin1")
+	if s.cfg.ClientBreakglassEnabled == nil || !*s.cfg.ClientBreakglassEnabled {
+		t.Error("expected ClientBreakglassEnabled=true")
+	}
+	applyLiveCfg(s, map[string]string{"IDENTREE_CLIENT_BREAKGLASS_ENABLED": ""}, "admin1")
+	if s.cfg.ClientBreakglassEnabled != nil {
+		t.Error("expected ClientBreakglassEnabled=nil after empty value")
+	}
+}
+
+func TestApplyLiveConfigUpdates_LDAPDefaultShellRejectsMetacharacters(t *testing.T) {
+	const secret = "test-secret"
+	s := newLiveConfigTestServer(t, secret)
+	s.cfg.LDAPDefaultShell = "/bin/bash"
+	// Shell with ';' should be rejected (injection guard) — original value preserved.
+	applyLiveCfg(s, map[string]string{"IDENTREE_LDAP_DEFAULT_SHELL": "/bin/sh; echo pwn"}, "admin1")
+	if s.cfg.LDAPDefaultShell != "/bin/bash" {
+		t.Errorf("expected shell unchanged after injection attempt, got %q", s.cfg.LDAPDefaultShell)
+	}
+	// Valid absolute path should be accepted.
+	applyLiveCfg(s, map[string]string{"IDENTREE_LDAP_DEFAULT_SHELL": "/bin/zsh"}, "admin1")
+	if s.cfg.LDAPDefaultShell != "/bin/zsh" {
+		t.Errorf("expected shell updated to /bin/zsh, got %q", s.cfg.LDAPDefaultShell)
 	}
 }

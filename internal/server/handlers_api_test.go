@@ -2,14 +2,26 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rinseaid/identree/internal/breakglass"
 	"github.com/rinseaid/identree/internal/config"
+	"github.com/rinseaid/identree/internal/escrow"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/policy"
 )
@@ -903,5 +915,773 @@ func TestHandlePollChallenge_ExpiredChallenge(t *testing.T) {
 	}
 	if resp["status"] != "expired" {
 		t.Errorf("expected status expired, got %q", resp["status"])
+	}
+}
+
+// ── handleBreakglassEscrow tests ─────────────────────────────────────────────
+
+// newBreakglassTestServer returns a server wired with the local escrow backend
+// plus a derived AES key so escrow round-trips work end-to-end.
+func newBreakglassTestServer(t *testing.T, secret string) *Server {
+	t.Helper()
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
+	key, err := escrow.DeriveEscrowKey("test-encryption-key-material", nil)
+	if err != nil {
+		t.Fatalf("derive escrow key: %v", err)
+	}
+	notifyCfg := &notify.NotificationConfig{}
+	return &Server{
+		cfg: &config.ServerConfig{
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			EscrowSecret:  secret,
+			EscrowBackend: config.EscrowBackendLocal,
+			ChallengeTTL:  5 * time.Minute,
+		},
+		store:           store,
+		hostRegistry:    NewHostRegistry(""),
+		authFailRL:      newAuthFailTracker(),
+		mutationRL:      newMutationRateLimiter(),
+		sseBroadcaster:  noopBroadcaster{},
+		policyEngine:    policy.NewEngine(nil),
+		notifyCfg:       notifyCfg,
+		escrowSemaphore: make(chan struct{}, 5),
+		escrowKey:       key,
+	}
+}
+
+// postEscrow issues a signed POST /api/breakglass/escrow with the canonical
+// HMAC token and current timestamp. tsOverride/tokenOverride inject bad values.
+func postEscrow(s *Server, body map[string]string, secret, tsOverride, tokenOverride string) *httptest.ResponseRecorder {
+	jsonBody, _ := json.Marshal(body)
+	r := httptest.NewRequest(http.MethodPost, "/api/breakglass/escrow", bytes.NewReader(jsonBody))
+	r.Header.Set("Content-Type", "application/json")
+	if secret != "" {
+		r.Header.Set("X-Shared-Secret", secret)
+	}
+	ts := tsOverride
+	if ts == "" {
+		ts = fmt.Sprintf("%d", time.Now().Unix())
+	}
+	r.Header.Set("X-Escrow-Ts", ts)
+	token := tokenOverride
+	if token == "" {
+		token = breakglass.ComputeEscrowToken(secret, body["hostname"], ts)
+	}
+	r.Header.Set("X-Escrow-Token", token)
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassEscrow(w, r)
+	return w
+}
+
+func TestHandleBreakglassEscrow_Success(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassTestServer(t, secret)
+
+	w := postEscrow(s, map[string]string{"hostname": "web01", "password": "supersekret"}, secret, "", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if _, ok := s.store.EscrowedHosts()["web01"]; !ok {
+		t.Error("expected escrow record for web01")
+	}
+	ct, ok := s.store.GetEscrowCiphertext("web01")
+	if !ok || ct == "" {
+		t.Error("expected non-empty ciphertext stored for web01")
+	}
+}
+
+func TestHandleBreakglassEscrow_MissingSharedSecret(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassTestServer(t, secret)
+
+	w := postEscrow(s, map[string]string{"hostname": "web01", "password": "p"}, "", "", "")
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if _, ok := s.store.EscrowedHosts()["web01"]; ok {
+		t.Error("escrow record must not exist after unauthorized request")
+	}
+}
+
+func TestHandleBreakglassEscrow_WrongEscrowToken(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassTestServer(t, secret)
+
+	w := postEscrow(s, map[string]string{"hostname": "web01", "password": "p"}, secret, "", "deadbeefbad")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "invalid escrow token") {
+		t.Errorf("expected 'invalid escrow token' error, got %s", w.Body.String())
+	}
+	if _, ok := s.store.EscrowedHosts()["web01"]; ok {
+		t.Error("escrow record must not exist after bad token")
+	}
+}
+
+func TestHandleBreakglassEscrow_TokenForDifferentHost(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassTestServer(t, secret)
+
+	// Token computed for victimhost but body claims web01 — must reject so a
+	// compromised host cannot plant passwords for a different target.
+	ts := fmt.Sprintf("%d", time.Now().Unix())
+	wrongHostToken := breakglass.ComputeEscrowToken(secret, "victimhost", ts)
+	w := postEscrow(s, map[string]string{"hostname": "web01", "password": "p"}, secret, ts, wrongHostToken)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleBreakglassEscrow_StaleTimestamp(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassTestServer(t, secret)
+
+	// Timestamp outside the ±1 minute window — must be rejected to prevent replay.
+	staleTs := fmt.Sprintf("%d", time.Now().Add(-10*time.Minute).Unix())
+	token := breakglass.ComputeEscrowToken(secret, "web01", staleTs)
+	w := postEscrow(s, map[string]string{"hostname": "web01", "password": "p"}, secret, staleTs, token)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "out of window") {
+		t.Errorf("expected window error, got %s", w.Body.String())
+	}
+}
+
+func TestHandleBreakglassEscrow_ReplayAttack(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassTestServer(t, secret)
+
+	ts := fmt.Sprintf("%d", time.Now().Unix())
+	token := breakglass.ComputeEscrowToken(secret, "web01", ts)
+
+	w1 := postEscrow(s, map[string]string{"hostname": "web01", "password": "p"}, secret, ts, token)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first: expected 200, got %d; body: %s", w1.Code, w1.Body.String())
+	}
+
+	// Replay with identical (hostname, timestamp) within the window — must be rejected.
+	w2 := postEscrow(s, map[string]string{"hostname": "web01", "password": "p2"}, secret, ts, token)
+	if w2.Code != http.StatusGone {
+		t.Errorf("replay: expected 410, got %d; body: %s", w2.Code, w2.Body.String())
+	}
+}
+
+func TestHandleBreakglassEscrow_MalformedJSON(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/breakglass/escrow", bytes.NewReader([]byte("{not-json")))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Shared-Secret", secret)
+	ts := fmt.Sprintf("%d", time.Now().Unix())
+	r.Header.Set("X-Escrow-Ts", ts)
+	r.Header.Set("X-Escrow-Token", breakglass.ComputeEscrowToken(secret, "web01", ts))
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassEscrow(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleBreakglassEscrow_MissingPassword(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassTestServer(t, secret)
+
+	w := postEscrow(s, map[string]string{"hostname": "web01"}, secret, "", "")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "password required") {
+		t.Errorf("unexpected body: %s", w.Body.String())
+	}
+}
+
+func TestHandleBreakglassEscrow_RejectsWhenUnconfigured(t *testing.T) {
+	// No SharedSecret + no host registry → must 403 before any body processing.
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
+	s := &Server{
+		cfg:             &config.ServerConfig{},
+		store:           store,
+		hostRegistry:    NewHostRegistry(""),
+		authFailRL:      newAuthFailTracker(),
+		mutationRL:      newMutationRateLimiter(),
+		sseBroadcaster:  noopBroadcaster{},
+		policyEngine:    policy.NewEngine(nil),
+		notifyCfg:       &notify.NotificationConfig{},
+		escrowSemaphore: make(chan struct{}, 5),
+	}
+
+	body, _ := json.Marshal(map[string]string{"hostname": "web01", "password": "p"})
+	r := httptest.NewRequest(http.MethodPost, "/api/breakglass/escrow", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassEscrow(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleBreakglassEscrow_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/breakglass/escrow", nil)
+	r.Header.Set("X-Shared-Secret", secret)
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassEscrow(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ── handleBreakglassReveal tests ─────────────────────────────────────────────
+
+// newBreakglassAdminServer prepares a server with local escrow AND the state
+// required by verifyJSONAdminAuth (notify store, revokedNonces, removedUsers).
+func newBreakglassAdminServer(t *testing.T, secret string) *Server {
+	t.Helper()
+	s := newBreakglassTestServer(t, secret)
+	s.notifyStore = &memConfigStore{cfg: s.notifyCfg}
+	s.revokedNonces = make(map[string]time.Time)
+	s.removedUsers = make(map[string]time.Time)
+	return s
+}
+
+// seedEscrow stores a ciphertext for hostname using the local backend so reveal
+// has something to retrieve, then records the escrow row.
+func seedEscrow(t *testing.T, s *Server, hostname, password string) {
+	t.Helper()
+	backend := escrow.NewLocalEscrowBackend(s.escrowKey, s.store)
+	if _, _, err := backend.Store(context.Background(), hostname, password, ""); err != nil {
+		t.Fatalf("seed escrow: %v", err)
+	}
+	s.store.RecordEscrow(hostname, "", "")
+}
+
+func buildAdminReveal(secret, username, hostname string) *http.Request {
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, username, csrfTs)
+	sessionCookie := makeCookie(secret, username, "admin", ts)
+	body, _ := json.Marshal(map[string]string{"hostname": hostname})
+	r := httptest.NewRequest(http.MethodPost, "/api/breakglass/reveal", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-CSRF-Token", csrfToken)
+	r.Header.Set("X-CSRF-Ts", csrfTs)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	r.RemoteAddr = "10.0.0.1:12345"
+	return r
+}
+
+func TestHandleBreakglassReveal_AdminSuccess(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassAdminServer(t, secret)
+	seedEscrow(t, s, "web01", "rotated-password-123")
+
+	r := buildAdminReveal(secret, "admin-user", "web01")
+	w := httptest.NewRecorder()
+	s.handleBreakglassReveal(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["password"] != "rotated-password-123" {
+		t.Errorf("expected decrypted password, got %q", resp["password"])
+	}
+	actions := s.store.ActionHistory("admin-user", 10)
+	found := false
+	for _, a := range actions {
+		if a.Hostname == "web01" && strings.Contains(strings.ToLower(string(a.Action)), "breakglass") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected breakglass reveal action in admin audit log, got %+v", actions)
+	}
+}
+
+func TestHandleBreakglassReveal_NonAdmin(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassAdminServer(t, secret)
+	seedEscrow(t, s, "web01", "secret")
+
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, "bob", csrfTs)
+	sessionCookie := makeCookie(secret, "bob", "user", ts)
+	body, _ := json.Marshal(map[string]string{"hostname": "web01"})
+	r := httptest.NewRequest(http.MethodPost, "/api/breakglass/reveal", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-CSRF-Token", csrfToken)
+	r.Header.Set("X-CSRF-Ts", csrfTs)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassReveal(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for non-admin, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleBreakglassReveal_NoEscrowRecord(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassAdminServer(t, secret)
+
+	r := buildAdminReveal(secret, "admin-user", "ghosthost")
+	w := httptest.NewRecorder()
+	s.handleBreakglassReveal(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleBreakglassReveal_InvalidHostname(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassAdminServer(t, secret)
+
+	r := buildAdminReveal(secret, "admin-user", "bad hostname!")
+	w := httptest.NewRecorder()
+	s.handleBreakglassReveal(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleBreakglassReveal_MultipleRevealsAuditedSeparately(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassAdminServer(t, secret)
+	seedEscrow(t, s, "web01", "pw")
+
+	for i := 0; i < 3; i++ {
+		r := buildAdminReveal(secret, "admin-user", "web01")
+		w := httptest.NewRecorder()
+		s.handleBreakglassReveal(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("reveal %d: expected 200, got %d", i, w.Code)
+		}
+	}
+
+	actions := s.store.ActionHistory("admin-user", 10)
+	count := 0
+	for _, a := range actions {
+		if a.Hostname == "web01" && strings.Contains(strings.ToLower(string(a.Action)), "breakglass") {
+			count++
+		}
+	}
+	if count < 3 {
+		t.Errorf("expected at least 3 audit entries for 3 reveals, got %d", count)
+	}
+}
+
+func TestHandleBreakglassReveal_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newBreakglassAdminServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/breakglass/reveal", nil)
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassReveal(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ── handleBreakglassReport tests ─────────────────────────────────────────────
+
+func TestHandleBreakglassReport_Success(t *testing.T) {
+	const secret = "test-secret"
+	s := newAPITestServer(t, secret)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"hostname":  "web01",
+		"username":  "alice",
+		"timestamp": time.Now().Unix(),
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/breakglass/report", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Shared-Secret", secret)
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassReport(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+	actions := s.store.ActionHistory("alice", 10)
+	found := false
+	for _, a := range actions {
+		if a.Hostname == "web01" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected action log entry for alice@web01, got %+v", actions)
+	}
+}
+
+func TestHandleBreakglassReport_Unauthorized(t *testing.T) {
+	const secret = "test-secret"
+	s := newAPITestServer(t, secret)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"hostname":  "web01",
+		"username":  "alice",
+		"timestamp": time.Now().Unix(),
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/breakglass/report", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	// No X-Shared-Secret.
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassReport(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestHandleBreakglassReport_MissingFields(t *testing.T) {
+	const secret = "test-secret"
+	s := newAPITestServer(t, secret)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"hostname": "web01",
+		// username missing
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/breakglass/report", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Shared-Secret", secret)
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassReport(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleBreakglassReport_InvalidHostname(t *testing.T) {
+	const secret = "test-secret"
+	s := newAPITestServer(t, secret)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"hostname":  "bad host!",
+		"username":  "alice",
+		"timestamp": time.Now().Unix(),
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/breakglass/report", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Shared-Secret", secret)
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassReport(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleBreakglassReport_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newAPITestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/breakglass/report", nil)
+	r.Header.Set("X-Shared-Secret", secret)
+	r.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.handleBreakglassReport(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ── verifyMTLSClient tests ───────────────────────────────────────────────────
+
+// makeTestCA generates an in-memory self-signed CA for client-cert verification.
+func makeTestCA(t *testing.T, cn string) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("gen CA key: %v", err)
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	tmpl := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("sign CA: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse CA: %v", err)
+	}
+	return cert, key
+}
+
+// issueClientCert produces a leaf client cert signed by ca with the given
+// hostname (CN + DNS SAN) and validity bounds.
+func issueClientCert(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, hostname string, notBefore, notAfter time.Time) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("gen client key: %v", err)
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: hostname},
+		DNSNames:     []string{hostname},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("sign leaf: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	_ = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	return leaf
+}
+
+func mtlsRequest(peers []*x509.Certificate) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/api/challenge", nil)
+	if peers != nil {
+		r.TLS = &tls.ConnectionState{PeerCertificates: peers}
+	}
+	return r
+}
+
+func newMTLSServer(t *testing.T, caCert *x509.Certificate) *Server {
+	t.Helper()
+	return &Server{
+		cfg:            &config.ServerConfig{MTLSEnabled: true},
+		mtlsCACert:     caCert,
+		store:          newTestStore(t, 5*time.Minute, 10*time.Minute),
+		hostRegistry:   NewHostRegistry(""),
+		authFailRL:     newAuthFailTracker(),
+		mutationRL:     newMutationRateLimiter(),
+		sseBroadcaster: noopBroadcaster{},
+		policyEngine:   policy.NewEngine(nil),
+		notifyCfg:      &notify.NotificationConfig{},
+	}
+}
+
+func TestVerifyMTLSClient_Disabled(t *testing.T) {
+	s := &Server{cfg: &config.ServerConfig{MTLSEnabled: false}}
+	host, err := s.verifyMTLSClient(mtlsRequest(nil))
+	if err != nil || host != "" {
+		t.Errorf("expected (\"\", nil) when mTLS disabled, got (%q, %v)", host, err)
+	}
+}
+
+func TestVerifyMTLSClient_NoPeerCerts(t *testing.T) {
+	ca, _ := makeTestCA(t, "test-ca")
+	s := newMTLSServer(t, ca)
+
+	if _, err := s.verifyMTLSClient(mtlsRequest(nil)); err == nil {
+		t.Error("expected error when no TLS connection")
+	}
+	if _, err := s.verifyMTLSClient(mtlsRequest([]*x509.Certificate{})); err == nil {
+		t.Error("expected error when no peer certs")
+	}
+}
+
+func TestVerifyMTLSClient_ValidCert(t *testing.T) {
+	ca, caKey := makeTestCA(t, "test-ca")
+	s := newMTLSServer(t, ca)
+	leaf := issueClientCert(t, ca, caKey, "web01", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+
+	host, err := s.verifyMTLSClient(mtlsRequest([]*x509.Certificate{leaf}))
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if host != "web01" {
+		t.Errorf("expected hostname web01, got %q", host)
+	}
+}
+
+func TestVerifyMTLSClient_WrongCA(t *testing.T) {
+	trustedCA, _ := makeTestCA(t, "trusted-ca")
+	s := newMTLSServer(t, trustedCA)
+
+	attackerCA, attackerKey := makeTestCA(t, "attacker-ca")
+	leaf := issueClientCert(t, attackerCA, attackerKey, "web01", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+
+	if _, err := s.verifyMTLSClient(mtlsRequest([]*x509.Certificate{leaf})); err == nil {
+		t.Error("expected verification to fail for cert signed by untrusted CA")
+	}
+}
+
+func TestVerifyMTLSClient_ExpiredCert(t *testing.T) {
+	ca, caKey := makeTestCA(t, "test-ca")
+	s := newMTLSServer(t, ca)
+	leaf := issueClientCert(t, ca, caKey, "web01", time.Now().Add(-48*time.Hour), time.Now().Add(-time.Hour))
+
+	if _, err := s.verifyMTLSClient(mtlsRequest([]*x509.Certificate{leaf})); err == nil {
+		t.Error("expected verification to fail for expired cert")
+	}
+}
+
+func TestVerifyMTLSClient_RegistryRejectsUnregisteredHost(t *testing.T) {
+	ca, caKey := makeTestCA(t, "test-ca")
+	s := newMTLSServer(t, ca)
+	// Register a different host so IsEnabled() is true but web01 is NOT allowed.
+	if _, err := s.hostRegistry.AddHost("other01", []string{"*"}, ""); err != nil {
+		t.Fatalf("AddHost: %v", err)
+	}
+	leaf := issueClientCert(t, ca, caKey, "web01", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+
+	if _, err := s.verifyMTLSClient(mtlsRequest([]*x509.Certificate{leaf})); err == nil {
+		t.Error("expected rejection when hostname not in registry")
+	}
+}
+
+// ── authenticateChallenge targeted tests ─────────────────────────────────────
+
+func TestAuthenticateChallenge_SharedSecretAccepted(t *testing.T) {
+	const secret = "test-secret"
+	s := newAPITestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/challenge", nil)
+	r.Header.Set("X-Shared-Secret", secret)
+	ok, msg := s.authenticateChallenge(r, "web01", "alice")
+	if !ok {
+		t.Errorf("expected success with valid shared secret, got msg=%q", msg)
+	}
+}
+
+func TestAuthenticateChallenge_WrongSecret(t *testing.T) {
+	const secret = "test-secret"
+	s := newAPITestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/challenge", nil)
+	r.Header.Set("X-Shared-Secret", "wrong")
+	ok, msg := s.authenticateChallenge(r, "web01", "alice")
+	if ok {
+		t.Error("expected failure with wrong shared secret")
+	}
+	if msg != "unauthorized" {
+		t.Errorf("expected 'unauthorized' message, got %q", msg)
+	}
+}
+
+func TestAuthenticateChallenge_MTLSRejected(t *testing.T) {
+	ca, _ := makeTestCA(t, "test-ca")
+	s := newMTLSServer(t, ca)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/challenge", nil)
+	ok, msg := s.authenticateChallenge(r, "web01", "alice")
+	if ok {
+		t.Error("expected failure when mTLS enabled and no cert presented")
+	}
+	if !strings.HasPrefix(msg, "mTLS:") {
+		t.Errorf("expected mTLS-prefixed error, got %q", msg)
+	}
+}
+
+func TestAuthenticateChallenge_MTLSUserNotAuthorized(t *testing.T) {
+	ca, caKey := makeTestCA(t, "test-ca")
+	s := newMTLSServer(t, ca)
+	// Register web01 but only for user bob — alice must be rejected.
+	if _, err := s.hostRegistry.AddHost("web01", []string{"bob"}, ""); err != nil {
+		t.Fatalf("AddHost: %v", err)
+	}
+	leaf := issueClientCert(t, ca, caKey, "web01", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	r := mtlsRequest([]*x509.Certificate{leaf})
+	r.Method = http.MethodPost
+
+	ok, msg := s.authenticateChallenge(r, "web01", "alice")
+	if ok {
+		t.Error("expected alice to be rejected (not in host's user list)")
+	}
+	if !strings.Contains(msg, "not authorized") {
+		t.Errorf("expected 'not authorized' message, got %q", msg)
+	}
+}
+
+func TestAuthenticateChallenge_SharedSecretRequiresHostnameWhenRegistryEnabled(t *testing.T) {
+	const secret = "test-secret"
+	s := newAPITestServer(t, secret)
+	if _, err := s.hostRegistry.AddHost("web01", []string{"*"}, ""); err != nil {
+		t.Fatalf("AddHost: %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodPost, "/api/challenge", nil)
+	r.Header.Set("X-Shared-Secret", secret)
+	// Empty hostname → must reject so a caller cannot sidestep per-host
+	// user authorization by omitting the hostname field.
+	ok, msg := s.authenticateChallenge(r, "", "alice")
+	if ok {
+		t.Error("expected rejection when hostname is empty and registry enabled")
+	}
+	if !strings.Contains(msg, "hostname required") {
+		t.Errorf("expected hostname-required error, got %q", msg)
+	}
+}
+
+func TestAuthenticateChallenge_PerHostSecretAccepted(t *testing.T) {
+	// No global SharedSecret — must authenticate via per-host secret in registry.
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
+	s := &Server{
+		cfg:            &config.ServerConfig{ChallengeTTL: 5 * time.Minute},
+		store:          store,
+		hostRegistry:   NewHostRegistry(""),
+		authFailRL:     newAuthFailTracker(),
+		mutationRL:     newMutationRateLimiter(),
+		sseBroadcaster: noopBroadcaster{},
+		policyEngine:   policy.NewEngine(nil),
+		notifyCfg:      &notify.NotificationConfig{},
+	}
+	hostSecret, err := s.hostRegistry.AddHost("web01", []string{"alice"}, "")
+	if err != nil {
+		t.Fatalf("AddHost: %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodPost, "/api/challenge", nil)
+	r.Header.Set("X-Shared-Secret", hostSecret)
+	ok, _ := s.authenticateChallenge(r, "web01", "alice")
+	if !ok {
+		t.Error("expected per-host secret to authenticate")
+	}
+
+	ok, msg := s.authenticateChallenge(r, "web01", "mallory")
+	if ok {
+		t.Error("expected user outside host list to be rejected")
+	}
+	if !strings.Contains(msg, "not authorized") {
+		t.Errorf("expected 'not authorized' message, got %q", msg)
 	}
 }
