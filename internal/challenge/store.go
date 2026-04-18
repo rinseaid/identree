@@ -106,6 +106,28 @@ type Store interface {
 	StoreSessionNonce(nonce string, data SessionNonceData, ttl time.Duration) error
 	GetSessionNonce(nonce string) (SessionNonceData, bool)
 	DeleteSessionNonce(nonce string)
+
+	// Agent heartbeats
+	RecordHeartbeat(h AgentHeartbeat)
+	ListAgents() []AgentStatus
+}
+
+// AgentHeartbeat carries a single ping from a managed host.
+type AgentHeartbeat struct {
+	Hostname string
+	Version  string
+	OSInfo   string
+	IP       string
+}
+
+// AgentStatus is the per-host record returned to dashboard handlers.
+type AgentStatus struct {
+	Hostname  string
+	Version   string
+	OSInfo    string
+	IP        string
+	FirstSeen time.Time
+	LastSeen  time.Time
 }
 
 // SessionNonceData holds state for an in-flight OIDC login.
