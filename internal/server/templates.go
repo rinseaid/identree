@@ -2010,7 +2010,6 @@ const historyPageHTML = `<!DOCTYPE html>
   <main class="main" id="main-content">
     <h1 class="sr-only">{{call .T "history"}} - {{call .T "app_name"}}</h1>
 
-    {{if .History}}
     <div class="history-gtable" id="history-gtable" role="table" aria-label="{{call .T "history"}}">
       <div class="history-gtable-header" role="row">
         <div class="gtcol gtcol-htime" role="columnheader" style="gap:8px;align-items:center"><button type="button" class="filter-toggle-btn" id="history-filter-toggle" aria-label="Toggle filters"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><a href="/history?sort=timestamp&order={{if eq .Sort "timestamp"}}{{if eq .Order "desc"}}asc{{else}}desc{{end}}{{else}}desc{{end}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "timestamp"}} active{{end}}">{{call .T "time"}}{{if eq .Sort "timestamp"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
@@ -2057,12 +2056,12 @@ const historyPageHTML = `<!DOCTYPE html>
       <div id="history-rows-container" data-page="{{.Page}}" data-total-pages="{{.TotalPages}}" data-per-page="{{.PerPage}}" data-total-rows="{{.TotalRows}}">
       {{template "historyRows" .}}
       </div>
+      {{if not .History}}
+      <div class="empty-state" style="padding:32px 16px;text-align:center">{{call .T "no_activity"}}</div>
+      {{end}}
     </div>
     <div id="filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <div id="history-loadbar" class="loadbar"></div>
-    {{else}}
-    <p class="empty-state">{{call .T "no_activity"}}</p>
-    {{end}}
   </main>
 </body>
 </html>`
