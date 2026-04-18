@@ -1,16 +1,23 @@
 package breakglass
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1041,6 +1048,644 @@ func TestMaybeRotateBreakglass_NotDue(t *testing.T) {
 }
 
 // ── passphraseWordlist ──────────────────────────────────────────────────────
+
+// ── Rate-limit counter file redirection helper ──────────────────────────────
+
+// redirectFailurePath points breakglassFailurePath at a fresh temp-dir file
+// for the duration of a test. Also clears any existing file at that path on
+// setup and cleanup so tests don't leak state across each other.
+func redirectFailurePath(t *testing.T) string {
+	t.Helper()
+	orig := breakglassFailurePath
+	dir := t.TempDir()
+	breakglassFailurePath = filepath.Join(dir, "failures")
+	t.Cleanup(func() { breakglassFailurePath = orig })
+	return breakglassFailurePath
+}
+
+// ── recordBreakglassFailure ─────────────────────────────────────────────────
+
+func TestRecordBreakglassFailure_CreatesFileWith0600(t *testing.T) {
+	overrideFileOwnerUID(t)
+	path := redirectFailurePath(t)
+
+	recordBreakglassFailure()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("counter file not created: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("counter file perm = %04o, want 0600", perm)
+	}
+}
+
+func TestRecordBreakglassFailure_IncrementsCounter(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+
+	for i := 1; i <= 5; i++ {
+		recordBreakglassFailure()
+		count, ts := readFailureCounter()
+		if count != int64(i) {
+			t.Errorf("after %d calls, count = %d, want %d", i, count, i)
+		}
+		if ts.IsZero() {
+			t.Errorf("after %d calls, timestamp is zero", i)
+		}
+	}
+}
+
+func TestRecordBreakglassFailure_WritesTimestamp(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+
+	before := time.Now().Add(-1 * time.Second)
+	recordBreakglassFailure()
+	after := time.Now().Add(1 * time.Second)
+
+	_, ts := readFailureCounter()
+	if ts.Before(before) || ts.After(after) {
+		t.Errorf("timestamp %v not within expected window [%v, %v]", ts, before, after)
+	}
+}
+
+func TestClearBreakglassFailures_RemovesFile(t *testing.T) {
+	overrideFileOwnerUID(t)
+	path := redirectFailurePath(t)
+
+	recordBreakglassFailure()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("precondition: file should exist after record: %v", err)
+	}
+
+	clearBreakglassFailures()
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("expected file removed, stat err = %v", err)
+	}
+}
+
+// ── readFailureCounter: security checks ─────────────────────────────────────
+
+func TestReadFailureCounter_WorldWritableRejected(t *testing.T) {
+	overrideFileOwnerUID(t)
+	path := redirectFailurePath(t)
+
+	// Write a file with bad perms — should be treated as 0 count (fail-open).
+	if err := os.WriteFile(path, []byte("999 1700000000"), 0666); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	count, ts := readFailureCounter()
+	if count != 0 || !ts.IsZero() {
+		t.Errorf("world-writable file should be ignored, got count=%d ts=%v", count, ts)
+	}
+}
+
+func TestReadFailureCounter_LegacyRFC3339(t *testing.T) {
+	overrideFileOwnerUID(t)
+	path := redirectFailurePath(t)
+
+	// Legacy format: count followed by RFC3339 timestamp.
+	content := "7 2024-01-02T03:04:05Z"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	count, ts := readFailureCounter()
+	if count != 7 {
+		t.Errorf("count = %d, want 7", count)
+	}
+	if ts.IsZero() {
+		t.Error("expected non-zero timestamp from legacy RFC3339 format")
+	}
+}
+
+func TestReadFailureCounter_Malformed(t *testing.T) {
+	overrideFileOwnerUID(t)
+	path := redirectFailurePath(t)
+
+	if err := os.WriteFile(path, []byte("not-a-counter-file"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	count, ts := readFailureCounter()
+	if count != 0 || !ts.IsZero() {
+		t.Errorf("malformed file should return zero values, got count=%d ts=%v", count, ts)
+	}
+}
+
+// ── checkBreakglassRateLimit: backoff behavior ──────────────────────────────
+
+func TestCheckBreakglassRateLimit_UnderThreshold(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+
+	// 2 failures: still under the 3-attempt free threshold.
+	recordBreakglassFailure()
+	recordBreakglassFailure()
+
+	if err := checkBreakglassRateLimit(); err != nil {
+		t.Errorf("expected no rate limit under threshold, got: %v", err)
+	}
+}
+
+func TestCheckBreakglassRateLimit_BlocksAfterBurst(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+
+	// 5 rapid failures should trigger backoff (2^(5-3)=4s).
+	for i := 0; i < 5; i++ {
+		recordBreakglassFailure()
+	}
+	err := checkBreakglassRateLimit()
+	if err == nil {
+		t.Error("expected rate-limit error after 5 rapid failures")
+	}
+}
+
+func TestCheckBreakglassRateLimit_AllowsAfterDelay(t *testing.T) {
+	overrideFileOwnerUID(t)
+	path := redirectFailurePath(t)
+
+	// Manually write a counter with an old timestamp so we don't have to sleep.
+	// 4 failures → delay = 2^(4-3) = 2s. Timestamp 10s ago should clear the limit.
+	oldTs := time.Now().Add(-10 * time.Second).Unix()
+	content := fmt.Sprintf("4 %d", oldTs)
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := checkBreakglassRateLimit(); err != nil {
+		t.Errorf("expected rate limit to have expired, got: %v", err)
+	}
+}
+
+// ── AuthenticateBreakglass ──────────────────────────────────────────────────
+
+// withFakeTTY overrides OpenTTY to return a temp file backing a "tty" and
+// ReadPasswordFn to return a fixed password. Returns the path the tty file
+// was written to (caller can inspect content if needed).
+func withFakeTTY(t *testing.T, password string) {
+	t.Helper()
+	origOpen := OpenTTY
+	origRead := ReadPasswordFn
+	t.Cleanup(func() {
+		OpenTTY = origOpen
+		ReadPasswordFn = origRead
+	})
+
+	dir := t.TempDir()
+	OpenTTY = func() (*os.File, error) {
+		return os.OpenFile(filepath.Join(dir, "fake-tty"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	}
+	ReadPasswordFn = func(fd int) ([]byte, error) {
+		return []byte(password), nil
+	}
+}
+
+// seedHashFile writes a valid breakglass hash file (with header) at path,
+// using bcrypt cost 4 for speed.
+func seedHashFile(t *testing.T, path, password string) {
+	t.Helper()
+	hash, err := hashBreakglassPassword(password, 4)
+	if err != nil {
+		t.Fatalf("hashBreakglassPassword: %v", err)
+	}
+	if err := writeBreakglassFile(path, hash, "test-host", "random"); err != nil {
+		t.Fatalf("writeBreakglassFile: %v", err)
+	}
+}
+
+func TestAuthenticateBreakglass_Success(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+	withFakeTTY(t, "correct-horse-battery-staple")
+
+	hashFile := filepath.Join(t.TempDir(), "breakglass.hash")
+	seedHashFile(t, hashFile, "correct-horse-battery-staple")
+
+	// Pre-record a failure so we can verify that success clears it.
+	recordBreakglassFailure()
+
+	if err := AuthenticateBreakglass("alice", hashFile); err != nil {
+		t.Fatalf("AuthenticateBreakglass: %v", err)
+	}
+
+	// Counter file should be cleared on successful auth.
+	if _, err := os.Stat(breakglassFailurePath); !os.IsNotExist(err) {
+		t.Errorf("expected failure counter cleared on success, stat err = %v", err)
+	}
+}
+
+func TestAuthenticateBreakglass_WrongPassword(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+	withFakeTTY(t, "wrong-password")
+
+	hashFile := filepath.Join(t.TempDir(), "breakglass.hash")
+	seedHashFile(t, hashFile, "correct-password")
+
+	err := AuthenticateBreakglass("alice", hashFile)
+	if err == nil {
+		t.Fatal("expected authentication failure, got nil")
+	}
+
+	// Wrong password must increment the failure counter.
+	count, _ := readFailureCounter()
+	if count != 1 {
+		t.Errorf("failure counter = %d, want 1 after one wrong password", count)
+	}
+}
+
+func TestAuthenticateBreakglass_MissingHashFile(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+	withFakeTTY(t, "anything")
+
+	// Path that doesn't exist — readBreakglassHash should fail, and the
+	// function must still run the dummy bcrypt (to equalize timing) and
+	// record a failure.
+	err := AuthenticateBreakglass("alice", "/nonexistent/path/breakglass.hash")
+	if err == nil {
+		t.Fatal("expected authentication failure for missing hash file")
+	}
+
+	count, _ := readFailureCounter()
+	if count != 1 {
+		t.Errorf("failure counter = %d, want 1 even on missing-file path (timing equalization)", count)
+	}
+}
+
+func TestAuthenticateBreakglass_CorruptedHashFile(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+	withFakeTTY(t, "anything")
+
+	dir := t.TempDir()
+	hashFile := filepath.Join(dir, "breakglass.hash")
+	// Not a bcrypt hash — ReadBreakglassHash should reject.
+	if err := os.WriteFile(hashFile, []byte("garbage-not-a-hash\n"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	err := AuthenticateBreakglass("alice", hashFile)
+	if err == nil {
+		t.Fatal("expected authentication failure for corrupted hash file")
+	}
+
+	count, _ := readFailureCounter()
+	if count != 1 {
+		t.Errorf("failure counter = %d, want 1 after corrupted-file auth", count)
+	}
+}
+
+func TestAuthenticateBreakglass_RateLimited(t *testing.T) {
+	overrideFileOwnerUID(t)
+	path := redirectFailurePath(t)
+	withFakeTTY(t, "correct-password")
+
+	// Seed a fresh high-count failure — should block before even trying.
+	content := fmt.Sprintf("20 %d", time.Now().Unix())
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	hashFile := filepath.Join(t.TempDir(), "breakglass.hash")
+	seedHashFile(t, hashFile, "correct-password")
+
+	err := AuthenticateBreakglass("alice", hashFile)
+	if err == nil {
+		t.Fatal("expected rate-limit error")
+	}
+	if !strings.Contains(err.Error(), "too many failed") {
+		t.Errorf("expected rate-limit message, got: %v", err)
+	}
+}
+
+func TestAuthenticateBreakglass_TTYOpenFailure(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+
+	origOpen := OpenTTY
+	t.Cleanup(func() { OpenTTY = origOpen })
+	OpenTTY = func() (*os.File, error) {
+		return nil, errors.New("no tty available")
+	}
+
+	hashFile := filepath.Join(t.TempDir(), "breakglass.hash")
+	seedHashFile(t, hashFile, "whatever")
+
+	err := AuthenticateBreakglass("alice", hashFile)
+	if err == nil {
+		t.Fatal("expected error when TTY cannot be opened")
+	}
+	if !strings.Contains(err.Error(), "cannot open terminal") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAuthenticateBreakglass_ReadPasswordError(t *testing.T) {
+	overrideFileOwnerUID(t)
+	redirectFailurePath(t)
+
+	origOpen := OpenTTY
+	origRead := ReadPasswordFn
+	t.Cleanup(func() {
+		OpenTTY = origOpen
+		ReadPasswordFn = origRead
+	})
+
+	dir := t.TempDir()
+	OpenTTY = func() (*os.File, error) {
+		return os.OpenFile(filepath.Join(dir, "fake-tty"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	}
+	ReadPasswordFn = func(fd int) ([]byte, error) {
+		return nil, errors.New("read aborted")
+	}
+
+	hashFile := filepath.Join(t.TempDir(), "breakglass.hash")
+	seedHashFile(t, hashFile, "whatever")
+
+	err := AuthenticateBreakglass("alice", hashFile)
+	if err == nil {
+		t.Fatal("expected error when password read fails")
+	}
+	if !strings.Contains(err.Error(), "reading password") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// ── writeBreakglassFile: overwrite preserves readability ────────────────────
+
+// TestWriteBreakglassFile_OverwriteReadableThroughout verifies that when an
+// existing break-glass file is replaced, a concurrent reader never sees a
+// missing or partially-written file: either the old contents or the new
+// contents, but never a gap.
+func TestWriteBreakglassFile_OverwriteReadableThroughout(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "breakglass.hash")
+
+	// Seed an initial file.
+	oldHash := "$2a$04$OLDhashAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := writeBreakglassFile(path, oldHash, "host", "random"); err != nil {
+		t.Fatalf("initial write: %v", err)
+	}
+
+	var stop atomic.Bool
+	var missing atomic.Int64
+	var reads atomic.Int64
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		for !stop.Load() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				missing.Add(1)
+				continue
+			}
+			reads.Add(1)
+			// Every successful read must contain either the old or new hash.
+			s := string(data)
+			if !strings.Contains(s, "$2a$04$") {
+				t.Errorf("read file content without bcrypt-like hash: %q", s)
+			}
+		}
+	}()
+
+	// Overwrite repeatedly; the atomic rename should keep the path always
+	// pointing at a valid file.
+	newHash := "$2a$04$NEWhashBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	for i := 0; i < 20; i++ {
+		if err := writeBreakglassFile(path, newHash, "host", "random"); err != nil {
+			t.Fatalf("overwrite %d: %v", i, err)
+		}
+	}
+	stop.Store(true)
+	<-done
+
+	if reads.Load() == 0 {
+		t.Error("reader never saw the file")
+	}
+	if missing.Load() != 0 {
+		t.Errorf("reader saw %d missing-file errors during atomic overwrites", missing.Load())
+	}
+}
+
+// ── EscrowPassword: mTLS / CA cert / transport-error / non-JSON body ────────
+
+// genTestCert generates a self-signed ECDSA certificate + private key PEM pair
+// suitable for httptest.NewUnstartedServer and tls.LoadX509KeyPair.
+func genTestCert(t *testing.T, cn string) (certPEM, keyPEM []byte, cert tls.Certificate) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: cn},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:     []string{"127.0.0.1", "localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		IsCA:         true,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	cert, err = tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("x509 keypair: %v", err)
+	}
+	return certPEM, keyPEM, cert
+}
+
+func writeTempFile(t *testing.T, dir, name string, data []byte) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, data, 0600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return p
+}
+
+func TestEscrowPassword_MTLSAndCustomCA(t *testing.T) {
+	dir := t.TempDir()
+
+	// Server cert (acts as both server cert and CA for clients to trust).
+	serverCertPEM, serverKeyPEM, serverCert := genTestCert(t, "test-server")
+	// Client cert (server will request it; we just observe it was offered).
+	clientCertPEM, clientKeyPEM, _ := genTestCert(t, "test-client")
+
+	caPath := writeTempFile(t, dir, "ca.pem", serverCertPEM)
+	_ = serverKeyPEM
+	clientCertPath := writeTempFile(t, dir, "client.crt", clientCertPEM)
+	clientKeyPath := writeTempFile(t, dir, "client.key", clientKeyPEM)
+
+	var sawClientCert atomic.Bool
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+			sawClientCert.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.TLS = &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequestClientCert, // ask for client cert but don't require
+	}
+	srv.StartTLS()
+	defer srv.Close()
+
+	cfg := &config.ClientConfig{
+		ServerURL:    srv.URL, // https://
+		SharedSecret: "secret",
+		ClientCert:   clientCertPath,
+		ClientKey:    clientKeyPath,
+		CACert:       caPath,
+	}
+
+	if err := EscrowPassword(cfg, "host", "pass", true); err != nil {
+		t.Fatalf("EscrowPassword with mTLS + CA: %v", err)
+	}
+	if !sawClientCert.Load() {
+		t.Error("server did not observe a client certificate in the TLS handshake")
+	}
+}
+
+func TestEscrowPassword_ConnectionClosedMidRequest(t *testing.T) {
+	// Server hijacks the connection and closes it without writing a response,
+	// producing a transport-level request failure (not an HTTP status).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("server writer does not support hijacking")
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Fatalf("hijack: %v", err)
+		}
+		conn.Close()
+	}))
+	defer srv.Close()
+
+	cfg := &config.ClientConfig{
+		ServerURL:               srv.URL,
+		SharedSecret:            "secret",
+		InsecureAllowHTTPEscrow: true,
+	}
+
+	err := EscrowPassword(cfg, "host", "pass", true)
+	if err == nil {
+		t.Fatal("expected request error when server closes connection mid-request")
+	}
+	if !strings.Contains(err.Error(), "connecting to server") {
+		t.Errorf("expected connecting-to-server error, got: %v", err)
+	}
+	// Must not be an escrowHTTPError — no HTTP status was received.
+	var httpErr *escrowHTTPError
+	if errors.As(err, &httpErr) {
+		t.Errorf("should not be escrowHTTPError, got: %v", err)
+	}
+}
+
+func TestEscrowPassword_NonJSONErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("   plain text error body   \n"))
+	}))
+	defer srv.Close()
+
+	cfg := &config.ClientConfig{
+		ServerURL:               srv.URL,
+		SharedSecret:            "secret",
+		InsecureAllowHTTPEscrow: true,
+	}
+
+	err := EscrowPassword(cfg, "host", "pass", true)
+	if err == nil {
+		t.Fatal("expected error for 400 response")
+	}
+	var httpErr *escrowHTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("expected escrowHTTPError, got %T: %v", err, err)
+	}
+	if httpErr.StatusCode != 400 {
+		t.Errorf("status = %d, want 400", httpErr.StatusCode)
+	}
+	// Body should be trimmed of surrounding whitespace.
+	if httpErr.Body != "plain text error body" {
+		t.Errorf("body = %q, want trimmed plain text", httpErr.Body)
+	}
+}
+
+// ── MaybeRotateBreakglass: rotate-when-due path ─────────────────────────────
+
+func TestMaybeRotateBreakglass_RotatesWhenDue(t *testing.T) {
+	dir := t.TempDir()
+	hashFile := filepath.Join(dir, "breakglass.hash")
+
+	// Seed an existing file, then backdate it past the rotation window.
+	if err := writeBreakglassFile(hashFile, "$2a$04$OLDhashAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "host", "random"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	old := time.Now().Add(-200 * 24 * time.Hour)
+	if err := os.Chtimes(hashFile, old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	var escrowHits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		escrowHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := &config.ClientConfig{
+		BreakglassEnabled:       true,
+		BreakglassFile:          hashFile,
+		BreakglassPasswordType:  "random",
+		BreakglassBcryptCost:    4,
+		BreakglassRotationDays:  90, // 200d old > 90d → rotation due
+		ServerURL:               srv.URL,
+		SharedSecret:            "secret",
+		InsecureAllowHTTPEscrow: true,
+	}
+
+	MaybeRotateBreakglass(cfg, time.Time{})
+
+	if escrowHits.Load() != 1 {
+		t.Errorf("expected exactly 1 escrow call during rotation, got %d", escrowHits.Load())
+	}
+
+	// Verify the file mtime advanced (rotation wrote a fresh file).
+	newMtime, err := breakglassFileMtime(hashFile)
+	if err != nil {
+		t.Fatalf("mtime: %v", err)
+	}
+	if !newMtime.After(old.Add(time.Hour)) {
+		t.Errorf("mtime not advanced after rotation: %v", newMtime)
+	}
+
+	// Verify the file contents differ from the seeded OLD hash.
+	data, err := os.ReadFile(hashFile)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if strings.Contains(string(data), "OLDhashAAAA") {
+		t.Error("file still contains the old hash after rotation")
+	}
+}
 
 func TestPassphraseWordlistLength(t *testing.T) {
 	if len(passphraseWordlist) != 256 {

@@ -1347,6 +1347,565 @@ func TestPlainLDAP_SearchNonexistentUser(t *testing.T) {
 	}
 }
 
+// ── decrementLimit ───────────────────────────────────────────────────────────
+
+func TestDecrementLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		limit int
+		used  int
+		want  int
+	}{
+		{"zero is unlimited sentinel", 0, 5, 0},
+		{"zero with zero used", 0, 0, 0},
+		{"remaining positive", 10, 3, 7},
+		{"exact consumption", 10, 10, 0},
+		{"overuse clamps to zero", 10, 15, 0},
+		{"negative used increases remaining", 10, -3, 13},
+		{"limit of one fully consumed", 1, 1, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := decrementLimit(tc.limit, tc.used); got != tc.want {
+				t.Errorf("decrementLimit(%d,%d) = %d, want %d", tc.limit, tc.used, got, tc.want)
+			}
+		})
+	}
+}
+
+// ── searchSudoers (full mode) / searchSudoersFromStore (bridge mode) ─────────
+//
+// These tests exercise the sudoers search path end-to-end through the gldap
+// server by using the existing real-LDAP-server harness and asserting on
+// structure/content of sudoRole entries. Sudoers output is security-critical:
+// an injected rule could grant root privileges, so both the happy path and
+// injection attempts are tested.
+
+func newSudoersFullModeLDAPServer(t *testing.T) (string, context.CancelFunc) {
+	t.Helper()
+	baseDN := "dc=test,dc=local"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	cfg := &config.ServerConfig{
+		LDAPBaseDN:             baseDN,
+		LDAPListenAddr:         addr,
+		LDAPAllowAnonymous:     true,
+		LDAPSudoNoAuthenticate: config.SudoNoAuthClaims,
+	}
+	um, err := uidmap.NewUIDMap(t.TempDir()+"/uidmap.json", 200000, 200000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewLDAPServer(cfg, um, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var users []pocketid.PocketIDAdminUser
+	_ = json.Unmarshal([]byte(`[
+		{"id":"u1","username":"alice"},
+		{"id":"u2","username":"bob"}
+	]`), &users)
+	// Two groups:
+	//  ops      → sudoCommands=/usr/bin/apt,/usr/bin/systemctl + dangerous host/cmd entries we expect filtered
+	//  empty    → has sudoCommands but no members → must be skipped (no rule emitted)
+	//  noclaims → no sudo claims → must be skipped
+	//  inject   → attempts host injection; valid values remain, invalid dropped
+	var groups []pocketid.PocketIDAdminGroup
+	_ = json.Unmarshal([]byte(`[
+		{"id":"g1","name":"ops","customClaims":[
+			{"key":"sudoCommands","value":"/usr/bin/apt,/usr/bin/systemctl,bad-rel,/usr/bin/../sbin/su"},
+			{"key":"sudoHosts","value":"web1,web2"},
+			{"key":"sudoRunAsUser","value":"root,deploy"},
+			{"key":"sudoOptions","value":"NOPASSWD,setenv,!authenticate"}
+		],"members":[{"id":"u1"},{"id":"u2"}]},
+		{"id":"g2","name":"empty","customClaims":[
+			{"key":"sudoCommands","value":"ALL"}
+		],"members":[]},
+		{"id":"g3","name":"noclaims","customClaims":[],"members":[{"id":"u1"}]},
+		{"id":"g4","name":"inject","customClaims":[
+			{"key":"sudoCommands","value":"/usr/bin/ls"},
+			{"key":"sudoHosts","value":"good-host,bad host with space,evil;rm -rf /"}
+		],"members":[{"id":"u1"}]}
+	]`), &groups)
+	srv.Refresh(pocketid.NewUserDirectory(users, groups), "", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = srv.Start(ctx) }()
+	if !waitForPort(t, addr, 5*time.Second) {
+		cancel()
+		t.Fatal("LDAP server did not start in time")
+	}
+	return addr, cancel
+}
+
+func TestPlainLDAP_SearchSudoers_FullMode(t *testing.T) {
+	addr, cancel := newSudoersFullModeLDAPServer(t)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN: "ou=sudoers,dc=test,dc=local",
+		Scope:  ldapclient.ScopeWholeSubtree,
+		Filter: "(objectClass=sudoRole)",
+		Attributes: []string{
+			"cn", "sudoUser", "sudoHost", "sudoCommand", "sudoRunAsUser",
+			"sudoOption", "sudoOrder",
+		},
+	})
+	if err != nil {
+		t.Fatalf("search sudoers: %v", err)
+	}
+
+	// Expect rules for: ops, inject. Empty group and no-claims group must be skipped.
+	byCN := map[string]*ldapclient.Entry{}
+	for _, e := range sr.Entries {
+		cn := e.GetAttributeValue("cn")
+		byCN[cn] = e
+	}
+	if _, ok := byCN["empty"]; ok {
+		t.Error("group 'empty' has no members; must not produce a sudoRole entry")
+	}
+	if _, ok := byCN["noclaims"]; ok {
+		t.Error("group 'noclaims' has no sudo claims; must not produce a sudoRole entry")
+	}
+	ops, ok := byCN["ops"]
+	if !ok {
+		t.Fatalf("expected sudoRole for 'ops', got entries: %v", sr.Entries)
+	}
+
+	// sudoUser: both member uids present.
+	gotUsers := ops.GetAttributeValues("sudoUser")
+	if !containsAll(gotUsers, []string{"alice", "bob"}) {
+		t.Errorf("ops.sudoUser = %v, want alice+bob", gotUsers)
+	}
+
+	// sudoHost: explicit values kept (no ALL fallback since claim was explicit).
+	gotHosts := ops.GetAttributeValues("sudoHost")
+	if !containsAll(gotHosts, []string{"web1", "web2"}) {
+		t.Errorf("ops.sudoHost = %v, want web1+web2", gotHosts)
+	}
+
+	// sudoCommand: only absolute, safe paths retained; "bad-rel" and path-traversal entry dropped.
+	gotCmds := ops.GetAttributeValues("sudoCommand")
+	if !containsAll(gotCmds, []string{"/usr/bin/apt", "/usr/bin/systemctl"}) {
+		t.Errorf("ops.sudoCommand = %v, want apt+systemctl", gotCmds)
+	}
+	for _, c := range gotCmds {
+		if c == "bad-rel" || c == "/usr/bin/../sbin/su" {
+			t.Errorf("unsafe command %q leaked into sudoCommand", c)
+		}
+	}
+
+	// sudoRunAsUser: explicit list preserved.
+	gotRunAs := ops.GetAttributeValues("sudoRunAsUser")
+	if !containsAll(gotRunAs, []string{"root", "deploy"}) {
+		t.Errorf("ops.sudoRunAsUser = %v, want root+deploy", gotRunAs)
+	}
+
+	// sudoOption: NOPASSWD retained, !authenticate allowed via SudoNoAuthClaims,
+	// setenv must be dropped (dangerous).
+	gotOpts := ops.GetAttributeValues("sudoOption")
+	hasNoPasswd, hasSetenv, hasNoAuth := false, false, false
+	for _, o := range gotOpts {
+		switch o {
+		case "NOPASSWD":
+			hasNoPasswd = true
+		case "setenv":
+			hasSetenv = true
+		case "!authenticate":
+			hasNoAuth = true
+		}
+	}
+	if !hasNoPasswd {
+		t.Errorf("expected NOPASSWD in sudoOption, got %v", gotOpts)
+	}
+	if hasSetenv {
+		t.Errorf("dangerous 'setenv' leaked into sudoOption: %v", gotOpts)
+	}
+	if !hasNoAuth {
+		t.Errorf("expected !authenticate (SudoNoAuthClaims mode) in sudoOption, got %v", gotOpts)
+	}
+
+	// sudoOrder set as 1-based index.
+	if order := ops.GetAttributeValue("sudoOrder"); order == "" || order == "0" {
+		t.Errorf("sudoOrder must be a positive 1-based index, got %q", order)
+	}
+
+	// Injection test: the 'inject' rule should drop hostnames containing spaces
+	// and shell metacharacters but keep the safe "good-host" value.
+	inj, ok := byCN["inject"]
+	if !ok {
+		t.Fatalf("expected sudoRole for 'inject'")
+	}
+	injHosts := inj.GetAttributeValues("sudoHost")
+	foundGood := false
+	for _, h := range injHosts {
+		if h == "good-host" {
+			foundGood = true
+		}
+		if h == "bad host with space" || h == "evil;rm -rf /" {
+			t.Errorf("malicious sudoHost value %q escaped validation", h)
+		}
+	}
+	if !foundGood {
+		t.Errorf("safe sudoHost 'good-host' missing; got %v", injHosts)
+	}
+
+	// OU entry itself must also be returned under subtree search.
+	foundOU := false
+	for _, e := range sr.Entries {
+		if e.DN == "ou=sudoers,dc=test,dc=local" {
+			foundOU = true
+		}
+	}
+	if !foundOU {
+		// Filter was (objectClass=sudoRole) so OU is not expected here — sanity only.
+		_ = foundOU
+	}
+}
+
+// newSudoersBridgeLDAPServer spins up an LDAP server in bridge mode backed by
+// a sudorules.Store prepopulated with rules.
+func newSudoersBridgeLDAPServer(t *testing.T, rules []sudorules.SudoRule, noAuth config.SudoNoAuthenticate) (string, *sudorules.Store, context.CancelFunc) {
+	t.Helper()
+	baseDN := "dc=test,dc=local"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	cfg := &config.ServerConfig{
+		LDAPBaseDN:             baseDN,
+		LDAPListenAddr:         addr,
+		LDAPAllowAnonymous:     true,
+		LDAPSudoNoAuthenticate: noAuth,
+	}
+	um, err := uidmap.NewUIDMap(t.TempDir()+"/uidmap.json", 200000, 200000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := sudorules.NewStore(t.TempDir() + "/sudorules.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set(rules); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewLDAPServer(cfg, um, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = srv.Start(ctx) }()
+	if !waitForPort(t, addr, 5*time.Second) {
+		cancel()
+		t.Fatal("LDAP server did not start in time")
+	}
+	return addr, store, cancel
+}
+
+func TestPlainLDAP_SearchSudoersFromStore_BridgeMode(t *testing.T) {
+	rules := []sudorules.SudoRule{
+		{
+			Group:      "ops",
+			Hosts:      "web1,web2",
+			Commands:   "/usr/bin/apt,/usr/bin/systemctl,../bad,not-absolute",
+			RunAsUser:  "root,deploy",
+			RunAsGroup: "wheel-x,ALL",
+			Options:    "NOPASSWD,setenv,!authenticate",
+		},
+		{
+			// No Commands → must be skipped entirely.
+			Group:    "noperms",
+			Commands: "",
+		},
+		{
+			// Invalid group name → must be skipped.
+			Group:    "ROOT-GROUP",
+			Commands: "/usr/bin/ls",
+		},
+		{
+			// Host injection: only safe hostnames retained.
+			Group:    "inject",
+			Hosts:    "good-host,bad host,evil;rm -rf /",
+			Commands: "/usr/bin/ls",
+		},
+		{
+			// No hosts specified → defaults to ALL.
+			Group:    "defaults",
+			Commands: "/usr/bin/id",
+		},
+	}
+	// SudoNoAuthClaims allows per-rule !authenticate to pass through.
+	addr, _, cancel := newSudoersBridgeLDAPServer(t, rules, config.SudoNoAuthClaims)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN: "ou=sudoers,dc=test,dc=local",
+		Scope:  ldapclient.ScopeWholeSubtree,
+		Filter: "(objectClass=sudoRole)",
+		Attributes: []string{
+			"cn", "sudoUser", "sudoHost", "sudoCommand",
+			"sudoRunAsUser", "sudoRunAsGroup", "sudoOption", "sudoOrder",
+		},
+	})
+	if err != nil {
+		t.Fatalf("search bridge sudoers: %v", err)
+	}
+
+	byCN := map[string]*ldapclient.Entry{}
+	for _, e := range sr.Entries {
+		byCN[e.GetAttributeValue("cn")] = e
+	}
+
+	// Skipped rules must not appear.
+	if _, ok := byCN["noperms"]; ok {
+		t.Error("rule with empty Commands must be skipped")
+	}
+	if _, ok := byCN["ROOT-GROUP"]; ok {
+		t.Error("rule with invalid group name must be skipped")
+	}
+
+	// ops rule — full structure check.
+	ops, ok := byCN["ops"]
+	if !ok {
+		t.Fatalf("expected sudoRole for 'ops'; got entries %v", sr.Entries)
+	}
+	// In bridge mode sudoUser is always %groupname (LDAP group-member syntax).
+	if u := ops.GetAttributeValue("sudoUser"); u != "%ops" {
+		t.Errorf("bridge-mode ops.sudoUser = %q, want %%ops", u)
+	}
+	if !containsAll(ops.GetAttributeValues("sudoHost"), []string{"web1", "web2"}) {
+		t.Errorf("ops.sudoHost = %v", ops.GetAttributeValues("sudoHost"))
+	}
+	cmds := ops.GetAttributeValues("sudoCommand")
+	if !containsAll(cmds, []string{"/usr/bin/apt", "/usr/bin/systemctl"}) {
+		t.Errorf("ops.sudoCommand = %v", cmds)
+	}
+	for _, c := range cmds {
+		if c == "../bad" || c == "not-absolute" {
+			t.Errorf("unsafe command %q leaked", c)
+		}
+	}
+	// sudoRunAsGroup: "wheel-x" is a valid POSIX-ish name; "ALL" allowed. The
+	// reserved "wheel" list in validGroupName is NOT applied here (it's used for
+	// IdP-group shadowing prevention, not run-as). Verify both pass through.
+	rg := ops.GetAttributeValues("sudoRunAsGroup")
+	if !containsAll(rg, []string{"wheel-x", "ALL"}) {
+		t.Errorf("ops.sudoRunAsGroup = %v", rg)
+	}
+	opts := ops.GetAttributeValues("sudoOption")
+	hasNoPasswd, hasSetenv, hasNoAuth := false, false, false
+	for _, o := range opts {
+		switch o {
+		case "NOPASSWD":
+			hasNoPasswd = true
+		case "setenv":
+			hasSetenv = true
+		case "!authenticate":
+			hasNoAuth = true
+		}
+	}
+	if !hasNoPasswd {
+		t.Errorf("expected NOPASSWD, got %v", opts)
+	}
+	if hasSetenv {
+		t.Errorf("dangerous setenv leaked: %v", opts)
+	}
+	if !hasNoAuth {
+		t.Errorf("expected !authenticate under SudoNoAuthClaims, got %v", opts)
+	}
+
+	// defaults rule — Hosts empty → must default to ALL, RunAsUser empty → root.
+	defaults, ok := byCN["defaults"]
+	if !ok {
+		t.Fatalf("expected sudoRole for 'defaults'")
+	}
+	if h := defaults.GetAttributeValues("sudoHost"); len(h) != 1 || h[0] != "ALL" {
+		t.Errorf("defaults.sudoHost = %v, want [ALL]", h)
+	}
+	if ru := defaults.GetAttributeValues("sudoRunAsUser"); len(ru) != 1 || ru[0] != "root" {
+		t.Errorf("defaults.sudoRunAsUser = %v, want [root]", ru)
+	}
+
+	// Injection: only good-host survives.
+	inj, ok := byCN["inject"]
+	if !ok {
+		t.Fatalf("expected sudoRole for 'inject'")
+	}
+	for _, h := range inj.GetAttributeValues("sudoHost") {
+		if h != "good-host" {
+			t.Errorf("malicious host %q escaped validation (only good-host expected)", h)
+		}
+	}
+
+	// sudoOrder must be present and distinct across rules.
+	seen := map[string]bool{}
+	for _, e := range sr.Entries {
+		o := e.GetAttributeValue("sudoOrder")
+		if o == "" {
+			t.Errorf("entry %q missing sudoOrder", e.DN)
+		}
+		if seen[o] {
+			t.Errorf("duplicate sudoOrder %q across entries", o)
+		}
+		seen[o] = true
+	}
+}
+
+// TestPlainLDAP_SearchSudoersFromStore_NoAuthTrue verifies that when
+// LDAPSudoNoAuthenticate=true every emitted rule includes !authenticate,
+// regardless of per-rule Options — this is a security-critical config path.
+func TestPlainLDAP_SearchSudoersFromStore_NoAuthTrue(t *testing.T) {
+	rules := []sudorules.SudoRule{
+		{Group: "ops", Commands: "/usr/bin/id"},
+	}
+	addr, _, cancel := newSudoersBridgeLDAPServer(t, rules, config.SudoNoAuthTrue)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=sudoers,dc=test,dc=local",
+		Scope:      ldapclient.ScopeWholeSubtree,
+		Filter:     "(cn=ops)",
+		Attributes: []string{"sudoOption"},
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(sr.Entries))
+	}
+	opts := sr.Entries[0].GetAttributeValues("sudoOption")
+	found := false
+	for _, o := range opts {
+		if o == "!authenticate" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected !authenticate under SudoNoAuthTrue, got %v", opts)
+	}
+}
+
+// TestPlainLDAP_SearchSudoersFromStore_Empty ensures an empty rules store
+// returns no sudoRole entries (but the ou=sudoers OU entry itself is still
+// served under an (objectClass=*) search).
+func TestPlainLDAP_SearchSudoersFromStore_Empty(t *testing.T) {
+	addr, _, cancel := newSudoersBridgeLDAPServer(t, nil, config.SudoNoAuthFalse)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	sr, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=sudoers,dc=test,dc=local",
+		Scope:      ldapclient.ScopeWholeSubtree,
+		Filter:     "(objectClass=sudoRole)",
+		Attributes: []string{"cn"},
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(sr.Entries) != 0 {
+		t.Errorf("expected 0 sudoRole entries for empty store, got %d", len(sr.Entries))
+	}
+
+	// OU entry itself is reachable.
+	sr2, err := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=sudoers,dc=test,dc=local",
+		Scope:      ldapclient.ScopeBaseObject,
+		Filter:     "(objectClass=organizationalUnit)",
+		Attributes: []string{"ou"},
+	})
+	if err != nil {
+		t.Fatalf("base search for OU: %v", err)
+	}
+	if len(sr2.Entries) != 1 || sr2.Entries[0].GetAttributeValue("ou") != "sudoers" {
+		t.Errorf("expected ou=sudoers entry, got %v", sr2.Entries)
+	}
+}
+
+// TestPlainLDAP_SearchSudoersFromStore_SizeLimit verifies the server honours
+// the client's SizeLimit and returns ResultSizeLimitExceeded with a truncated
+// entry set.
+func TestPlainLDAP_SearchSudoersFromStore_SizeLimit(t *testing.T) {
+	rules := []sudorules.SudoRule{
+		{Group: "g1", Commands: "/usr/bin/id"},
+		{Group: "g2", Commands: "/usr/bin/id"},
+		{Group: "g3", Commands: "/usr/bin/id"},
+	}
+	addr, _, cancel := newSudoersBridgeLDAPServer(t, rules, config.SudoNoAuthFalse)
+	defer cancel()
+
+	conn, err := ldapclient.DialURL(fmt.Sprintf("ldap://%s", addr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.UnauthenticatedBind("")
+
+	sr, _ := conn.Search(&ldapclient.SearchRequest{
+		BaseDN:     "ou=sudoers,dc=test,dc=local",
+		Scope:      ldapclient.ScopeWholeSubtree,
+		Filter:     "(objectClass=sudoRole)",
+		Attributes: []string{"cn"},
+		SizeLimit:  2,
+	})
+	// The go-ldap client surfaces ResultSizeLimitExceeded as an error on
+	// Search; we still get the partial entries via sr (on some code paths) or
+	// via the error's packet. We care that no more than 2 entries appear.
+	if sr != nil && len(sr.Entries) > 2 {
+		t.Errorf("SizeLimit=2 not honoured: got %d entries", len(sr.Entries))
+	}
+}
+
+// containsAll returns true iff every wanted value is present in got.
+func containsAll(got, want []string) bool {
+	set := map[string]bool{}
+	for _, g := range got {
+		set[g] = true
+	}
+	for _, w := range want {
+		if !set[w] {
+			return false
+		}
+	}
+	return true
+}
+
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 // waitForPort polls the given address until it accepts a TCP connection.

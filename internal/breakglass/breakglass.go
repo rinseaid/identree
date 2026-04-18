@@ -330,7 +330,8 @@ func breakglassFileAge(path string) (time.Duration, error) {
 
 // breakglassFailurePath is the file used to track consecutive break-glass failures
 // for rate limiting. Stored in /var/run/ (tmpfs) so it resets on reboot.
-const breakglassFailurePath = "/var/run/identree-breakglass-failures"
+// Declared as a var (not const) so tests can redirect it to a temp dir.
+var breakglassFailurePath = "/var/run/identree-breakglass-failures"
 
 // readFailureCounter reads and validates the failure counter file.
 // Returns (0, nil) if the file doesn't exist, is malformed, or fails security checks.

@@ -864,7 +864,8 @@ func (p *PAMClient) promptJustification(t func(string) string, choices []string)
 
 // breakglassUsagePath is the file used to record break-glass usage for
 // phone-home reporting. Stored in /var/run/ (tmpfs) so it resets on reboot.
-const breakglassUsagePath = "/var/run/identree-breakglass-used"
+// Declared as var (not const) so tests can redirect it to a temp path.
+var breakglassUsagePath = "/var/run/identree-breakglass-used"
 
 // recordBreakglassUsage writes a record of break-glass usage to disk so it can
 // be reported to the server on the next successful contact.
