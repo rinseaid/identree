@@ -3168,7 +3168,7 @@ const adminPageHTML = `<!DOCTYPE html>
           {{if .Reported}}<button type="button" class="host-expand-btn" aria-expanded="false" aria-label="Toggle agent details" data-host="{{.Hostname}}"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>{{end}}
           <a href="/history?hostname={{.Hostname}}" class="pill host">{{.Hostname}}</a>{{if .Group}}<span class="host-group">{{.Group}}</span>{{end}}
         </div>
-        <div class="gtcol gtcol-hlastseen" role="cell" title="{{.LastSeenISO}}">
+        <div class="gtcol gtcol-hlastseen" role="cell" style="align-items:center" title="{{.LastSeenISO}}">
           {{if .Reported}}<span class="agent-pill {{.AgentStatus}}" style="margin-right:6px"><span class="agent-dot"></span>{{if eq .AgentStatus "green"}}{{call $.T "agents_status_online"}}{{else if eq .AgentStatus "amber"}}{{call $.T "agents_status_stale"}}{{else}}{{call $.T "agents_status_offline"}}{{end}}</span><span class="hint-muted" style="font-size:0.75rem">{{.LastSeenAgo}} {{call $.T "ago"}}</span>{{else}}<span style="color:var(--text-3)">--</span>{{end}}
         </div>
         <div class="gtcol gtcol-hbreakglass" role="cell">
