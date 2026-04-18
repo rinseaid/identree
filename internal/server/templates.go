@@ -3236,14 +3236,18 @@ const adminPageHTML = `<!DOCTYPE html>
         btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
       });
       // Per-host expand toggle: reveal the agent details row underneath.
-      document.querySelectorAll('#hosts-table .host-expand-btn').forEach(function(btn){
-        btn.addEventListener('click',function(){
-          var detail=document.getElementById('host-detail-'+btn.dataset.host);
-          if(!detail)return;
-          var open=btn.getAttribute('aria-expanded')==='true';
-          btn.setAttribute('aria-expanded', open?'false':'true');
-          detail.style.display=open?'none':'';
-        });
+      // Event-delegated so it works regardless of when the rows were inserted
+      // (rerenders, infinite-scroll batches, etc.) and survives if the click
+      // lands on the SVG inside the button instead of the button itself.
+      document.addEventListener('click', function(e){
+        var btn = e.target.closest && e.target.closest('.host-expand-btn');
+        if(!btn) return;
+        e.preventDefault();
+        var detail = document.getElementById('host-detail-' + btn.dataset.host);
+        if(!detail) return;
+        var open = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+        detail.style.display = open ? 'none' : 'grid';
       });
       document.querySelectorAll('.reveal-password-btn').forEach(function(btn){
         btn.addEventListener('click',function(){
