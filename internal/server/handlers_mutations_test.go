@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +20,7 @@ import (
 // tests with a working session/CSRF system.
 func newMutationTestServer(t *testing.T, secret string) *Server {
 	t.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	return &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret:  secret,

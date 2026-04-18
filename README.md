@@ -343,27 +343,22 @@ Notifications use multi-channel routing: events are matched against org-level ru
 
 Multiple sinks can be active simultaneously. See [docs/audit-streaming.md](docs/audit-streaming.md) for event format, sink details, and LogQL/Splunk query examples.
 
-#### State backend (multi-instance HA)
+#### Database backend
+
+identree persists all state (challenges, grace sessions, action log, audit
+metadata, escrow records, agent heartbeats) to a SQL database. SQLite is
+the default and is appropriate for single-node homelab deployments.
+PostgreSQL is the supported HA / enterprise option.
 
 | Variable | Default | Description |
 |---|---|---|
-| `IDENTREE_STATE_BACKEND` | `local` | `local` (file-based, single instance) or `redis` (multi-instance HA) |
-| `IDENTREE_REDIS_URL` | — | Redis connection URL (`redis://host:6379/0`) |
-| `IDENTREE_REDIS_PASSWORD` | — | Redis AUTH password |
-| `IDENTREE_REDIS_PASSWORD_FILE` | — | Path to file containing Redis password |
-| `IDENTREE_REDIS_KEY_PREFIX` | `identree:` | Key namespace prefix (for shared Redis instances) |
-| `IDENTREE_REDIS_TLS` | `false` | Enable TLS for Redis connections |
-| `IDENTREE_REDIS_SENTINEL_MASTER` | — | Sentinel master name (enables Sentinel mode) |
-| `IDENTREE_REDIS_SENTINEL_ADDRS` | — | Comma-separated Sentinel addresses |
-| `IDENTREE_REDIS_CLUSTER_ADDRS` | — | Comma-separated Cluster node addresses |
-| `IDENTREE_REDIS_DB` | `0` | Redis database number |
-| `IDENTREE_REDIS_TLS_CA_CERT` | — | Path to CA certificate for Redis TLS verification |
-| `IDENTREE_REDIS_DIAL_TIMEOUT` | `5s` | Timeout for establishing Redis connections |
-| `IDENTREE_REDIS_READ_TIMEOUT` | `3s` | Timeout for Redis read operations |
-| `IDENTREE_REDIS_WRITE_TIMEOUT` | `3s` | Timeout for Redis write operations |
-| `IDENTREE_REDIS_POOL_SIZE` | `50` | Connection pool size |
+| `IDENTREE_DATABASE_DRIVER` | `sqlite` | `sqlite` or `postgres` |
+| `IDENTREE_DATABASE_DSN` | `/config/identree.db` (sqlite) | SQLite path or `postgres://user:pass@host:5432/identree?sslmode=require` |
+| `IDENTREE_DATABASE_MAX_OPEN_CONNS` | `1` for sqlite, `25` for postgres | Connection pool ceiling |
 
-See [docs/redis-ha.md](docs/redis-ha.md) for deployment guides (Docker Compose + Kubernetes) with both Valkey and Dragonfly.
+For HA, run multiple identree replicas behind a load balancer pointing at
+the same Postgres instance. Cross-replica SSE fan-out and admin-session
+revocation broadcasts ride on Postgres `LISTEN/NOTIFY`.
 
 #### PocketID webhook receiver
 

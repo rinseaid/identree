@@ -6,11 +6,9 @@ import (
 	"testing"
 	"time"
 
-	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/policy"
-	"path/filepath"
 )
 
 // ── deployJob tests ──────────────────────────────────────────────────────────
@@ -113,7 +111,7 @@ func TestDeployRateLimiter_DifferentIPAllowed(t *testing.T) {
 // newDeployTestServer builds a minimal server for deploy handler tests.
 func newDeployTestServer(t *testing.T, secret string) *Server {
 	t.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	return &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret:  secret,

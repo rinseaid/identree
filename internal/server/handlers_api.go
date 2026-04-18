@@ -446,6 +446,10 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	challenge.RequireAdmin = policyResult.RequireAdmin
 	challenge.GraceEligible = policyResult.GraceEligible
 	challenge.BreakglassBypassAllowed = policyResult.BreakglassBypass
+	// Persist policy fields so subsequent Approve/AddApproval calls can read
+	// them from the SQL row (the *Challenge returned from Create is now a
+	// detached snapshot rather than a live pointer to in-memory state).
+	s.store.SetChallengePolicy(challenge.ID, policyResult.PolicyName, policyResult.MinApprovals, policyResult.RequireAdmin, policyResult.BreakglassBypass)
 
 	challengesCreated.Inc()
 	challpkg.ActiveChallenges.Inc()

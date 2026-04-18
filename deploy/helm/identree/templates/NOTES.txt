@@ -26,24 +26,20 @@ Your release is named: {{ .Release.Name }}
   # Point sssd at ldap://127.0.0.1:389 (or use the in-cluster service name)
 {{- end }}
 
-{{- if eq .Values.stateBackend "redis" }}
+{{- if eq .Values.database.driver "postgres" }}
 
-3. Redis state backend is ENABLED.
-  identree will store challenges, sessions, and state in Redis.
-  {{- if .Values.redis.url }}
-  Redis URL: {{ .Values.redis.url }}
-  {{- end }}
-  {{- if .Values.redis.sentinelMaster }}
-  Sentinel master: {{ .Values.redis.sentinelMaster }}
-  {{- end }}
-  {{- if .Values.redis.clusterAddrs }}
-  Cluster nodes: {{ .Values.redis.clusterAddrs }}
-  {{- end }}
-  You can safely run {{ .Values.replicaCount }} replica(s) behind a load balancer.
-  See docs/redis-ha.md for details.
+3. Postgres database backend is ENABLED.
+  identree will store challenges, grace sessions, action log, and audit
+  state in Postgres. Run {{ .Values.replicaCount }} replica(s) behind a
+  load balancer.
+{{- else }}
+
+3. SQLite database backend (default).
+  Single-node persistence at /config/identree.db. For HA / enterprise
+  deployments, set database.driver=postgres in values.yaml.
 {{- end }}
 
-{{ if eq .Values.stateBackend "redis" }}4{{ else }}3{{ end }}. To install identree on a managed host:
+4. To install identree on a managed host:
   curl -fsSL <IDENTREE_EXTERNAL_URL>/install.sh | sudo bash
 
 For full documentation, see: https://github.com/rinseaid/identree

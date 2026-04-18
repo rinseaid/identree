@@ -17,5 +17,5 @@ spec:
           protocol: TCP
         {{- end }}
   egress:
-    - {} # Allow all egress (OIDC, PocketID, Redis, escrow backends)
+    - {} # Allow all egress (OIDC, PocketID, Postgres, escrow backends)
 {{- end }}

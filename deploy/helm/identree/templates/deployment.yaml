@@ -6,15 +6,15 @@ metadata:
     {{- include "identree.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
-  {{- if eq .Values.stateBackend "redis" }}
-  # Redis backend: rolling updates are safe because state is shared.
+  {{- if eq .Values.database.driver "postgres" }}
+  # Postgres backend: rolling updates are safe because state is shared.
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 1
       maxSurge: 1
   {{- else }}
-  # Local backend: parallel rollouts would cause state file conflicts.
+  # SQLite backend: single-writer, parallel pods would conflict on the file.
   strategy:
     type: Recreate
   {{- end }}

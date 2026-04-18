@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/policy"
@@ -18,7 +17,7 @@ import (
 // The ApprovalPoliciesFile is set to a temp directory so SavePolicies works.
 func newPolicyTestServer(t *testing.T, secret string) *Server {
 	t.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, t.TempDir())
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	policyFile := filepath.Join(t.TempDir(), "policies.json")
 	return &Server{
 		cfg: &config.ServerConfig{

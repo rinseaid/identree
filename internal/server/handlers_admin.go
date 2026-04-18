@@ -207,7 +207,7 @@ type healthCheckResult struct {
 	pocketid   string // "ok" or "unreachable" (empty when in bridge mode)
 	oidc       string // "ok" or "unreachable"
 	ldapServer string // "ok" or "not_started" (empty when LDAP disabled)
-	redis      string // "ok" or "error" (empty when state backend is local)
+	database   string // "ok" or "error" — SQL backend health
 	mtlsCerts  string // "ok", "warning", or empty (when mTLS disabled)
 }
 
@@ -244,13 +244,11 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ── 1b. Store health check (Redis PING when backend=redis) ───────────────
-	if s.cfg.StateBackend == "redis" {
-		if err := s.store.HealthCheck(); err != nil {
-			res.redis = "error"
-		} else {
-			res.redis = "ok"
-		}
+	// ── 1b. Database health check (always — SQL is the only backend) ────────
+	if err := s.store.HealthCheck(); err != nil {
+		res.database = "error"
+	} else {
+		res.database = "ok"
 	}
 
 	// ── 2. LDAP sync staleness ────────────────────────────────────────────────
@@ -369,7 +367,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	criticalFail := res.disk == "not_writable" ||
 		res.ldapSync == "stale" ||
 		res.ldapServer == "not_started" ||
-		res.redis == "error"
+		res.database == "error"
 	degradedFail := res.pocketid == "unreachable" || res.oidc == "unreachable"
 
 	checksJSON := buildChecksJSON(res)
@@ -404,8 +402,8 @@ func buildChecksJSON(res healthCheckResult) string {
 	if res.ldapServer != "" {
 		pairs = append(pairs, `"ldap_server":"`+res.ldapServer+`"`)
 	}
-	if res.redis != "" {
-		pairs = append(pairs, `"redis":"`+res.redis+`"`)
+	if res.database != "" {
+		pairs = append(pairs, `"database":"`+res.database+`"`)
 	}
 	if res.mtlsCerts != "" {
 		pairs = append(pairs, `"mtls_certs":"`+res.mtlsCerts+`"`)
@@ -768,6 +766,9 @@ func configToValues(cfg *config.ServerConfig) map[string]string {
 		"IDENTREE_HOST_REGISTRY_FILE":              cfg.HostRegistryFile,
 		"IDENTREE_DEFAULT_PAGE_SIZE":               strconv.Itoa(cfg.DefaultPageSize),
 		"IDENTREE_SESSION_STATE_FILE":              cfg.SessionStateFile,
+		"IDENTREE_DATABASE_DRIVER":                 cfg.DatabaseDriver,
+		"IDENTREE_DATABASE_DSN":                    redactDSN(cfg.DatabaseDSN),
+		"IDENTREE_DATABASE_MAX_OPEN_CONNS":         strconv.Itoa(cfg.DatabaseMaxOpenConns),
 	}
 }
 

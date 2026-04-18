@@ -210,7 +210,7 @@ Ready-to-import Grafana dashboard JSON files are provided in [`deploy/grafana/`]
 | File | Contents |
 |---|---|
 | `identree-overview.json` | Challenge flow (rates, durations, active gauges), notifications (by channel/status, delivery latency), authentication (auth failures, rate limiting, OIDC latency), LDAP (sync failures, query rates, bind failures, host count), and break-glass escrow operations |
-| `identree-audit-health.json` | Audit pipeline health (emitted/dropped/failed events by sink) and Redis backend metrics (pool connections, command latency) |
+| `identree-audit-health.json` | Audit pipeline health (emitted/dropped/failed events by sink) |
 
 **Importing into Grafana:**
 
@@ -295,21 +295,19 @@ IDENTREE_AUDIT_SYSLOG_URL=tcp://syslog.local:601                   # secondary: 
 
 ### Single-instance (default)
 
-By default, identree is a single-instance service. All state is stored in local JSON files (`sessions.json`, `uidmap.json`, `hosts.json`, `sudorules.json`) and in-memory challenge maps. There is no database, no clustering, and no leader election. This is intentional -- it keeps the operational footprint minimal and eliminates distributed-system failure modes.
+By default, identree runs as a single-node service backed by SQLite at `/config/identree.db`. All state — challenges, grace sessions, the action log, escrow records, agent heartbeats — lives in that one file. The SQLite database uses WAL mode and serialises writes through a single connection, so the operational footprint is minimal: one volume, one process, no clustering.
 
-With the default `local` state backend, do not run multiple identree instances behind a load balancer. Challenges are stored in memory on the instance that created them; a second instance would not see them.
+Do not run multiple identree replicas against the same SQLite file. SQLite is single-writer; a second instance trying to write to the same `.db` would corrupt state.
 
-### Multi-instance with Redis
+### Multi-instance HA with Postgres
 
-To run multiple identree instances for high availability, switch to the Redis state backend. Set `IDENTREE_STATE_BACKEND=redis` and point all instances at the same Redis/Valkey/Dragonfly server. Challenges, sessions, and all runtime state are shared via Redis, and dashboard SSE events propagate across instances via Redis pub/sub.
+To run multiple identree replicas behind a load balancer, set `IDENTREE_DATABASE_DRIVER=postgres` and `IDENTREE_DATABASE_DSN` to a libpq URL. All replicas share state through Postgres, and dashboard SSE events plus admin-session revocations fan out across replicas via Postgres `LISTEN/NOTIFY`.
 
-No sticky sessions are required. Any instance can serve any request.
-
-See [redis-ha.md](redis-ha.md) for full deployment guides covering Docker Compose, Kubernetes, Sentinel, Cluster mode, TLS, failover behavior, and monitoring.
+No sticky sessions are required. Any replica can serve any request.
 
 ### Capacity
 
-identree handles thousands of concurrent challenges whether stored in memory (local backend) or Redis. The bottleneck in practice is the OIDC provider (token exchange latency) rather than identree itself. Monitor `identree_oidc_exchange_duration_seconds` to detect IdP slowdowns.
+identree handles thousands of concurrent challenges on either backend. The bottleneck in practice is the OIDC provider (token exchange latency) rather than identree itself. Monitor `identree_oidc_exchange_duration_seconds` to detect IdP slowdowns.
 
 ### LDAP refresh interval tuning
 

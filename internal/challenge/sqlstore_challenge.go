@@ -147,7 +147,8 @@ func (s *SQLStore) Create(username, hostname, breakglassRotateBefore, reason str
 		return nil, err
 	}
 	s.dirty.Store(true)
-	ActiveChallenges.Inc()
+	// ActiveChallenges is incremented by the API handler after Create returns,
+	// matching the legacy contract.
 
 	return &Challenge{
 		ID:                     id,
@@ -258,6 +259,18 @@ func (s *SQLStore) SetBreakglassOverride(id string) {
 	defer cancel()
 	if _, err := s.exec(ctx, `UPDATE challenges SET breakglass_override = 1 WHERE id = ?`, id); err != nil {
 		logErr("SetBreakglassOverride", err)
+	}
+}
+
+func (s *SQLStore) SetChallengePolicy(id, policyName string, requiredApprovals int, requireAdmin, breakglassBypassAllowed bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := s.exec(ctx,
+		`UPDATE challenges
+		 SET policy_name = ?, required_approvals = ?, require_admin = ?, breakglass_bypass_allowed = ?
+		 WHERE id = ?`,
+		policyName, requiredApprovals, boolToInt(requireAdmin), boolToInt(breakglassBypassAllowed), id); err != nil {
+		logErr("SetChallengePolicy", err)
 	}
 }
 

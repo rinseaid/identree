@@ -28,8 +28,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/oauth2"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/rinseaid/identree/internal/adminnotify"
 	"github.com/rinseaid/identree/internal/audit"
 	"github.com/rinseaid/identree/internal/challenge"
@@ -161,7 +159,7 @@ type Server struct {
 	// adminNotifyStore manages per-admin notification preferences.
 	adminNotifyStore adminnotify.PrefStore
 
-	// notifyStore abstracts notification config persistence (file or Redis).
+	// notifyStore abstracts notification config persistence.
 	notifyStore notify.ConfigStore
 
 	// audit is the SIEM/log aggregator streamer. nil when no audit sinks are configured.
@@ -200,13 +198,9 @@ type Server struct {
 	// live config update.  Protected by cfgMu.
 	prevAdminUsernames map[string]bool
 
-	// clusterRedis is the dedicated Redis client for the cluster control channel.
-	// nil when StateBackend != "redis".
-	clusterRedis  redis.UniversalClient
-	clusterPrefix string
-
 	// clusterLastNotifyReload deduplicates reload_notify_config messages.
 	// Stores the Unix millisecond timestamp of the last reload.
+	// Retained for cross-replica fan-out via the LISTEN/NOTIFY broadcaster.
 	clusterLastNotifyReload atomic.Int64
 
 	// mtlsCA is the CA certificate+key used for mTLS client authentication
@@ -339,36 +333,26 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	}
 
-	// Create the store based on the configured state backend.
-	var challengeStore challenge.Store
-	var storeRedisClient redis.UniversalClient // non-nil when backend=redis; used for SSE and metrics
-	// Derive the grace HMAC key from the session secret (which falls back to SharedSecret).
-	var graceHMACKey []byte
+	// Open the SQL database (sqlite or postgres) and construct the SQLStore.
+	db, dialect, err := challenge.Open(challenge.SQLConfig{
+		Driver:       cfg.DatabaseDriver,
+		DSN:          cfg.DatabaseDSN,
+		MaxOpenConns: cfg.DatabaseMaxOpenConns,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("database: %w", err)
+	}
+	var sqlOpts []func(*challenge.SQLStore)
 	if cfg.SessionSecret != "" {
-		graceHMACKey = deriveKey(cfg.SessionSecret, "grace-session")
+		sqlOpts = append(sqlOpts, challenge.WithSQLGraceHMACKey(deriveKey(cfg.SessionSecret, "grace-session")))
 	}
-
-	switch cfg.StateBackend {
-	case "redis":
-		var err error
-		storeRedisClient, err = newRedisClient(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("redis client: %w", err)
-		}
-		rs := challenge.NewRedisStore(storeRedisClient, cfg.RedisKeyPrefix, cfg.ChallengeTTL, cfg.GracePeriod)
-		if len(graceHMACKey) > 0 {
-			rs.SetGraceHMACKey(graceHMACKey)
-		}
-		challengeStore = rs
-		slog.Info("state backend: redis", "prefix", cfg.RedisKeyPrefix)
-	default:
-		var opts []func(*challenge.ChallengeStore)
-		if len(graceHMACKey) > 0 {
-			opts = append(opts, challenge.WithGraceHMACKey(graceHMACKey))
-		}
-		challengeStore = challenge.NewChallengeStore(cfg.ChallengeTTL, cfg.GracePeriod, cfg.SessionStateFile, opts...)
-		slog.Info("state backend: local", "path", cfg.SessionStateFile)
+	sqlStore, err := challenge.NewSQLStore(db, dialect, cfg.ChallengeTTL, cfg.GracePeriod, sqlOpts...)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sql store: %w", err)
 	}
+	var challengeStore challenge.Store = sqlStore
+	slog.Info("state backend: sql", "driver", cfg.DatabaseDriver, "dsn", redactDSN(cfg.DatabaseDSN))
 
 	s := &Server{
 		cfg:           cfg,
@@ -399,36 +383,17 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 
 	// ── Challenge expiry audit callback ─────────────────────────────────────
-	// Wire up the OnExpire callback so expired pending challenges emit audit events.
-	// Only the local ChallengeStore supports this; Redis TTL-based expiry is handled differently.
-	if localStore, ok := challengeStore.(*challenge.ChallengeStore); ok {
-		localStore.OnExpire = func(username, hostname, code string) {
-			s.emitAuditEvent("challenge_expired", username, hostname, code, "", "", "")
-		}
+	// SQLStore's reap goroutine fires OnExpire when a pending challenge passes
+	// its expiry; route those events into the audit stream.
+	sqlStore.OnExpire = func(username, hostname, code string) {
+		s.emitAuditEvent("challenge_expired", username, hostname, code, "", "", "")
 	}
 
 	// ── SSE broadcaster ─────────────────────────────────────────────────────
-	if cfg.StateBackend == "redis" && storeRedisClient != nil {
-		// Create a dedicated Redis client for pub/sub to avoid blocking the store client.
-		sseRedisClient, err := newRedisClient(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("redis SSE client: %w", err)
-		}
-		s.sseBroadcaster = newRedisBroadcaster(s, sseRedisClient, cfg.RedisKeyPrefix)
-		// Start Redis pool metrics collection using the store's client.
-		startRedisMetrics(storeRedisClient, s.stopCh)
-
-		// ── Cluster control channel ────────────────────────────────────
-		clusterRedisClient, err := newRedisClient(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("redis cluster control client: %w", err)
-		}
-		s.clusterRedis = clusterRedisClient
-		s.clusterPrefix = cfg.RedisKeyPrefix
-		go s.startClusterSubscriber(clusterRedisClient, cfg.RedisKeyPrefix, s.stopCh)
-	} else {
-		s.sseBroadcaster = &localBroadcaster{server: s}
-	}
+	// v1: in-process broadcaster. SQLite is single-node by definition; Postgres
+	// HA cross-replica fan-out is implemented by the LISTEN/NOTIFY broadcaster
+	// in a follow-up commit.
+	s.sseBroadcaster = &localBroadcaster{server: s}
 
 	// ── Audit streamer ──────────────────────────────────────────────────────
 	if sinks, err := initAuditSinks(cfg); err != nil {
@@ -439,11 +404,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 
 	// ── Notification channels and routing ──────────────────────────────────
-	if cfg.StateBackend == "redis" && storeRedisClient != nil {
-		s.notifyStore = notify.NewRedisConfigStore(storeRedisClient, cfg.RedisKeyPrefix)
-	} else {
-		s.notifyStore = &notify.FileConfigStore{Path: cfg.NotificationConfigFile}
-	}
+	s.notifyStore = &notify.FileConfigStore{Path: cfg.NotificationConfigFile}
 
 	notifyCfg, err := s.notifyStore.Load()
 	if err != nil {
@@ -467,21 +428,12 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		slog.Info("POLICY engine loaded", "policies", len(policies))
 	}
 
-	if cfg.StateBackend == "redis" && storeRedisClient != nil {
-		redisAdminStore, err := adminnotify.NewRedisStore(storeRedisClient, cfg.RedisKeyPrefix)
-		if err != nil {
-			slog.Warn("notify: failed to load admin preferences from Redis", "err", err)
-			redisAdminStore, _ = adminnotify.NewRedisStore(storeRedisClient, cfg.RedisKeyPrefix+"fallback:")
-		}
-		s.adminNotifyStore = redisAdminStore
-	} else {
-		adminNotifyStore, err := adminnotify.NewStore(cfg.AdminNotifyFile)
-		if err != nil {
-			slog.Warn("notify: failed to load admin preferences", "path", cfg.AdminNotifyFile, "err", err)
-			adminNotifyStore, _ = adminnotify.NewStore("/dev/null") // fallback empty
-		}
-		s.adminNotifyStore = adminNotifyStore
+	adminNotifyStore, err := adminnotify.NewStore(cfg.AdminNotifyFile)
+	if err != nil {
+		slog.Warn("notify: failed to load admin preferences", "path", cfg.AdminNotifyFile, "err", err)
+		adminNotifyStore, _ = adminnotify.NewStore("/dev/null") // fallback empty
 	}
+	s.adminNotifyStore = adminNotifyStore
 
 	// Pre-hash API keys and the metrics token at startup.
 	for _, key := range cfg.APIKeys {
@@ -633,8 +585,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		}
 	}()
 
-	// Session nonce pruning is now handled by the store (ChallengeStore.reap
-	// for local backend, Redis TTL for redis backend).
+	// Session nonce pruning is handled by the SQL store's reap goroutine.
 
 	s.registerRoutes()
 	return s, nil
@@ -948,9 +899,6 @@ func (s *Server) Stop() {
 	close(s.stopCh)
 	if s.sseBroadcaster != nil {
 		s.sseBroadcaster.Close()
-	}
-	if s.clusterRedis != nil {
-		s.clusterRedis.Close()
 	}
 	s.store.Stop()
 	if s.audit != nil {

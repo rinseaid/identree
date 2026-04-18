@@ -8,12 +8,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/policy"
@@ -22,7 +20,7 @@ import (
 // newAdminTestServer builds a minimal *Server for admin handler tests.
 func newAdminTestServer(t *testing.T, secret string) *Server {
 	t.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	notifyCfg := &notify.NotificationConfig{}
 	return &Server{
 		cfg: &config.ServerConfig{
@@ -849,11 +847,11 @@ func TestBuildChecksJSON_WithLDAP(t *testing.T) {
 	}
 }
 
-func TestBuildChecksJSON_WithRedis(t *testing.T) {
-	res := healthCheckResult{disk: "ok", redis: "error"}
+func TestBuildChecksJSON_WithDatabase(t *testing.T) {
+	res := healthCheckResult{disk: "ok", database: "error"}
 	got := buildChecksJSON(res)
-	if !strings.Contains(got, `"redis":"error"`) {
-		t.Errorf("expected redis in JSON, got %q", got)
+	if !strings.Contains(got, `"database":"error"`) {
+		t.Errorf("expected database in JSON, got %q", got)
 	}
 }
 

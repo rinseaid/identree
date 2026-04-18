@@ -3,7 +3,7 @@ package challenge
 import "time"
 
 // Store is the interface that any challenge state backend must implement.
-// The local in-memory ChallengeStore satisfies this interface, as does RedisStore.
+// The SQL-backed SQLStore is the only implementation.
 type Store interface {
 	// Lifecycle
 	Stop()
@@ -26,6 +26,9 @@ type Store interface {
 	// already approved, or the challenge is expired.
 	AddApproval(id string, approver string, requiredApprovals int) (fullyApproved bool, err error)
 	SetBreakglassOverride(id string)
+	// SetChallengePolicy persists the policy outcome on a freshly-created
+	// challenge so subsequent Approve/AddApproval calls can read it.
+	SetChallengePolicy(id, policyName string, requiredApprovals int, requireAdmin, breakglassBypassAllowed bool)
 	Deny(id, reason string) error
 	AutoApprove(id string) error
 	AutoApproveIfWithinGracePeriod(username, hostname, id string) bool
@@ -106,12 +109,9 @@ type Store interface {
 }
 
 // SessionNonceData holds state for an in-flight OIDC login.
-// Defined in the challenge package so both local and Redis stores can use it.
 type SessionNonceData struct {
 	IssuedAt     time.Time
 	CodeVerifier string // PKCE code verifier; empty for legacy sessions
 	ClientIP     string // client IP at login initiation for state binding
 }
 
-// Compile-time check: ChallengeStore implements Store.
-var _ Store = (*ChallengeStore)(nil)

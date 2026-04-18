@@ -120,9 +120,10 @@ func TestLoadServerConfig_AuditLogMaxFiles(t *testing.T) {
 	})
 }
 
-func TestLoadServerConfig_StateBackend(t *testing.T) {
-	t.Run("defaults to local", func(t *testing.T) {
-		clearEnvForTest(t, "IDENTREE_STATE_BACKEND")
+func TestLoadServerConfig_DatabaseDriver(t *testing.T) {
+	t.Run("defaults to sqlite with /config/identree.db", func(t *testing.T) {
+		clearEnvForTest(t, "IDENTREE_DATABASE_DRIVER")
+		clearEnvForTest(t, "IDENTREE_DATABASE_DSN")
 		setEnvForTest(t, "IDENTREE_OIDC_ISSUER_URL", "http://localhost")
 		setEnvForTest(t, "IDENTREE_OIDC_CLIENT_ID", "test")
 		setEnvForTest(t, "IDENTREE_OIDC_CLIENT_SECRET", "test")
@@ -134,28 +135,21 @@ func TestLoadServerConfig_StateBackend(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadServerConfig: %v", err)
 		}
-		if cfg.StateBackend != "local" {
-			t.Errorf("StateBackend = %q, want %q", cfg.StateBackend, "local")
+		if cfg.DatabaseDriver != "sqlite" {
+			t.Errorf("DatabaseDriver = %q, want %q", cfg.DatabaseDriver, "sqlite")
+		}
+		if cfg.DatabaseDSN != "/config/identree.db" {
+			t.Errorf("DatabaseDSN = %q, want %q", cfg.DatabaseDSN, "/config/identree.db")
 		}
 	})
-}
 
-func TestLoadServerConfig_RedisURL(t *testing.T) {
-	t.Run("parses RedisURL from env", func(t *testing.T) {
-		setEnvForTest(t, "IDENTREE_REDIS_URL", "redis://myhost:6379/2")
-		setEnvForTest(t, "IDENTREE_OIDC_ISSUER_URL", "http://localhost")
-		setEnvForTest(t, "IDENTREE_OIDC_CLIENT_ID", "test")
-		setEnvForTest(t, "IDENTREE_OIDC_CLIENT_SECRET", "test")
-		setEnvForTest(t, "IDENTREE_EXTERNAL_URL", "http://localhost")
-		setEnvForTest(t, "IDENTREE_SHARED_SECRET", "test-secret-that-is-at-least-32-characters-long")
-		setEnvForTest(t, "IDENTREE_LDAP_BASE_DN", "dc=test,dc=com")
+	t.Run("postgres requires DSN", func(t *testing.T) {
+		setMinServerEnv(t)
+		setEnvForTest(t, "IDENTREE_DATABASE_DRIVER", "postgres")
+		clearEnvForTest(t, "IDENTREE_DATABASE_DSN")
 
-		cfg, err := LoadServerConfig()
-		if err != nil {
-			t.Fatalf("LoadServerConfig: %v", err)
-		}
-		if cfg.RedisURL != "redis://myhost:6379/2" {
-			t.Errorf("RedisURL = %q, want %q", cfg.RedisURL, "redis://myhost:6379/2")
+		if _, err := LoadServerConfig(); err == nil {
+			t.Fatal("expected error for postgres driver without DSN")
 		}
 	})
 }
@@ -228,11 +222,8 @@ func TestLoadServerConfig_MinimumViable(t *testing.T) {
 	if cfg.DefaultPageSize != 15 {
 		t.Errorf("DefaultPageSize = %d, want 15", cfg.DefaultPageSize)
 	}
-	if cfg.StateBackend != "local" {
-		t.Errorf("StateBackend = %q, want %q", cfg.StateBackend, "local")
-	}
-	if cfg.RedisKeyPrefix != "identree:" {
-		t.Errorf("RedisKeyPrefix = %q, want %q", cfg.RedisKeyPrefix, "identree:")
+	if cfg.DatabaseDriver != "sqlite" {
+		t.Errorf("DatabaseDriver = %q, want %q", cfg.DatabaseDriver, "sqlite")
 	}
 	if cfg.NotifyTimeout != 15*time.Second {
 		t.Errorf("NotifyTimeout = %v, want %v", cfg.NotifyTimeout, 15*time.Second)
@@ -400,25 +391,13 @@ func TestLoadServerConfig_MissingLDAPBaseDN(t *testing.T) {
 	}
 }
 
-func TestLoadServerConfig_InvalidStateBackend(t *testing.T) {
+func TestLoadServerConfig_InvalidDatabaseDriver(t *testing.T) {
 	setMinServerEnv(t)
-	setEnvForTest(t, "IDENTREE_STATE_BACKEND", "postgres")
+	setEnvForTest(t, "IDENTREE_DATABASE_DRIVER", "mysql")
 
 	_, err := LoadServerConfig()
 	if err == nil {
-		t.Fatal("expected error for invalid state backend")
-	}
-}
-
-func TestLoadServerConfig_RedisWithoutURL(t *testing.T) {
-	setMinServerEnv(t)
-	setEnvForTest(t, "IDENTREE_STATE_BACKEND", "redis")
-	clearEnvForTest(t, "IDENTREE_REDIS_URL")
-	clearEnvForTest(t, "IDENTREE_REDIS_CLUSTER_ADDRS")
-
-	_, err := LoadServerConfig()
-	if err == nil {
-		t.Fatal("expected error for redis backend without URL")
+		t.Fatal("expected error for invalid database driver")
 	}
 }
 

@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/policy"
@@ -26,7 +24,7 @@ func (noopBroadcaster) Close()                   {}
 // and handlePollChallenge tests. Uses a local ChallengeStore with a temp dir.
 func newAPITestServer(t *testing.T, secret string) *Server {
 	t.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	return &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret:  secret,
@@ -261,7 +259,7 @@ func TestHandlePollChallenge_PendingChallenge(t *testing.T) {
 func TestHandleCreateChallenge_GraceAutoApprove(t *testing.T) {
 	const secret = "test-secret"
 	// Use a store with a 10-minute grace period.
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	s := &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret:  secret,
@@ -321,7 +319,7 @@ func TestHandleCreateChallenge_GraceAutoApprove(t *testing.T) {
 
 func TestHandleCreateChallenge_GraceAutoApprove_DifferentHost(t *testing.T) {
 	const secret = "test-secret"
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	s := &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret:  secret,
@@ -863,7 +861,7 @@ func TestHandlePollChallenge_ExpiredChallenge(t *testing.T) {
 	const secret = "test-secret"
 	// Use a very short TTL so the challenge expires quickly.
 	shortTTL := 50 * time.Millisecond
-	store := challpkg.NewChallengeStore(shortTTL, 10*time.Minute, filepath.Join(t.TempDir(), "state.json"))
+	store := newTestStore(t, shortTTL, 10*time.Minute)
 	s := &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret:  secret,

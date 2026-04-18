@@ -1,7 +1,7 @@
 # -- Default values for identree Helm chart.
 
-# -- Number of replicas. With stateBackend=local, keep at 1 (state files are
-# not shared). With stateBackend=redis, set to 2+ for high availability.
+# -- Number of replicas. With database.driver=sqlite, keep at 1 (the SQLite
+# file is single-writer). With database.driver=postgres, set to 2+ for HA.
 replicaCount: 1
 
 image:
@@ -178,35 +178,22 @@ config:
   # -- UI
   defaultPageSize: "15"
 
-# ── State backend (HA) ────────────────────────────────────────────────────
-# Set to "redis" to enable multi-instance HA with a shared Redis/Valkey/Dragonfly.
-stateBackend: "local"  # "local" or "redis"
-
-redis:
-  # -- External Redis URL (standalone mode)
-  url: ""
-  # -- Redis AUTH password (or use existingSecret)
-  password: ""
-  # -- Redis database number
-  db: 0
-  # -- Key namespace prefix
-  keyPrefix: "identree:"
-  # -- Connection pool size
-  poolSize: 10
-  # -- Enable TLS
-  tls: false
-  # -- TLS CA certificate path (mounted via extraVolumes)
-  tlsCACert: ""
-  # -- Sentinel master name (enables Sentinel mode)
-  sentinelMaster: ""
-  # -- Sentinel addresses (comma-separated)
-  sentinelAddrs: ""
-  # -- Cluster addresses (comma-separated, enables Cluster mode)
-  clusterAddrs: ""
-  # -- Dial/read/write timeouts
-  dialTimeout: "5s"
-  readTimeout: "3s"
-  writeTimeout: "3s"
+# ── Database backend ──────────────────────────────────────────────────────
+# SQLite is the default and is appropriate for single-node homelab and
+# small-team deployments. For HA / enterprise, set driver: postgres and
+# point dsn at a managed Postgres instance.
+database:
+  # -- Driver: "sqlite" (default, single-node) or "postgres" (HA / enterprise).
+  driver: "sqlite"
+  # -- Connection string. For SQLite, a file path under a persistent volume
+  # (defaults to /config/identree.db when empty). For Postgres, a libpq URL
+  # such as "postgres://user:pass@host:5432/identree?sslmode=require".
+  # Recommended: leave empty here and provide via secrets.databaseDsn or an
+  # existingSecret so credentials never appear in the ConfigMap.
+  dsn: ""
+  # -- Connection pool ceiling. 0 means use the per-driver default
+  # (1 for SQLite to serialise writes, 25 for Postgres).
+  maxOpenConns: 0
 
 # ---------------------------------------------------------------------------
 # Secrets (sensitive values — stored in a Kubernetes Secret)

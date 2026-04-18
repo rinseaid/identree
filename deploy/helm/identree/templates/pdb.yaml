@@ -5,7 +5,7 @@ metadata:
   labels:
     {{- include "identree.labels" . | nindent 4 }}
 spec:
-  {{- if eq .Values.stateBackend "redis" }}
+  {{- if eq .Values.database.driver "postgres" }}
   maxUnavailable: 1
   {{- else }}
   minAvailable: 1

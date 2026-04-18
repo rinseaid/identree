@@ -264,21 +264,13 @@ type ServerConfig struct {
 	DevLoginEnabled bool
 
 	// ── State backend ───────────────────────────────────────────��────────────
-	StateBackend        string        // "local" (default) | "redis"
-	RedisURL            string        // redis://host:6379/0
-	RedisPassword       string
-	RedisPasswordFile   string
-	RedisDB             int           // default 0
-	RedisKeyPrefix      string        // default "identree:"
-	RedisTLS            bool
-	RedisTLSCACert      string        // PEM CA cert path
-	RedisSentinelMaster string
-	RedisSentinelAddrs  []string
-	RedisClusterAddrs   []string
-	RedisPoolSize       int           // default 50
-	RedisDialTimeout    time.Duration // default 5s
-	RedisReadTimeout    time.Duration // default 3s
-	RedisWriteTimeout   time.Duration // default 3s
+	// Database is the only persistence backend. Driver is "sqlite" (default,
+	// single-node homelab) or "postgres" (HA / enterprise). DSN is the
+	// dialect-specific connection string: a file path for SQLite (defaults to
+	// /config/identree.db when empty), or a libpq-style URL for Postgres.
+	DatabaseDriver       string
+	DatabaseDSN          string
+	DatabaseMaxOpenConns int
 }
 
 // DeriveLDAPBindPassword returns the per-host LDAP bind password for hostname.
@@ -548,26 +540,9 @@ func LoadServerConfig() (*ServerConfig, error) {
 		LDAPExternalURL:      get("IDENTREE_LDAP_EXTERNAL_URL"),
 		LDAPTLSCACert:        get("IDENTREE_LDAP_TLS_CA_CERT"),
 
-		StateBackend:        stringDefault(get("IDENTREE_STATE_BACKEND"), "local"),
-		RedisURL:            get("IDENTREE_REDIS_URL"),
-		RedisPassword:       get("IDENTREE_REDIS_PASSWORD"),
-		RedisPasswordFile:   get("IDENTREE_REDIS_PASSWORD_FILE"),
-		RedisDB:             getInt("IDENTREE_REDIS_DB", 0),
-		RedisKeyPrefix:      stringDefault(get("IDENTREE_REDIS_KEY_PREFIX"), "identree:"),
-		RedisTLS:            getBool("IDENTREE_REDIS_TLS", false),
-		RedisTLSCACert:      get("IDENTREE_REDIS_TLS_CA_CERT"),
-		RedisSentinelMaster: get("IDENTREE_REDIS_SENTINEL_MASTER"),
-		RedisSentinelAddrs:  getSlice("IDENTREE_REDIS_SENTINEL_ADDRS"),
-		RedisClusterAddrs:   getSlice("IDENTREE_REDIS_CLUSTER_ADDRS"),
-		RedisPoolSize:       getInt("IDENTREE_REDIS_POOL_SIZE", 50),
-		RedisDialTimeout:    getDuration("IDENTREE_REDIS_DIAL_TIMEOUT", 5*time.Second),
-		RedisReadTimeout:    getDuration("IDENTREE_REDIS_READ_TIMEOUT", 3*time.Second),
-		RedisWriteTimeout:   getDuration("IDENTREE_REDIS_WRITE_TIMEOUT", 3*time.Second),
-	}
-
-	// Warn if SessionStateFile is unset — grace sessions, revocations, and audit log will not persist.
-	if cfg.SessionStateFile == "" {
-		slog.Warn("IDENTREE_SESSION_STATE_FILE is not set — grace sessions, revocations, and audit log will be lost on restart")
+		DatabaseDriver:       stringDefault(get("IDENTREE_DATABASE_DRIVER"), "sqlite"),
+		DatabaseDSN:          get("IDENTREE_DATABASE_DSN"),
+		DatabaseMaxOpenConns: getInt("IDENTREE_DATABASE_MAX_OPEN_CONNS", 0),
 	}
 
 	// Clamp LDAPRefreshInterval: 0 or negative would panic time.NewTicker.
@@ -762,28 +737,20 @@ func LoadServerConfig() (*ServerConfig, error) {
 		slog.Warn("mTLS is enabled but IDENTREE_TLS_CERT_FILE/IDENTREE_TLS_KEY_FILE are not set — client certificate verification requires TLS termination by identree (set TLS cert/key or use a reverse proxy that forwards client certs)")
 	}
 
-	// Validate StateBackend.
-	switch cfg.StateBackend {
-	case "", "local":
-		cfg.StateBackend = "local"
-	case "redis":
-		if cfg.RedisURL == "" && len(cfg.RedisClusterAddrs) == 0 {
-			return nil, fmt.Errorf("IDENTREE_REDIS_URL or IDENTREE_REDIS_CLUSTER_ADDRS must be set when IDENTREE_STATE_BACKEND=redis")
+	// Validate database driver.
+	switch strings.ToLower(strings.TrimSpace(cfg.DatabaseDriver)) {
+	case "", "sqlite", "sqlite3":
+		cfg.DatabaseDriver = "sqlite"
+		if cfg.DatabaseDSN == "" {
+			cfg.DatabaseDSN = "/config/identree.db"
+		}
+	case "postgres", "postgresql", "pg", "pgx":
+		cfg.DatabaseDriver = "postgres"
+		if cfg.DatabaseDSN == "" {
+			return nil, fmt.Errorf("IDENTREE_DATABASE_DSN is required when IDENTREE_DATABASE_DRIVER=postgres")
 		}
 	default:
-		return nil, fmt.Errorf("IDENTREE_STATE_BACKEND must be \"local\" or \"redis\" (got %q)", cfg.StateBackend)
-	}
-
-	// Load Redis password from file if RedisPasswordFile is set and RedisPassword is empty.
-	if cfg.RedisPasswordFile != "" && cfg.RedisPassword == "" {
-		for _, seg := range strings.Split(cfg.RedisPasswordFile, "/") {
-			if seg == ".." || seg == "." {
-				return nil, fmt.Errorf("IDENTREE_REDIS_PASSWORD_FILE must not contain path traversal sequences")
-			}
-		}
-		if data, err := os.ReadFile(cfg.RedisPasswordFile); err == nil {
-			cfg.RedisPassword = strings.TrimSpace(string(data))
-		}
+		return nil, fmt.Errorf("IDENTREE_DATABASE_DRIVER must be \"sqlite\" or \"postgres\" (got %q)", cfg.DatabaseDriver)
 	}
 
 	// Validate required OIDC fields.

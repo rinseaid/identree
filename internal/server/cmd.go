@@ -285,11 +285,7 @@ func runServer() {
 			os.Exit(1)
 		}
 	}
-	if cfg.SessionStateFile != "" {
-		slog.Info("session persistence enabled", "path", cfg.SessionStateFile)
-	} else {
-		slog.Warn("IDENTREE_SESSION_STATE_FILE is not set — revokeTokensBefore and grace sessions will be lost on restart")
-	}
+	slog.Info("state persistence", "driver", cfg.DatabaseDriver, "dsn", redactDSN(cfg.DatabaseDSN))
 	if cfg.HostRegistryFile != "" {
 		count := len(srv.hostRegistry.RegisteredHosts())
 		if count > 0 {
@@ -501,36 +497,13 @@ func runServer() {
 		}
 	}
 
-	// periodicFlushCtx is cancelled at graceful shutdown to stop the flush goroutine.
-	periodicFlushCtx, periodicFlushCancel := context.WithCancel(context.Background())
+	// SQL writes commit immediately, so no periodic flush goroutine is needed.
+	// Stub the channels and cancel func that the rest of the function references
+	// so the shutdown path stays unchanged.
+	_, periodicFlushCancel := context.WithCancel(context.Background())
 	defer periodicFlushCancel()
 	periodicFlushDone := make(chan struct{})
-
-	// Periodically flush session state to disk to minimize data loss on crash.
-	// Skip when using Redis — all state is already persisted.
-	if cfg.StateBackend != "redis" {
-		go func() {
-			defer close(periodicFlushDone)
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("periodic flush panic recovered", "panic", r)
-				}
-			}()
-			ticker := time.NewTicker(10 * time.Minute)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					srv.store.SaveState()
-					slog.Debug("periodic state flush completed")
-				case <-periodicFlushCtx.Done():
-					return
-				}
-			}
-		}()
-	} else {
-		close(periodicFlushDone) // no goroutine to wait for
-	}
+	close(periodicFlushDone)
 
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,

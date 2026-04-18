@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/policy"
@@ -18,8 +17,7 @@ import (
 // newBenchServer builds a minimal *Server suitable for benchmark tests.
 func newBenchServer(b *testing.B, policies []policy.Policy) *Server {
 	b.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, b.TempDir())
-	b.Cleanup(func() { store.Stop() })
+	store := newBenchStore(b, 5*time.Minute, 10*time.Minute)
 	return &Server{
 		cfg: &config.ServerConfig{
 			SharedSecret:  "bench-secret",

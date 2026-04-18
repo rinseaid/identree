@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/policy"
@@ -19,7 +18,7 @@ import (
 // newDashboardTestServer builds a minimal *Server for healthz/metrics tests.
 func newDashboardTestServer(t *testing.T, cfg *config.ServerConfig) *Server {
 	t.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, t.TempDir())
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	if cfg.SharedSecret == "" {
 		cfg.SharedSecret = "test-secret"
 	}

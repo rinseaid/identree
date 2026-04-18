@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/rinseaid/identree/internal/adminnotify"
-	challpkg "github.com/rinseaid/identree/internal/challenge"
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/policy"
@@ -36,7 +35,7 @@ func (m *memConfigStore) Save(cfg *notify.NotificationConfig) error {
 // newNotifyTestServer builds a minimal *Server for notification handler tests.
 func newNotifyTestServer(t *testing.T, secret string) *Server {
 	t.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, t.TempDir())
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	notifyCfg := &notify.NotificationConfig{}
 	return &Server{
 		cfg: &config.ServerConfig{
@@ -267,7 +266,7 @@ func (m *memPrefStore) MatchingChannels(event, hostname, username string) map[st
 
 func newNotifyTestServerWithPrefs(t *testing.T, secret string) (*Server, *memPrefStore) {
 	t.Helper()
-	store := challpkg.NewChallengeStore(5*time.Minute, 10*time.Minute, t.TempDir())
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
 	notifyCfg := &notify.NotificationConfig{}
 	prefStore := newMemPrefStore()
 	s := &Server{

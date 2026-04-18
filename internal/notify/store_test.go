@@ -5,11 +5,8 @@ import (
 	"testing"
 )
 
-// Compile-time interface compliance checks.
-var (
-	_ ConfigStore = (*FileConfigStore)(nil)
-	_ ConfigStore = (*RedisConfigStore)(nil)
-)
+// Compile-time interface compliance check.
+var _ ConfigStore = (*FileConfigStore)(nil)
 
 func TestFileConfigStoreRoundTrip(t *testing.T) {
 	dir := t.TempDir()

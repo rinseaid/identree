@@ -28,6 +28,25 @@ func deriveKey(sharedSecret, purpose string) []byte {
 	return h.Sum(nil)
 }
 
+// redactDSN strips passwords from a database DSN before logging. Postgres URLs
+// embed credentials as scheme://user:password@host/db; we keep everything but
+// the password segment. SQLite DSNs are file paths and pass through unchanged.
+func redactDSN(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	if i := strings.Index(dsn, "://"); i > 0 {
+		rest := dsn[i+3:]
+		if at := strings.LastIndex(rest, "@"); at > 0 {
+			cred := rest[:at]
+			if colon := strings.Index(cred, ":"); colon > 0 {
+				return dsn[:i+3] + cred[:colon] + ":***" + rest[at:]
+			}
+		}
+	}
+	return dsn
+}
+
 // sessionCookieName is the name of the signed session cookie.
 const sessionCookieName = "pam_session"
 
