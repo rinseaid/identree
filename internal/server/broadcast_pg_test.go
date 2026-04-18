@@ -118,6 +118,25 @@ func (s *countingConfigStore) Load() (*notify.NotificationConfig, error) {
 }
 func (s *countingConfigStore) Save(_ *notify.NotificationConfig) error { return nil }
 
+func TestApplyClusterMessage_ReloadAfterDedupWindow(t *testing.T) {
+	store := &countingConfigStore{}
+	s := &Server{notifyStore: store}
+
+	s.applyClusterMessage(`{"type":"reload_notify_config"}`)
+	if store.loads != 1 {
+		t.Fatalf("first reload: expected 1 load, got %d", store.loads)
+	}
+
+	// Reach into the atomic and rewind it past the 1s dedup window so the
+	// second message is treated as a fresh trigger. Avoids a real time.Sleep.
+	s.clusterLastNotifyReload.Store(time.Now().Add(-2 * time.Second).UnixMilli())
+
+	s.applyClusterMessage(`{"type":"reload_notify_config"}`)
+	if store.loads != 2 {
+		t.Errorf("reload after >1s window: expected 2 loads, got %d", store.loads)
+	}
+}
+
 func TestApplyClusterMessage_MalformedIgnored(t *testing.T) {
 	s := &Server{revokedNonces: make(map[string]time.Time)}
 	s.applyClusterMessage(`{not valid json`)

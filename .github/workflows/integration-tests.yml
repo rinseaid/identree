@@ -241,6 +241,26 @@ jobs:
           print(f"Approved: {approved}  Rejected: {rejected}  — OK")
           PY
 
+      - name: Verify agent heartbeat round-trip
+        run: |
+          echo "==> Triggering 'identree heartbeat' from the host container..."
+          docker exec integ-full-ubuntu2404 identree heartbeat
+          echo "==> Verifying /api/agents lists the host with non-empty os_info..."
+          # The dev_login session captured earlier wrote /tmp/ci-cookies.txt.
+          SESSION=$(grep 'pam_session' /tmp/ci-cookies.txt | awk '{print $NF}')
+          curl -sf -H "Cookie: pam_session=${SESSION}" http://localhost:8110/api/agents \
+            | tee /tmp/agents.json | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          agents=d.get('agents',[])
+          print(f'  agents reported: {len(agents)}')
+          host = next((a for a in agents if a['hostname']=='prod-ubuntu24-01'), None)
+          assert host, f'prod-ubuntu24-01 not in {[a[\"hostname\"] for a in agents]}'
+          assert 'Ubuntu' in host['os_info'], f'expected Ubuntu in os_info, got {host[\"os_info\"]}'
+          assert host['status']=='green', f'expected status=green, got {host[\"status\"]}'
+          print(f'  prod-ubuntu24-01: {host[\"os_info\"]} (status={host[\"status\"]}) — OK')
+          "
+
       - name: Verify audit events — JSON log (stdout)
         run: |
           echo "==> Checking audit events in identree stdout..."

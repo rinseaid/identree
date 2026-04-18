@@ -461,26 +461,119 @@ func TestSQLStore_GraceHMAC(t *testing.T) {
 		t.Error("WithinGracePeriod after Create with HMAC: want true")
 	}
 	// Tamper with the HMAC: the row should be dropped on next read.
-	if _, err := s.db.Exec(`UPDATE grace_sessions SET hmac_hex = 'deadbeef' WHERE username = 'alice' AND hostname = 'h'`); err != nil {
+	if _, err := s.exec(t.Context(), `UPDATE grace_sessions SET hmac_hex = 'deadbeef' WHERE username = 'alice' AND hostname = 'h'`); err != nil {
 		t.Fatalf("tamper: %v", err)
 	}
 	if s.WithinGracePeriod("alice", "h") {
 		t.Error("WithinGracePeriod after tamper: want false")
 	}
+	// Verify the tampered row was lazy-deleted on read so the next call
+	// doesn't repeat the verify->reject cycle. (Defence-in-depth: prevents
+	// the grace_sessions table from accumulating poisoned rows.)
+	var count int
+	if err := s.queryRow(t.Context(),
+		`SELECT COUNT(*) FROM grace_sessions WHERE username = ? AND hostname = ?`,
+		"alice", "h").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected tampered grace row to be lazy-deleted, found %d remaining", count)
+	}
+
+	// And re-creating a fresh session on top of the wiped row works
+	// (proves we can recover from a tamper detection without manual cleanup).
+	s.CreateGraceSession("alice", "h", 10*time.Minute)
+	if !s.WithinGracePeriod("alice", "h") {
+		t.Error("WithinGracePeriod after recreate: want true")
+	}
+}
+
+// TestSQLStore_ConcurrentApprove fires N goroutines all attempting to
+// Approve the same pending challenge. Exactly one must succeed; the rest
+// must see ErrAlreadyResolved (the row-level lock turned the race into
+// an ordered one). Catches regressions in the RMW transaction body.
+func TestSQLStore_ConcurrentApprove(t *testing.T) {
+	s := newTestSQLStore(t)
+	c, err := s.Create("alice", "h", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const N = 20
+	results := make(chan error, N)
+	var start sync.WaitGroup
+	start.Add(1)
+	for i := 0; i < N; i++ {
+		go func() {
+			start.Wait()
+			results <- s.Approve(c.ID, "approver")
+		}()
+	}
+	start.Done()
+
+	successes := 0
+	conflicts := 0
+	for i := 0; i < N; i++ {
+		err := <-results
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrAlreadyResolved):
+			conflicts++
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Errorf("Approve successes: got %d, want exactly 1 (the rest should be ErrAlreadyResolved)", successes)
+	}
+	if conflicts != N-1 {
+		t.Errorf("ErrAlreadyResolved count: got %d, want %d", conflicts, N-1)
+	}
+}
+
+// TestSQLStore_ConcurrentOneTap covers the same race for ConsumeOneTap +
+// ConsumeAndApprove. The one_tap_used flag flip must be atomic under
+// concurrent contention.
+func TestSQLStore_ConcurrentOneTap(t *testing.T) {
+	s := newTestSQLStore(t)
+	c, err := s.Create("alice", "h", "", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const N = 15
+	results := make(chan error, N)
+	var start sync.WaitGroup
+	start.Add(1)
+	for i := 0; i < N; i++ {
+		go func() {
+			start.Wait()
+			results <- s.ConsumeAndApprove(c.ID, "approver")
+		}()
+	}
+	start.Done()
+
+	successes := 0
+	other := 0
+	for i := 0; i < N; i++ {
+		if err := <-results; err == nil {
+			successes++
+		} else {
+			other++
+		}
+	}
+	if successes != 1 {
+		t.Errorf("ConsumeAndApprove successes: got %d, want 1", successes)
+	}
+	if other != N-1 {
+		t.Errorf("rejected count: got %d, want %d", other, N-1)
+	}
 }
 
 func TestSQLStore_ReapExpiredChallenges(t *testing.T) {
 	// Use an artificially short TTL so the reap goroutine has work.
-	db, dialect, err := Open(SQLConfig{Driver: "sqlite", DSN: "file::memory:?cache=shared"})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	s, err := NewSQLStore(db, dialect, 100*time.Millisecond, time.Hour)
-	if err != nil {
-		t.Fatalf("NewSQLStore: %v", err)
-	}
-	t.Cleanup(s.Stop)
+	s := openTestStore(t, 100*time.Millisecond, time.Hour)
 
 	var (
 		mu   sync.Mutex
@@ -498,7 +591,8 @@ func TestSQLStore_ReapExpiredChallenges(t *testing.T) {
 	}
 
 	// Fast-forward the row's expiry instead of waiting on the reap ticker.
-	if _, err := s.db.Exec(`UPDATE challenges SET expires_at = ? WHERE id = ?`, time.Now().Add(-time.Second).Unix(), c.ID); err != nil {
+	// Use s.exec() so the placeholder is rewritten for whichever dialect is active.
+	if _, err := s.exec(t.Context(), `UPDATE challenges SET expires_at = ? WHERE id = ?`, time.Now().Add(-time.Second).Unix(), c.ID); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
 	s.reapOnce(t.Context())

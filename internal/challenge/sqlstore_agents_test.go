@@ -49,7 +49,10 @@ func TestSQLStore_AgentHeartbeat(t *testing.T) {
 		t.Errorf("LastSeen not bumped: first=%v last=%v", firstSeen, agents[0].LastSeen)
 	}
 
-	// Multiple hosts, ordered by last_seen DESC.
+	// Multiple hosts, ordered by last_seen DESC. Sleep so host2 gets a
+	// strictly later Unix-second timestamp; otherwise the ORDER BY ties
+	// and SQLite vs Postgres can return them in different orders.
+	time.Sleep(1100 * time.Millisecond)
 	s.RecordHeartbeat(AgentHeartbeat{Hostname: "host2"})
 	agents = s.ListAgents()
 	if len(agents) != 2 {

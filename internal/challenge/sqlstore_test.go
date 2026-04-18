@@ -1,30 +1,90 @@
 package challenge
 
 import (
+	"database/sql"
+	"os"
 	"testing"
 	"time"
 )
 
-// newTestSQLStore returns a fresh SQLStore backed by an in-memory SQLite.
-// Each call gets its own DB so tests are isolated.
+// newTestSQLStore returns a fresh SQLStore backed by either:
+//   - an in-memory SQLite (default), or
+//   - a Postgres instance pointed to by IDENTREE_TEST_POSTGRES_DSN when
+//     IDENTREE_TEST_BACKEND=postgres.
+//
+// CI runs the suite twice — once per backend — so every Store method is
+// exercised against both dialects, including the Postgres-specific row
+// locking on read-modify-write paths.
 func newTestSQLStore(t *testing.T) *SQLStore {
 	t.Helper()
-	db, dialect, err := Open(SQLConfig{
-		Driver: "sqlite",
-		// shared cache lets WAL work across the single-conn pool; modernc
-		// accepts cache=shared as a query param.
-		DSN: "file::memory:?cache=shared",
-	})
+	return openTestStore(t, 5*time.Minute, 30*time.Minute)
+}
+
+// openTestStore is the parameterised constructor used by tests that need a
+// custom challenge TTL or grace period (e.g. the reap-loop test).
+func openTestStore(t testing.TB, ttl, gracePeriod time.Duration) *SQLStore {
+	t.Helper()
+	driver, dsn := backendForTest(t)
+	db, dialect, err := Open(SQLConfig{Driver: driver, DSN: dsn})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	store, err := NewSQLStore(db, dialect, 5*time.Minute, 30*time.Minute)
+	store, err := NewSQLStore(db, dialect, ttl, gracePeriod)
 	if err != nil {
 		t.Fatalf("NewSQLStore: %v", err)
 	}
+	if dialect == DialectPostgres {
+		// SQLite tests get a fresh in-memory db per Open(); Postgres tests
+		// share a single physical database across the run so we wipe state
+		// up-front for isolation.
+		truncateAllTables(t, db)
+	}
 	t.Cleanup(store.Stop)
 	return store
+}
+
+// backendForTest picks the test backend based on environment. Defaults to
+// SQLite. When IDENTREE_TEST_BACKEND=postgres the caller is responsible
+// for setting IDENTREE_TEST_POSTGRES_DSN; missing DSN skips the test
+// instead of failing so the Postgres job is opt-in.
+func backendForTest(t testing.TB) (driver, dsn string) {
+	t.Helper()
+	switch os.Getenv("IDENTREE_TEST_BACKEND") {
+	case "postgres":
+		dsn := os.Getenv("IDENTREE_TEST_POSTGRES_DSN")
+		if dsn == "" {
+			t.Skip("IDENTREE_TEST_BACKEND=postgres but IDENTREE_TEST_POSTGRES_DSN is empty")
+		}
+		return "postgres", dsn
+	case "", "sqlite":
+		return "sqlite", "file::memory:?cache=shared"
+	default:
+		t.Fatalf("unknown IDENTREE_TEST_BACKEND %q", os.Getenv("IDENTREE_TEST_BACKEND"))
+		return "", ""
+	}
+}
+
+// allTestTables enumerates every table the schema creates. Used for
+// per-test cleanup on the shared Postgres database.
+var allTestTables = []string{
+	"challenges", "action_log", "grace_sessions",
+	"revoked_nonces", "revoked_admin_sessions", "revoke_tokens_before",
+	"rotate_breakglass_before", "last_oidc_auth",
+	"escrowed_hosts", "escrow_ciphertexts", "used_escrow_tokens",
+	"session_nonces", "agents", "cluster_messages",
+	"notify_admin_prefs", "notify_config",
+}
+
+func truncateAllTables(t testing.TB, db *sql.DB) {
+	t.Helper()
+	// CASCADE handles any future FK additions; RESTART IDENTITY resets
+	// the BIGSERIAL counters on action_log + cluster_messages.
+	for _, table := range allTestTables {
+		if _, err := db.Exec("TRUNCATE TABLE " + table + " RESTART IDENTITY CASCADE"); err != nil {
+			t.Fatalf("truncate %s: %v", table, err)
+		}
+	}
 }
 
 func TestSQLStore_HealthCheck(t *testing.T) {
@@ -32,7 +92,11 @@ func TestSQLStore_HealthCheck(t *testing.T) {
 	if err := s.HealthCheck(); err != nil {
 		t.Fatalf("HealthCheck: %v", err)
 	}
-	if got, want := s.DialectName(), "sqlite"; got != want {
+	want := "sqlite"
+	if os.Getenv("IDENTREE_TEST_BACKEND") == "postgres" {
+		want = "postgres"
+	}
+	if got := s.DialectName(); got != want {
 		t.Errorf("DialectName: got %q, want %q", got, want)
 	}
 }
@@ -275,7 +339,8 @@ func TestSQLStore_RevokeTokensBefore(t *testing.T) {
 	// path and is part of the next session's work). Use a raw exec to
 	// validate the read side independently.
 	now := time.Now().Truncate(time.Second).Unix()
-	if _, err := s.db.Exec(`INSERT INTO revoke_tokens_before (username, revoked_at) VALUES (?, ?)`, "alice", now); err != nil {
+	// Use s.exec() so the placeholder is rewritten for whichever dialect is active.
+	if _, err := s.exec(t.Context(), `INSERT INTO revoke_tokens_before (username, revoked_at) VALUES (?, ?)`, "alice", now); err != nil {
 		t.Fatalf("manual insert: %v", err)
 	}
 	got := s.RevokeTokensBefore("alice")

@@ -31,6 +31,46 @@ jobs:
       - name: Validate OpenAPI spec
         run: python3 -c "import yaml; yaml.safe_load(open('docs/openapi.yaml'))"
 
+  # ── SQLStore tests against Postgres dialect ──────────────────────────────
+  # The default `test` job above exercises the SQLStore against in-memory
+  # SQLite. This job re-runs the same suite against a real Postgres so the
+  # ?->$N placeholder rewriter, BIGINT vs INTEGER timestamps, SELECT FOR
+  # UPDATE row locks, ON CONFLICT semantics, and the LISTEN/NOTIFY
+  # broadcaster's TRUNCATE/RESTART behaviour all get production-shape coverage.
+  sqlstore-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: identree
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run SQLStore + LISTEN/NOTIFY tests against Postgres
+        env:
+          IDENTREE_TEST_BACKEND: postgres
+          IDENTREE_TEST_POSTGRES_DSN: postgres://postgres@localhost:5432/identree?sslmode=disable
+        # -p 1 because the Postgres tests share a single physical database
+        # and rely on TRUNCATE-before-each-test for isolation.
+        run: |
+          go test ./internal/challenge/ -count=1 -p 1 -v
+          # The broadcaster integration test exercises pg_listen + cluster_messages
+          # overflow spooling — only meaningful against a real Postgres.
+          go test ./internal/server/ -run 'TestPgListenBroadcaster' -count=1 -v
+
   security:
     runs-on: ubuntu-latest
     steps:

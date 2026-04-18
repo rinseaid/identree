@@ -89,12 +89,54 @@ older than 35 minutes.
 
 ## Agent heartbeats
 
-Each managed host pings `POST /api/agent/heartbeat` every 5 minutes
-(via the systemd timer installed by `install.sh`, or by `identree
-heartbeat` from cron). The server records the host in the `agents`
-table with its version and OS info.
+Each managed host pings `POST /api/agent/heartbeat` every 5 minutes so
+the server has a recent "this host is alive" signal even when nobody
+has run `sudo` for a while. The OS info is read from `/etc/os-release`,
+so a Rocky 9 host shows up as "Rocky Linux 9.7 (Blue Onyx) (arm64)"
+rather than the generic "linux/arm64".
 
-Query the fleet with `GET /api/agents` (admin session):
+### How the timer is installed
+
+`install.sh` (served at `/install.sh` from the identree server) writes
+two systemd units to every managed host and enables the timer:
+
+- `identree-heartbeat.service` — oneshot that invokes `identree heartbeat`
+- `identree-heartbeat.timer` — fires `OnBootSec=30s` then every `5min`
+  with `RandomizedDelaySec=60s` (jitter so a fleet of 100 hosts doesn't
+  thunder the server in lockstep)
+
+When systemd is unavailable, `install.sh` falls back to a `*/5 * * * *`
+cron entry in `/etc/cron.d/identree-rotate`. `uninstall.sh` removes
+both the unit files and the cron entry.
+
+### Triggering a heartbeat manually
+
+```bash
+sudo identree heartbeat   # one-shot ping; useful for testing or
+                          # forcing a refresh after an OS upgrade
+```
+
+`identree heartbeat` reads `/etc/identree/client.conf` (env-style file
+with `IDENTREE_SERVER_URL` and `IDENTREE_SHARED_SECRET`) and posts the
+hostname, identree version, and `os_info` to the server. Exits 0 on
+success, non-zero on transport / auth failure.
+
+### Status thresholds
+
+`status` on each agent is bucketed by `now - last_seen`:
+
+| Status | Window | Cadence headroom |
+|---|---|---|
+| `green` | <10 minutes | one missed ping |
+| `amber` | 10–60 minutes | two-plus missed pings |
+| `red` | ≥60 minutes | host is gone or networked-off |
+
+The 10-minute green window is `2× heartbeat cadence`, so a single
+dropped packet doesn't flip a healthy host amber.
+
+### Querying the fleet
+
+`GET /api/agents` returns the JSON list (admin session required):
 
 ```bash
 curl -s --cookie pam_session=... https://identree/api/agents | jq
@@ -114,24 +156,21 @@ curl -s --cookie pam_session=... https://identree/api/agents | jq
 }
 ```
 
-`status` is bucketed by `now - last_seen`:
+### Adding the timer to a pre-existing host
 
-| Status | Window |
-|---|---|
-| `green` | <10 minutes |
-| `amber` | 10–60 minutes |
-| `red` | ≥60 minutes |
-
-Green is heartbeat-cadence + one missed ping (5min × 2), so a single
-missed packet doesn't flip a healthy host amber.
-
-To add the heartbeat timer to an existing host that was provisioned
-before this feature shipped:
+Hosts provisioned before the heartbeat feature shipped can pick it up
+without a full reinstall by re-running `install.sh`:
 
 ```bash
-sudo /usr/local/bin/identree heartbeat        # one-shot test
-curl -fsSL https://identree.example/install.sh | sudo bash   # re-installs the timer
+curl -fsSL https://identree.example/install.sh | sudo bash
+sudo systemctl status identree-heartbeat.timer
 ```
+
+### Where it shows up in the UI
+
+`/admin/hosts` adds a `Last Seen` column with a status pill, and each
+host with at least one heartbeat gets a chevron that expands to show
+the version, OS info, IP, and first-seen timestamp.
 
 ## Backup and restore
 
