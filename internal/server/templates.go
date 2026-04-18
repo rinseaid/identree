@@ -629,7 +629,7 @@ const sharedCSS = `
     .host-detail-cell dt { color: var(--text-3); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; margin-right: 6px; }
     .host-detail-cell dd { margin: 0; font-family: monospace; }
     .host-detail-cell dl { margin: 0; display: inline-flex; gap: 4px; align-items: baseline; }
-    .host-expand-btn { background: none; border: none; color: var(--text-3); cursor: pointer; padding: 0; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; transition: transform 0.15s; }
+    .host-expand-btn { background: none; border: none; color: var(--text-3); cursor: pointer; padding: 6px; margin: -6px -2px -6px -8px; display: inline-flex; align-items: center; justify-content: center; transition: transform 0.15s; }
     .host-expand-btn[aria-expanded="true"] { transform: rotate(90deg); color: var(--text); }
     .host-expand-btn:hover { color: var(--text); }
     .hosts-table-header { display: grid; grid-column: 1/-1; grid-template-columns: subgrid; gap: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); align-items: center; }
@@ -1404,7 +1404,7 @@ const dashboardHTML = `<!DOCTYPE html>
       btn.closest('form').submit();
     });
   });
-  </script>
+  </script>` + infiniteScrollJS + `
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
   <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
@@ -1667,7 +1667,7 @@ const dashboardHTML = `<!DOCTYPE html>
     </script>
     {{end}}
 
-  </main>` + infiniteScrollJS + `
+  </main>
 </body>
 </html>`
 
@@ -1971,7 +1971,7 @@ const historyPageHTML = `<!DOCTYPE html>
       });
     },30000);
   })();
-  </script>
+  </script>` + infiniteScrollJS + `
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
   <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
@@ -2063,7 +2063,7 @@ const historyPageHTML = `<!DOCTYPE html>
     {{else}}
     <p class="empty-state">{{call .T "no_activity"}}</p>
     {{end}}
-  </main>` + infiniteScrollJS + `
+  </main>
 </body>
 </html>`
 
@@ -2449,7 +2449,7 @@ const adminPageHTML = `<!DOCTYPE html>
       btn.closest('form').submit();
     });
   });
-  </script>
+  </script>` + infiniteScrollJS + `
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
   <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
@@ -3235,20 +3235,6 @@ const adminPageHTML = `<!DOCTYPE html>
       document.querySelectorAll('.saction-rotate,.saction-rotate-all').forEach(function(btn){
         btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
       });
-      // Per-host expand toggle: reveal the agent details row underneath.
-      // Event-delegated so it works regardless of when the rows were inserted
-      // (rerenders, infinite-scroll batches, etc.) and survives if the click
-      // lands on the SVG inside the button instead of the button itself.
-      document.addEventListener('click', function(e){
-        var btn = e.target.closest && e.target.closest('.host-expand-btn');
-        if(!btn) return;
-        e.preventDefault();
-        var detail = document.getElementById('host-detail-' + btn.dataset.host);
-        if(!detail) return;
-        var open = btn.getAttribute('aria-expanded') === 'true';
-        btn.setAttribute('aria-expanded', open ? 'false' : 'true');
-        detail.style.display = open ? 'none' : 'grid';
-      });
       document.querySelectorAll('.reveal-password-btn').forEach(function(btn){
         btn.addEventListener('click',function(){
           var hostname=btn.dataset.hostname;
@@ -3327,6 +3313,20 @@ const adminPageHTML = `<!DOCTYPE html>
       });
       hostsCtl.rerender();
     })();
+    </script>
+    <script nonce="{{.CSPNonce}}">
+    // Per-host expand toggle. Lives in its own script tag (outside the main
+    // hosts IIFE) so any error in the larger block above can't suppress it.
+    document.addEventListener('click', function(e){
+      var btn = e.target.closest && e.target.closest('.host-expand-btn');
+      if (!btn) return;
+      e.preventDefault();
+      var detail = document.getElementById('host-detail-' + btn.dataset.host);
+      if (!detail) return;
+      var open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      detail.style.display = open ? 'none' : 'grid';
+    });
     </script>
     <div id="reveal-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reveal-modal-title">
       <div class="modal-box reveal-modal-box">
@@ -4173,7 +4173,7 @@ const adminPageHTML = `<!DOCTYPE html>
       </div>
     </div>
   </div>
-  {{end}}` + infiniteScrollJS + `
+  {{end}}
 </body>
 </html>`
 
@@ -4335,7 +4335,7 @@ const accessPageHTML = `<!DOCTYPE html>
     })();
     document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
   });
-  </script>
+  </script>` + infiniteScrollJS + `
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
   <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
@@ -4535,7 +4535,7 @@ const accessPageHTML = `<!DOCTYPE html>
       {{end}}
     </div>
     {{end}}
-  </main>` + infiniteScrollJS + `
+  </main>
 </body>
 </html>`
 
