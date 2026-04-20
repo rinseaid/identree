@@ -3,7 +3,7 @@ module github.com/rinseaid/identree
 go 1.26.1
 
 require (
-	github.com/coreos/go-oidc/v3 v3.17.0
+	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/go-ldap/ldap/v3 v3.4.8
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/jimlambrt/gldap v0.1.14
@@ -22,7 +22,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.17.0 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.7 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
