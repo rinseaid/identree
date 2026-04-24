@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/go-ldap/ldap/v3 v3.4.8
-	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/jimlambrt/gldap v0.1.14
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/crypto v0.49.0
