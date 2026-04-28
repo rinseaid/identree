@@ -1153,7 +1153,7 @@ func runSignScript() {
 
 	// Write signature file alongside the script.
 	sigPath := scriptPath + ".sig"
-	if err := os.WriteFile(sigPath, []byte(sig+"\n"), 0644); err != nil { // #nosec G703 -- operator-provided CLI argument
+	if err := os.WriteFile(sigPath, []byte(sig+"\n"), 0600); err != nil { // #nosec G703 -- operator-provided CLI argument
 		fmt.Fprintf(os.Stderr, "Error writing signature file: %v\n", err)
 		os.Exit(1)
 	}

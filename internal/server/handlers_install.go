@@ -745,11 +745,11 @@ func (s *Server) handleAdminInstallScriptPost(w http.ResponseWriter, r *http.Req
 		jsonErr(http.StatusInternalServerError, "internal error")
 		return
 	}
-	if err := os.WriteFile(customInstallScriptPath, scriptData, 0644); err != nil {
+	if err := os.WriteFile(customInstallScriptPath, scriptData, 0600); err != nil {
 		jsonErr(http.StatusInternalServerError, "internal error")
 		return
 	}
-	if err := os.WriteFile(customInstallSigPath, []byte(sigStr+"\n"), 0644); err != nil { // #nosec G703 -- server-controlled config path
+	if err := os.WriteFile(customInstallSigPath, []byte(sigStr+"\n"), 0600); err != nil { // #nosec G703 -- server-controlled config path
 		// Clean up the script file if sig write fails.
 		os.Remove(customInstallScriptPath)
 		jsonErr(http.StatusInternalServerError, "internal error")
