@@ -31,7 +31,9 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ghcr.io/rinseaid/identree:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
-          build-args: COMMIT=${{ github.sha }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

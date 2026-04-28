@@ -738,6 +738,10 @@ func (s *SQLStore) PendingChallenges(username string) []Challenge {
 		}
 		out = append(out, c)
 	}
+	if err := rows.Err(); err != nil {
+		logErr("PendingChallenges", err)
+		return nil
+	}
 	return out
 }
 
@@ -762,6 +766,10 @@ func (s *SQLStore) AllPendingChallenges() []Challenge {
 			continue
 		}
 		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		logErr("AllPendingChallenges", err)
+		return nil
 	}
 	return out
 }

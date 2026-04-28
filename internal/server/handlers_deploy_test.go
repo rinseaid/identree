@@ -134,6 +134,7 @@ func newDeployTestServer(t *testing.T, secret string) *Server {
 		revokedNonces:  make(map[string]time.Time),
 		deployJobs:     make(map[string]*deployJob),
 		deployRL:       newDeployRateLimiter(),
+		stopCh:         make(chan struct{}),
 	}
 }
 

@@ -130,6 +130,12 @@ func (s *Server) deployJobCleanup(job *deployJob, jobID string) {
 	// Wait until no readers are actively streaming this job.
 	job.mu.Lock()
 	for job.readers > 0 {
+		select {
+		case <-s.stopCh:
+			job.mu.Unlock()
+			return
+		default:
+		}
 		// Use a timer to periodically re-check, in case no broadcast arrives.
 		wakeTimer := time.AfterFunc(deployJobCleanupRetry, func() {
 			job.cond.Broadcast()
@@ -332,9 +338,6 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	slog.Info("DEPLOY starting", "admin", adminUser, "host", req.Hostname, "port", req.Port, "ssh_user", req.SSHUser, "client_ip", clientIP(r), "job", jobID)
 
 	job := newDeployJob(jobID, req.Hostname, req.SSHUser, adminUser)
-	s.deployMu.Lock()
-	s.deployJobs[jobID] = job
-	s.deployMu.Unlock()
 
 	// Render the install script server-side so the remote host needs no curl.
 	installScript, err := s.renderInstallScript()
@@ -343,6 +346,10 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusInternalServerError, "failed to render install script")
 		return
 	}
+
+	s.deployMu.Lock()
+	s.deployJobs[jobID] = job
+	s.deployMu.Unlock()
 
 	// Use sudo only when not connecting as root; many systems (e.g. Proxmox) don't have sudo.
 	sudoPrefix := ""
@@ -639,10 +646,6 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 
 	job := newDeployJob(jobID, req.Hostname, req.SSHUser, adminUser)
 
-	s.deployMu.Lock()
-	s.deployJobs[jobID] = job
-	s.deployMu.Unlock()
-
 	sudoPrefix := ""
 	if req.SSHUser != "root" {
 		sudoPrefix = "sudo "
@@ -657,6 +660,10 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusServiceUnavailable, "server busy — too many concurrent deploys")
 		return
 	}
+
+	s.deployMu.Lock()
+	s.deployJobs[jobID] = job
+	s.deployMu.Unlock()
 
 	go func() {
 		defer func() { <-deploySemaphore }()

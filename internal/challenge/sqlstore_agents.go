@@ -54,5 +54,9 @@ func (s *SQLStore) ListAgents() []AgentStatus {
 		a.LastSeen = unixToTime(lastSeen)
 		out = append(out, a)
 	}
+	if err := rows.Err(); err != nil {
+		logErr("ListAgents", err)
+		return nil
+	}
 	return out
 }

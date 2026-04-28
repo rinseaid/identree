@@ -135,8 +135,8 @@ func TestHandleAdminInfo_ValidAdmin(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
 	}
-	if ct := w.Header().Get("Content-Type"); ct != "text/html" {
-		t.Errorf("expected Content-Type text/html, got %q", ct)
+	if ct := w.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("expected Content-Type text/html; charset=utf-8, got %q", ct)
 	}
 	// Verify the response body contains version info.
 	body := w.Body.String()
@@ -1846,8 +1846,8 @@ func TestHandleAdminUsers_AdminRenders(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for admin GET, got %d; body: %s", w.Code, w.Body.String())
 	}
-	if ct := w.Header().Get("Content-Type"); ct != "text/html" {
-		t.Errorf("expected text/html, got %q", ct)
+	if ct := w.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("expected text/html; charset=utf-8, got %q", ct)
 	}
 }
 

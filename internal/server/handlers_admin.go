@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -457,8 +458,8 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 	infoCSRFTs := strconv.FormatInt(time.Now().Unix(), 10)
 	infoCSRFToken := computeCSRFToken(s.hmacBase(), username, infoCSRFTs)
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := adminTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := adminTmpl.Execute(&buf, map[string]interface{}{
 		"Username":            username,
 		"Initial":             strings.ToUpper(username[:1]),
 		"Avatar":              getAvatar(r),
@@ -495,7 +496,11 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"PocketIDSyncAge":      s.pocketIDSyncAge(),
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }
 
 // handleAdminConfig shows and processes the server configuration page.
@@ -661,8 +666,8 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		apiKeyStr = fmt.Sprintf(t("n_keys"), apiKeyCount)
 	}
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := adminTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := adminTmpl.Execute(&buf, map[string]interface{}{
 		"Username":      username,
 		"Initial":       strings.ToUpper(username[:1]),
 		"Avatar":        getAvatar(r),
@@ -695,7 +700,11 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		"LDAPProvisionEnabled": s.cfg.LDAPProvisionEnabled,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }
 
 // configToValues converts a ServerConfig to a flat map of env-key → string value
@@ -1490,8 +1499,8 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		return less
 	})
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := adminTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := adminTmpl.Execute(&buf, map[string]interface{}{
 		"Username":      username,
 		"Initial":       strings.ToUpper(username[:1]),
 		"Avatar":        getAvatar(r),
@@ -1519,7 +1528,11 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }
 
 // handleAdminGroups renders the admin groups page at /admin/groups.
@@ -1680,8 +1693,8 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := adminTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := adminTmpl.Execute(&buf, map[string]interface{}{
 		"Username":      username,
 		"Initial":       strings.ToUpper(username[:1]),
 		"Avatar":        getAvatar(r),
@@ -1709,7 +1722,11 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		"CanEditClaims": s.pocketIDClient != nil,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }
 
 // handleAdminHosts renders the admin hosts page at /admin/hosts.
@@ -2095,8 +2112,8 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := adminTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := adminTmpl.Execute(&buf, map[string]interface{}{
 		"Username":         username,
 		"Initial":          strings.ToUpper(username[:1]),
 		"Avatar":           getAvatar(r),
@@ -2129,7 +2146,11 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"DeployEnabled":    true,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }
 
 func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {

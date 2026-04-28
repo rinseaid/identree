@@ -172,6 +172,9 @@ func (s *SQLStore) reapOnce(ctx context.Context) {
 			expired = append(expired, e)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		logErr("reap.rows", err)
+	}
 	rows.Close()
 
 	if len(expired) > 0 {

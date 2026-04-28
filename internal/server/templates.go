@@ -479,6 +479,7 @@ const sharedCSS = `
     /* Info table */
     .info-section { margin-bottom: 28px; }
     .info-section h3 { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-3); margin-bottom: 12px; }
+    .info-table-wrap { overflow-x: auto; }
     .info-table { width: 100%; border-collapse: collapse; }
     .info-table td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--border); font-size: 0.875rem; vertical-align: top; }
     .info-table tr:last-child td { border-bottom: none; }
@@ -702,7 +703,7 @@ const sharedCSS = `
     }
     /* Responsive: table overflow on narrow screens */
     @media (max-width: 600px) {
-      .sessions-table, .hosts-table, .gtable, .history-gtable, .config-table { overflow-x: auto; }
+      .sessions-table, .hosts-table, .gtable, .history-gtable, .config-table, .info-table, .pending-table { overflow-x: auto; }
       .modal-box { padding: 18px 14px; max-width: calc(100vw - 24px); }
     }
     /* Pending approval bar — fixed top strip */
@@ -1377,7 +1378,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var es;
     function connect() {
       es = new EventSource(url);
-      es.addEventListener('update', onMessage);
+      es.addEventListener('update', function(e) { delay = 1000; onMessage(e); });
       es.onerror = function() {
         es.close();
         if (onError) onError(es);
@@ -1894,9 +1895,18 @@ const historyPageHTML = `<!DOCTYPE html>
             })
             .catch(function(err){
               loading=false;
-              row.innerHTML='<span class="loadbar-info" style="color:var(--danger)">Failed to load: '+err.message+'</span>'+
-                '<button type="button" class="loadbar-btn loadbar-more">Retry</button>';
-              row.querySelector('.loadbar-more').addEventListener('click',loadNext);
+              var span=document.createElement('span');
+              span.className='loadbar-info';
+              span.style.color='var(--danger)';
+              span.textContent='Failed to load: '+err.message;
+              var retryBtn=document.createElement('button');
+              retryBtn.type='button';
+              retryBtn.className='loadbar-btn loadbar-more';
+              retryBtn.textContent='Retry';
+              row.textContent='';
+              row.appendChild(span);
+              row.appendChild(retryBtn);
+              retryBtn.addEventListener('click',loadNext);
             });
         }
         function loadAll(){
@@ -2014,12 +2024,12 @@ const historyPageHTML = `<!DOCTYPE html>
 
     <div class="history-gtable" id="history-gtable" role="table" aria-label="{{call .T "history"}}">
       <div class="history-gtable-header" role="row">
-        <div class="gtcol gtcol-htime" role="columnheader" style="gap:8px;align-items:center"><button type="button" class="filter-toggle-btn" id="history-filter-toggle" aria-label="Toggle filters"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><a href="/history?sort=timestamp&order={{if eq .Sort "timestamp"}}{{if eq .Order "desc"}}asc{{else}}desc{{end}}{{else}}desc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "timestamp"}} active{{end}}">{{call .T "time"}}{{if eq .Sort "timestamp"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
-        <div class="gtcol gtcol-haction" role="columnheader"><a href="/history?sort=action&order={{if eq .Sort "action"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "action"}} active{{end}}">{{call .T "action"}}{{if eq .Sort "action"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
-        {{if .IsAdmin}}<div class="gtcol gtcol-huser" role="columnheader" style="gap:8px;align-items:center"><a href="/history?sort=user&order={{if eq .Sort "user"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "user"}} active{{end}}">{{call .T "user"}}{{if eq .Sort "user"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a><div class="toggle-wrap" id="history-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>{{end}}
-        <div class="gtcol gtcol-hhost" role="columnheader"><a href="/history?sort=hostname&order={{if eq .Sort "hostname"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "hostname"}} active{{end}}">{{call .T "host"}}{{if eq .Sort "hostname"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
-        <div class="gtcol gtcol-hcode" role="columnheader"><a href="/history?sort=code&order={{if eq .Sort "code"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}" class="col-sort-link{{if eq .Sort "code"}} active{{end}}">{{call .T "code"}}{{if eq .Sort "code"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
-        <div class="gtcol gtcol-hreason" role="columnheader" style="gap:10px;align-items:center"><span class="col-sort-link">{{call .T "reason"}}</span><span class="export-links"><a href="/api/history/export?format=csv" class="export-link">{{call .T "export_csv"}}</a> <a href="/api/history/export?format=json" class="export-link">{{call .T "export_json"}}</a></span></div>
+        <div class="gtcol gtcol-htime" role="columnheader" style="gap:8px;align-items:center"><button type="button" class="filter-toggle-btn" id="history-filter-toggle" aria-label="Toggle filters"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><a href="/history?sort=timestamp&order={{if eq .Sort "timestamp"}}{{if eq .Order "desc"}}asc{{else}}desc{{end}}{{else}}desc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}&from={{.FilterFrom}}&to={{.FilterTo}}" class="col-sort-link{{if eq .Sort "timestamp"}} active{{end}}">{{call .T "time"}}{{if eq .Sort "timestamp"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+        <div class="gtcol gtcol-haction" role="columnheader"><a href="/history?sort=action&order={{if eq .Sort "action"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}&from={{.FilterFrom}}&to={{.FilterTo}}" class="col-sort-link{{if eq .Sort "action"}} active{{end}}">{{call .T "action"}}{{if eq .Sort "action"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+        {{if .IsAdmin}}<div class="gtcol gtcol-huser" role="columnheader" style="gap:8px;align-items:center"><a href="/history?sort=user&order={{if eq .Sort "user"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}&from={{.FilterFrom}}&to={{.FilterTo}}" class="col-sort-link{{if eq .Sort "user"}} active{{end}}">{{call .T "user"}}{{if eq .Sort "user"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a><div class="toggle-wrap" id="history-just-me-toggle" role="switch" aria-checked="false" tabindex="0" data-username="{{.Username}}"><span>{{call .T "just_me"}}</span><div class="toggle-track"><div class="toggle-thumb"></div></div></div></div>{{end}}
+        <div class="gtcol gtcol-hhost" role="columnheader"><a href="/history?sort=hostname&order={{if eq .Sort "hostname"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}&from={{.FilterFrom}}&to={{.FilterTo}}" class="col-sort-link{{if eq .Sort "hostname"}} active{{end}}">{{call .T "host"}}{{if eq .Sort "hostname"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+        <div class="gtcol gtcol-hcode" role="columnheader"><a href="/history?sort=code&order={{if eq .Sort "code"}}{{if eq .Order "asc"}}desc{{else}}asc{{end}}{{else}}asc{{end}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}&per_page={{.PerPage}}&from={{.FilterFrom}}&to={{.FilterTo}}" class="col-sort-link{{if eq .Sort "code"}} active{{end}}">{{call .T "code"}}{{if eq .Sort "code"}} {{if eq .Order "asc"}}↑{{else}}↓{{end}}{{end}}</a></div>
+        <div class="gtcol gtcol-hreason" role="columnheader" style="gap:10px;align-items:center"><span class="col-sort-link">{{call .T "reason"}}</span><span class="export-links"><a href="/api/history/export?format=csv&from={{.FilterFrom}}&to={{.FilterTo}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}" class="export-link">{{call .T "export_csv"}}</a> <a href="/api/history/export?format=json&from={{.FilterFrom}}&to={{.FilterTo}}&q={{.Query}}&action={{.ActionFilter}}&hostname={{.HostFilter}}&user={{.UserFilter}}" class="export-link">{{call .T "export_json"}}</a></span></div>
       </div>
       <div class="history-gtable-filter" id="history-filter-row" style="display:none" data-prefilter-host="{{.HostFilter}}" data-prefilter-user="{{.UserFilter}}" data-prefilter-action="{{.ActionFilter}}">
         <div class="gtcol-filter-wrap"><input type="text" class="gtcol-filter-input" data-col="htime" placeholder="{{call .T "search"}}…" autocomplete="off"></div>
@@ -4032,18 +4042,41 @@ const adminPageHTML = `<!DOCTYPE html>
             document.getElementById('remove-log-area').style.display='';
             var logEl=document.getElementById('remove-log');
             var statusEl=document.getElementById('remove-status');
-            var es=new EventSource('/api/deploy/stream/'+data.id);
-            var _removeUnload=function(){es.close();};
+            var _removeDone=false;
+            var _removeDelay=1000;
+            var _removeRetries=0;
+            var _removeMaxRetries=5;
+            var es;
+            var _removeUnload=function(){if(es)es.close();};
             window.addEventListener('beforeunload',_removeUnload);
-            es.addEventListener('message',function(e){logEl.textContent+=e.data+'\n';logEl.scrollTop=logEl.scrollHeight;});
-            es.addEventListener('status',function(e){
-              es.close();
-              window.removeEventListener('beforeunload',_removeUnload);
-              removeCloseBtn.setAttribute('data-reload','1');
-              if(e.data==='done'){statusEl.textContent='\u2713 Host removed successfully.';statusEl.className='deploy-status ok';}
-              else{statusEl.textContent='\u2717 Removal failed.';statusEl.className='deploy-status err';}
-            });
-            es.onerror=function(){es.close();window.removeEventListener('beforeunload',_removeUnload);if(!statusEl.textContent){statusEl.textContent='Connection lost.';statusEl.className='deploy-status err';}};
+            function connectRemoveStream(){
+              es=new EventSource('/api/deploy/stream/'+data.id);
+              es.addEventListener('message',function(e){
+                _removeDelay=1000;_removeRetries=0;
+                logEl.textContent+=e.data+'\n';logEl.scrollTop=logEl.scrollHeight;
+              });
+              es.addEventListener('status',function(e){
+                _removeDone=true;
+                es.close();
+                window.removeEventListener('beforeunload',_removeUnload);
+                removeCloseBtn.setAttribute('data-reload','1');
+                if(e.data==='done'){statusEl.textContent='\u2713 Host removed successfully.';statusEl.className='deploy-status ok';}
+                else{statusEl.textContent='\u2717 Removal failed.';statusEl.className='deploy-status err';}
+              });
+              es.onerror=function(){
+                es.close();
+                if(_removeDone)return;
+                _removeRetries++;
+                if(_removeRetries>_removeMaxRetries){
+                  window.removeEventListener('beforeunload',_removeUnload);
+                  if(!statusEl.textContent){statusEl.textContent='Connection lost.';statusEl.className='deploy-status err';}
+                  return;
+                }
+                setTimeout(connectRemoveStream,_removeDelay);
+                _removeDelay=Math.min(_removeDelay*2,30000);
+              };
+            }
+            connectRemoveStream();
           })
           .catch(function(err){
             removeConfirmBtn.disabled=false;

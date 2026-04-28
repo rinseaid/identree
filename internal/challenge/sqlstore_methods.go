@@ -120,6 +120,10 @@ func (s *SQLStore) ActionHistory(username string, limit int) []ActionLogEntry {
 		e.Timestamp = unixToTime(ts)
 		out = append(out, e)
 	}
+	if err := rows.Err(); err != nil {
+		logErr("ActionHistory", err)
+		return nil
+	}
 	return out
 }
 
@@ -146,6 +150,10 @@ func (s *SQLStore) AllActionHistory() []ActionLogEntry {
 		e.Timestamp = unixToTime(ts)
 		out = append(out, e)
 	}
+	if err := rows.Err(); err != nil {
+		logErr("AllActionHistory", err)
+		return nil
+	}
 	return out
 }
 
@@ -171,6 +179,10 @@ func (s *SQLStore) AllActionHistoryWithUsers() []ActionLogEntryWithUser {
 		}
 		e.Timestamp = unixToTime(ts)
 		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		logErr("AllActionHistoryWithUsers", err)
+		return nil
 	}
 	return out
 }
@@ -201,6 +213,10 @@ func (s *SQLStore) KnownHosts(username string) []string {
 			out = append(out, h)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		logErr("KnownHosts", err)
+		return nil
+	}
 	return out
 }
 
@@ -228,6 +244,10 @@ func (s *SQLStore) AllKnownHosts() []string {
 			out = append(out, h)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		logErr("AllKnownHosts", err)
+		return nil
+	}
 	return out
 }
 
@@ -253,6 +273,10 @@ func (s *SQLStore) UsersWithHostActivity(hostname string) []string {
 		if err := rows.Scan(&u); err == nil {
 			out = append(out, u)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		logErr("UsersWithHostActivity", err)
+		return nil
 	}
 	return out
 }
@@ -319,6 +343,10 @@ func (s *SQLStore) EscrowedHosts() map[string]EscrowRecord {
 		}
 		rec.Timestamp = unixToTime(ts)
 		out[host] = rec
+	}
+	if err := rows.Err(); err != nil {
+		logErr("EscrowedHosts", err)
+		return nil
 	}
 	return out
 }
@@ -410,6 +438,10 @@ func (s *SQLStore) AllUsers() []string {
 			out = append(out, u)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		logErr("AllUsers", err)
+		return nil
+	}
 	return out
 }
 
@@ -452,6 +484,10 @@ func (s *SQLStore) LoadRevokedNonces() map[string]time.Time {
 			out[nonce] = unixToTime(u)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		logErr("LoadRevokedNonces", err)
+		return nil
+	}
 	return out
 }
 
@@ -471,6 +507,10 @@ func (s *SQLStore) LoadRevokedAdminSessions() map[string]time.Time {
 		if err := rows.Scan(&user, &u); err == nil {
 			out[user] = unixToTime(u)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		logErr("LoadRevokedAdminSessions", err)
+		return nil
 	}
 	return out
 }

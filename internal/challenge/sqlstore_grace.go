@@ -177,6 +177,10 @@ func (s *SQLStore) readGraceSessions(ctx context.Context, where string, args ...
 			ExpiresAt: time.Unix(expiryUnix, 0),
 		})
 	}
+	if err := rows.Err(); err != nil {
+		logErr("readGraceSessions", err)
+		return nil
+	}
 	// Stable order helps tests and dashboard rendering.
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Username != out[j].Username {

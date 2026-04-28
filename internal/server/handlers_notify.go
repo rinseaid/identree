@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -149,8 +150,8 @@ func (s *Server) handleAdminNotifications(w http.ResponseWriter, r *http.Request
 	}
 	s.notifyCfgMu.RUnlock()
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := adminTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := adminTmpl.Execute(&buf, map[string]interface{}{
 		"Username":              username,
 		"Initial":               strings.ToUpper(username[:1]),
 		"Avatar":                getAvatar(r),
@@ -177,7 +178,11 @@ func (s *Server) handleAdminNotifications(w http.ResponseWriter, r *http.Request
 		"CSRFTs":                csrfTs,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }
 
 // handleProfileNotifications renders the per-user notification preferences form
@@ -248,8 +253,8 @@ func (s *Server) handleProfileNotifications(w http.ResponseWriter, r *http.Reque
 	}
 	s.notifyCfgMu.RUnlock()
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := adminTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := adminTmpl.Execute(&buf, map[string]interface{}{
 		"Username":     username,
 		"Initial":      strings.ToUpper(username[:1]),
 		"Avatar":       getAvatar(r),
@@ -272,7 +277,11 @@ func (s *Server) handleProfileNotifications(w http.ResponseWriter, r *http.Reque
 		"CSRFTs":       csrfTs,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }
 
 // handleNotifyChannelAdd adds a new notification channel.
