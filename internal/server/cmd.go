@@ -571,6 +571,10 @@ func runServer() {
 				return
 			}
 		}()
+		// Drain SSE clients before HTTP shutdown so that long-lived event
+		// streams terminate cleanly and Shutdown does not have to RST them
+		// when its deadline expires. Client-side JS reconnects with backoff.
+		srv.drainSSEClients()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := httpServer.Shutdown(ctx); err != nil {

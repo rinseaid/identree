@@ -97,8 +97,6 @@ type Server struct {
 	notifyWg     sync.WaitGroup
 	notifyMu     sync.Mutex // guards notifyShutdown + notifyWg.Add to prevent TOCTOU
 
-	sessionNonces  map[string]sessionNonceData
-
 	sseClients     map[string][]chan string
 	sseMu          sync.RWMutex
 	sseBroadcaster SSEBroadcaster
@@ -362,7 +360,6 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 		oidcConfig:    oidcConfig,
 		verifier:      verifier,
 		mux:           http.NewServeMux(),
-		sessionNonces:   make(map[string]sessionNonceData),
 		sseClients:      make(map[string][]chan string),
 		deployJobs:    make(map[string]*deployJob),
 		deployRL:      newDeployRateLimiter(),
@@ -902,8 +899,10 @@ func (s *Server) buildDisabledMap() map[string]bool {
 }
 
 // Stop cleanly shuts down background resources.
+// Shutdown order: drain SSE clients (clean close) -> close broadcaster -> stop store -> close audit.
 func (s *Server) Stop() {
 	close(s.stopCh)
+	s.drainSSEClients()
 	if s.sseBroadcaster != nil {
 		s.sseBroadcaster.Close()
 	}

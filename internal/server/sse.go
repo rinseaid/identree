@@ -61,6 +61,23 @@ func (s *Server) unregisterSSE(username string, ch chan string) {
 	}
 }
 
+// sseTrySend attempts a non-blocking send on ch. Returns true if sent,
+// false if the channel was full or closed. If ch was closed by
+// drainSSEClients during shutdown, the deferred recover prevents a panic.
+func sseTrySend(ch chan string, event string) (sent bool) {
+	defer func() {
+		if recover() != nil {
+			sent = false
+		}
+	}()
+	select {
+	case ch <- event:
+		return true
+	default:
+		return false
+	}
+}
+
 // broadcastSSE sends an event to all SSE channels for username and to admin subscribers.
 // Newlines are stripped from event to prevent SSE protocol injection.
 func (s *Server) broadcastSSE(username, event string) {
@@ -73,18 +90,30 @@ func (s *Server) broadcastSSE(username, event string) {
 	s.sseMu.RUnlock()
 
 	for _, ch := range userChans {
-		select {
-		case ch <- event:
-		default:
-			slog.Debug("SSE: event dropped, channel full", "username", username, "event", event)
+		if !sseTrySend(ch, event) {
+			slog.Debug("SSE: event dropped, channel full or closed", "username", username, "event", event)
 		}
 	}
 	for _, ch := range adminChans {
-		select {
-		case ch <- event:
-		default:
-			slog.Debug("SSE: event dropped, admin channel full", "event", event)
+		if !sseTrySend(ch, event) {
+			slog.Debug("SSE: event dropped, admin channel full or closed", "event", event)
 		}
+	}
+}
+
+// drainSSEClients closes all active SSE client channels and clears the map.
+// Closing the channel unblocks the handleSSEEvents select loop, causing each
+// handler goroutine to exit cleanly via the zero-value read. This must be
+// called before closing the broadcaster so clients see a clean close rather
+// than a connection reset.
+func (s *Server) drainSSEClients() {
+	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+	for key, chans := range s.sseClients {
+		for _, ch := range chans {
+			close(ch)
+		}
+		delete(s.sseClients, key)
 	}
 }
 
@@ -138,7 +167,11 @@ func (s *Server) handleSSEEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case event := <-ch:
+		case event, ok := <-ch:
+			if !ok {
+				// Channel closed by drainSSEClients during shutdown.
+				return
+			}
 			fmt.Fprintf(w, "event: update\ndata: %s\n\n", event)
 			flusher.Flush()
 		case <-heartbeat.C:
