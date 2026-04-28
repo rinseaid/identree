@@ -1,0 +1,27 @@
+# Version control
+.git/
+.github/
+.gitignore
+
+# Claude / editor config
+.claude/
+
+# Documentation
+docs/
+*.md
+LICENSE
+
+# Deployment and operations
+deploy/
+systemd/
+ci/
+
+# Test fixtures and integration tests
+test/
+
+# Docker Compose (not needed in build)
+docker-compose.example.yml
+
+# Build artifacts and OS files
+.DS_Store
+Makefile

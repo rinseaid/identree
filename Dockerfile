@@ -23,16 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -r identree && useradd -r -g identree -s /sbin/nologin identree && \
     mkdir -p /data /config && chown identree:identree /data /config
 
-# Install both arch binaries; symlink the native one as the runtime binary.
-COPY --from=builder /app/identree-linux-amd64 /usr/local/bin/identree-linux-amd64
-COPY --from=builder /app/identree-linux-arm64 /usr/local/bin/identree-linux-arm64
-RUN chmod 755 /usr/local/bin/identree-linux-amd64 /usr/local/bin/identree-linux-arm64 && \
-    arch=$(uname -m) && \
-    case "$arch" in \
-      x86_64)  ln -sf /usr/local/bin/identree-linux-amd64 /usr/local/bin/identree ;; \
-      aarch64) ln -sf /usr/local/bin/identree-linux-arm64 /usr/local/bin/identree ;; \
-      *) echo "Unsupported arch: $arch" >&2; exit 1 ;; \
-    esac
+ARG TARGETARCH
+COPY --from=builder /app/identree-linux-${TARGETARCH} /usr/local/bin/identree
+RUN chmod 755 /usr/local/bin/identree
 
 USER identree
 EXPOSE 8090
