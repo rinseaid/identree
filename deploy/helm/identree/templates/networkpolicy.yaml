@@ -15,6 +15,10 @@ spec:
         {{- if .Values.config.ldap.enabled }}
         - port: 389
           protocol: TCP
+        {{- if .Values.ldapsService.enabled }}
+        - port: 636
+          protocol: TCP
+        {{- end }}
         {{- end }}
   egress:
     - {} # Allow all egress (OIDC, PocketID, Postgres, escrow backends)
