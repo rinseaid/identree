@@ -256,7 +256,7 @@ func (tc *TokenCache) Write(username, rawIDToken string) error {
 	// cannot observe a partial or replaced file. Open with O_CREATE so the
 	// lock target always exists even on first write.
 	path := filepath.Join(hostCacheDir, username)
-	lockFile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
+	lockFile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		os.Remove(tmpName)
 		return fmt.Errorf("opening lock target: %w", err)

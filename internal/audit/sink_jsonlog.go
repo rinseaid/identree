@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 )
 
 // RotationConfig controls size-based log rotation for file sinks.
@@ -64,7 +65,7 @@ func (s *JSONLogSink) openFile() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0750); err != nil {
 		return fmt.Errorf("audit jsonlog: mkdir %s: %w", filepath.Dir(s.path), err)
 	}
-	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
+	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0640)
 	if err != nil {
 		return fmt.Errorf("audit jsonlog: open %s: %w", s.path, err)
 	}

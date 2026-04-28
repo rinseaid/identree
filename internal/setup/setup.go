@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -534,7 +535,7 @@ func appendMTLSConfig() error {
 		return nil
 	}
 
-	f, err := os.OpenFile(confPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	f, err := os.OpenFile(confPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return err
 	}

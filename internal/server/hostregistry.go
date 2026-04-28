@@ -365,7 +365,7 @@ func (r *HostRegistry) saveLocked() {
 	// (add-host, remove-host, rotate-host-secret) from racing with the server's
 	// in-memory writes. The lock is held for the duration of the write+rename.
 	lockPath := r.filePath + ".lock"
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
 	if err == nil {
 		if flockErr := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); flockErr != nil {
 			slog.Warn("host registry: flock failed, proceeding without advisory lock", "err", flockErr)

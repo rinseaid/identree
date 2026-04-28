@@ -422,7 +422,9 @@ func recordBreakglassFailure() {
 		return
 	}
 	fmt.Fprintf(f, "%d %d", count, time.Now().Unix())
-	f.Sync() // ensure counter survives a power failure before the flock is released
+	if err := f.Sync(); err != nil { // ensure counter survives a power failure before the flock is released
+		return
+	}
 }
 
 // clearBreakglassFailures resets the counter on successful authentication.
@@ -589,7 +591,7 @@ func RotateBreakglass(cfg *config.ClientConfig, force, quiet bool) (plaintext st
 	// Without this, two rotations can each escrow different passwords and race
 	// on the atomic rename, leaving the escrowed password mismatched.
 	lockPath := cfg.BreakglassFile + ".lock"
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return "", fmt.Errorf("opening lock file: %w", err)
 	}
