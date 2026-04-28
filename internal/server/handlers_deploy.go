@@ -51,22 +51,24 @@ type deployJob struct {
 	initiator string // admin username who started this job
 	createdAt time.Time
 
-	mu     sync.Mutex
-	buf    bytes.Buffer
-	done   bool
-	failed bool
-	notify chan struct{} // closed when new output is available; replaced each time
+	mu      sync.Mutex
+	cond    *sync.Cond // broadcast when new output arrives or job finishes
+	buf     bytes.Buffer
+	done    bool
+	failed  bool
+	readers int32 // active SSE stream readers; checked by TTL cleanup
 }
 
 func newDeployJob(id, host, sshUser, initiator string) *deployJob {
-	return &deployJob{
+	j := &deployJob{
 		id:        id,
 		host:      host,
 		sshUser:   sshUser,
 		initiator: initiator,
 		createdAt: time.Now(),
-		notify:    make(chan struct{}),
 	}
+	j.cond = sync.NewCond(&j.mu)
+	return j
 }
 
 // appendOutput appends p to the job's buffer and wakes SSE listeners.
@@ -75,7 +77,6 @@ func (j *deployJob) appendOutput(p []byte) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.done {
-		// Job already finished; don't close a channel that finish() already closed.
 		return
 	}
 	avail := deployMaxOutput - j.buf.Len()
@@ -85,8 +86,7 @@ func (j *deployJob) appendOutput(p []byte) {
 		}
 		j.buf.Write(p)
 	}
-	close(j.notify)
-	j.notify = make(chan struct{})
+	j.cond.Broadcast()
 }
 
 func (j *deployJob) appendLine(s string) {
@@ -98,21 +98,50 @@ func (j *deployJob) finish(failed bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.done {
-		return // already finished; avoid double-close panic
+		return
 	}
 	j.done = true
 	j.failed = failed
-	close(j.notify)
+	j.cond.Broadcast()
 }
 
-// snapshot returns a copy of current output and status, plus the current
-// notification channel (to wait on for the next update).
-func (j *deployJob) snapshot() (data []byte, done, failed bool, notify <-chan struct{}) {
+// snapshot returns a copy of current output and status.
+func (j *deployJob) snapshot() (data []byte, done, failed bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	snap := make([]byte, j.buf.Len())
 	copy(snap, j.buf.Bytes())
-	return snap, j.done, j.failed, j.notify
+	return snap, j.done, j.failed
+}
+
+// deployJobCleanupRetry is how long TTL cleanup waits before re-checking
+// when active readers are present.
+const deployJobCleanupRetry = 30 * time.Second
+
+// deployJobCleanup waits for the TTL to expire, then deletes the job from the
+// server's map. If readers are still streaming, it defers deletion until they
+// finish (re-checking periodically).
+func (s *Server) deployJobCleanup(job *deployJob, jobID string) {
+	select {
+	case <-time.After(deployJobTTL):
+	case <-s.stopCh:
+		return
+	}
+	// Wait until no readers are actively streaming this job.
+	job.mu.Lock()
+	for job.readers > 0 {
+		// Use a timer to periodically re-check, in case no broadcast arrives.
+		wakeTimer := time.AfterFunc(deployJobCleanupRetry, func() {
+			job.cond.Broadcast()
+		})
+		job.cond.Wait()
+		wakeTimer.Stop()
+	}
+	job.mu.Unlock()
+
+	s.deployMu.Lock()
+	delete(s.deployJobs, jobID)
+	s.deployMu.Unlock()
 }
 
 // --- IP rate limiter ---
@@ -339,16 +368,8 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		// zero the signer (best-effort, GC will handle the rest)
 		signer = nil
 		// Schedule job cleanup after TTL to prevent unbounded map growth.
-		// Select on stopCh so the goroutine exits promptly on server shutdown.
 		go func() {
-			select {
-			case <-time.After(deployJobTTL):
-				s.deployMu.Lock()
-				delete(s.deployJobs, jobID)
-				s.deployMu.Unlock()
-			case <-s.stopCh:
-				return
-			}
+			s.deployJobCleanup(job, jobID)
 		}()
 	}()
 
@@ -389,6 +410,17 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Track this reader so TTL cleanup defers deletion while we are streaming.
+	job.mu.Lock()
+	job.readers++
+	job.mu.Unlock()
+	defer func() {
+		job.mu.Lock()
+		job.readers--
+		job.cond.Broadcast() // wake TTL cleanup if it is waiting for readers to drain
+		job.mu.Unlock()
+	}()
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -399,11 +431,19 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	_ = rc.SetWriteDeadline(time.Time{})
 
+	// Bridge context cancellation to the Cond so Wait() unblocks when the
+	// client disconnects. The goroutine exits when the context is done or
+	// when this handler returns (whichever comes first).
+	ctx := r.Context()
+	go func() {
+		<-ctx.Done()
+		job.cond.Broadcast()
+	}()
+
 	sent := 0 // bytes already sent
-	keepalive := time.NewTimer(deploySSEKeepalive)
-	defer keepalive.Stop()
+	lastActivity := time.Now()
 	for {
-		data, done, failed, notify := job.snapshot()
+		data, done, failed := job.snapshot()
 
 		// Send any new bytes
 		if len(data) > sent {
@@ -421,6 +461,7 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 			if canFlush {
 				flusher.Flush()
 			}
+			lastActivity = time.Now()
 		}
 
 		if done {
@@ -435,19 +476,31 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Wait for new output or client disconnect
-		select {
-		case <-notify:
-			// new data available; loop
-		case <-r.Context().Done():
+		if ctx.Err() != nil {
 			return
-		case <-keepalive.C:
-			// keepalive comment
+		}
+
+		// Wait for new output, keepalive timeout, or client disconnect.
+		// sync.Cond does not support select, so we use a timed wait via
+		// a background timer that broadcasts after the keepalive interval.
+		wakeTimer := time.AfterFunc(deploySSEKeepalive, func() {
+			job.cond.Broadcast()
+		})
+		job.mu.Lock()
+		// Re-check under lock: only wait if no new data and not done.
+		if job.buf.Len() == sent && !job.done && ctx.Err() == nil {
+			job.cond.Wait()
+		}
+		job.mu.Unlock()
+		wakeTimer.Stop()
+
+		// Send keepalive comment if enough time has passed without new data.
+		if time.Since(lastActivity) >= deploySSEKeepalive {
 			fmt.Fprintf(w, ": keepalive\n\n")
 			if canFlush {
 				flusher.Flush()
 			}
-			keepalive.Reset(deploySSEKeepalive)
+			lastActivity = time.Now()
 		}
 	}
 }
@@ -613,23 +666,15 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		s.runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, uninstallScript)
-		_, _, jobFailed, _ := job.snapshot()
+		_, _, jobFailed := job.snapshot()
 		if !jobFailed {
 			s.store.RemoveHost(req.Hostname)
 			_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
 			s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
 		}
 		// Schedule job cleanup after TTL to prevent unbounded map growth.
-		// Select on stopCh so the goroutine exits promptly on server shutdown.
 		go func() {
-			select {
-			case <-time.After(deployJobTTL):
-				s.deployMu.Lock()
-				delete(s.deployJobs, jobID)
-				s.deployMu.Unlock()
-			case <-s.stopCh:
-				return
-			}
+			s.deployJobCleanup(job, jobID)
 		}()
 	}()
 

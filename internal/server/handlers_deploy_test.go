@@ -25,7 +25,7 @@ func TestDeployJob_AppendAndSnapshot(t *testing.T) {
 	j.appendOutput([]byte("line 1\n"))
 	j.appendLine("line 2")
 
-	data, done, failed, _ := j.snapshot()
+	data, done, failed := j.snapshot()
 	if done {
 		t.Error("expected not done")
 	}
@@ -42,7 +42,7 @@ func TestDeployJob_Finish(t *testing.T) {
 	j.appendLine("some output")
 	j.finish(false)
 
-	_, done, failed, _ := j.snapshot()
+	_, done, failed := j.snapshot()
 	if !done {
 		t.Error("expected done")
 	}
@@ -55,7 +55,7 @@ func TestDeployJob_FinishFailed(t *testing.T) {
 	j := newDeployJob("test-id", "web01", "root", "admin")
 	j.finish(true)
 
-	_, done, failed, _ := j.snapshot()
+	_, done, failed := j.snapshot()
 	if !done {
 		t.Error("expected done")
 	}
@@ -70,7 +70,7 @@ func TestDeployJob_DoubleFinish(t *testing.T) {
 	// Second finish should not panic.
 	j.finish(true)
 
-	_, done, _, _ := j.snapshot()
+	_, done, _ := j.snapshot()
 	if !done {
 		t.Error("expected done")
 	}
@@ -83,7 +83,7 @@ func TestDeployJob_AppendAfterFinish(t *testing.T) {
 	// Append after finish should be silently ignored.
 	j.appendLine("after")
 
-	data, _, _, _ := j.snapshot()
+	data, _, _ := j.snapshot()
 	if string(data) != "before\n" {
 		t.Errorf("unexpected output after finish: %q", string(data))
 	}
