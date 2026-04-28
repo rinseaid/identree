@@ -389,6 +389,8 @@ tags:
     description: Break-glass password escrow and reveal.
   - name: Admin
     description: Admin-only endpoints for users, groups, config, and operations.
+  - name: Agents
+    description: Agent heartbeat and fleet inventory.
   - name: Deploy
     description: Remote SSH deploy, remove, and stream operations.
   - name: LDAP
@@ -1208,6 +1210,71 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/breakglass/report:
+    post:
+      operationId: breakglassReport
+      summary: Report break-glass authentication usage during server outage
+      description: >
+        Called by the PAM client after it successfully contacts the server
+        following an outage during which break-glass authentication was used
+        locally. The server logs the event, emits an audit record, and
+        dispatches notifications to all configured channels.
+      tags: [Breakglass]
+      security:
+        - sharedSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname, username]
+              properties:
+                hostname:
+                  type: string
+                  description: Host where break-glass was used.
+                username:
+                  type: string
+                  description: User who performed break-glass authentication.
+                timestamp:
+                  type: integer
+                  description: Unix timestamp of when break-glass was used.
+      responses:
+        "200":
+          description: Report accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+        "400":
+          description: Invalid request body, missing hostname/username, or invalid hostname format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Invalid shared secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: Content-Type not application/json.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many authentication failures.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   # ── Host rotation ───────────────────────────────────────────────────────
 
   /api/hosts/rotate:
@@ -1266,7 +1333,113 @@ paths:
         "403":
           description: Not admin.
 
-  # ── Deploy ──────���────────────────────────────────��──────────────────────
+  # ── Agents ─────────────────────────────────────────────────────────────
+
+  /api/agent/heartbeat:
+    post:
+      operationId: agentHeartbeat
+      summary: Record a heartbeat from a managed host agent
+      description: >
+        Called periodically by the identree agent running on managed hosts.
+        Updates the fleet inventory with the host's version, OS info, and IP
+        address. Authentication uses the global shared secret or a matching
+        per-host registry secret.
+      tags: [Agents]
+      security:
+        - sharedSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname]
+              properties:
+                hostname:
+                  type: string
+                  description: Hostname of the reporting agent.
+                version:
+                  type: string
+                  description: Agent binary version string.
+                os_info:
+                  type: string
+                  description: OS identification string (e.g. distro and version).
+      responses:
+        "204":
+          description: Heartbeat recorded.
+        "400":
+          description: Invalid JSON or missing hostname.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Invalid shared secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "405":
+          description: Method not allowed (only POST accepted).
+
+  /api/agents:
+    get:
+      operationId: listAgents
+      summary: List all known agents in the fleet
+      description: >
+        Returns the current agent fleet inventory. Each entry includes the
+        hostname, version, OS info, IP, first/last seen timestamps, and a
+        status indicator (green/amber/red) based on heartbeat recency.
+      tags: [Agents]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Agent fleet list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        hostname:
+                          type: string
+                        version:
+                          type: string
+                        os_info:
+                          type: string
+                        ip:
+                          type: string
+                        first_seen:
+                          type: string
+                          format: date-time
+                          description: ISO 8601 UTC timestamp of first heartbeat.
+                        last_seen:
+                          type: string
+                          format: date-time
+                          description: ISO 8601 UTC timestamp of most recent heartbeat.
+                        last_seen_ago:
+                          type: string
+                          description: "Human-readable relative duration (e.g. \"5m\", \"2h\")."
+                        status:
+                          type: string
+                          enum: [green, amber, red]
+                          description: >
+                            green = last seen <10m, amber = 10-60m, red = >60m or never.
+        "401":
+          description: Admin session required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "405":
+          description: Method not allowed (only GET accepted).
+
+  # ── Deploy ─────────────────────────────────────────────────────────────
 
   /api/deploy:
     post:
@@ -2339,11 +2512,19 @@ paths:
   /api/history/export:
     get:
       operationId: exportHistory
-      summary: Export action history as CSV
+      summary: Export action history as CSV or JSON
       tags: [Dashboard]
       security:
         - sessionCookie: []
+        - bearerToken: []
       parameters:
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [csv, json]
+          description: Export format. Defaults to CSV.
         - name: user
           in: query
           schema:
@@ -2361,9 +2542,15 @@ paths:
             format: date
       responses:
         "200":
-          description: CSV file download.
+          description: >
+            History export. Session-authenticated users receive their own
+            history. Bearer token callers receive all users' combined history
+            with a username column included.
           content:
             text/csv: {}
+            application/json: {}
+        "400":
+          description: Invalid format parameter.
         "401":
           description: Unauthorized.
 
@@ -2530,7 +2717,6 @@ paths:
         if the default built-in script is active.
       tags: [Admin]
       security:
-        - bearerToken: []
         - sessionCookie: []
       responses:
         "200":
@@ -2549,7 +2735,6 @@ paths:
         its signature.
       tags: [Admin]
       security:
-        - bearerToken: []
         - sessionCookie: []
       requestBody:
         required: true
@@ -2589,7 +2774,6 @@ paths:
         GET /install.sh will serve the default script again.
       tags: [Admin]
       security:
-        - bearerToken: []
         - sessionCookie: []
       responses:
         "200":
