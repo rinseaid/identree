@@ -16,8 +16,8 @@ deploy/
 systemd/
 ci/
 
-# Test fixtures and integration tests
-test/
+# Test fixtures (keep test/ for testclient build context)
+test/loadtest/
 
 # Docker Compose (not needed in build)
 docker-compose.example.yml
