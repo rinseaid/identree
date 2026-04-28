@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
@@ -646,8 +647,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	justChoices, requireJust := s.justificationTemplateData()
-	w.Header().Set("Content-Type", "text/html")
-	if err := dashboardTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := dashboardTmpl.Execute(&buf, map[string]interface{}{
 		"Username":          username,
 		"Initial":           strings.ToUpper(username[:1]),
 		"Avatar":            getAvatar(r),
@@ -681,7 +682,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"HighlightHost":        highlightHost,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html")
+	buf.WriteTo(w)
 }
 
 // handleSessionsRedirect redirects /sessions to the dashboard.
@@ -1008,8 +1013,8 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := accessTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := accessTmpl.Execute(&buf, map[string]interface{}{
 		"Username":   username,
 		"Initial":    strings.ToUpper(username[:1]),
 		"Avatar":     getAvatar(r),
@@ -1037,7 +1042,11 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		"RequireJustification": accessRequireJust,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html")
+	buf.WriteTo(w)
 }
 
 // handleApprovalPage validates the code and redirects to OIDC login.
@@ -1074,16 +1083,20 @@ func (s *Server) handleApprovalPage(w http.ResponseWriter, r *http.Request) {
 	// challenge codes.
 	challenge, ok := s.store.GetByCode(code)
 	if !ok || challenge.Status != challpkg.StatusPending {
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusNotFound)
 		lang := detectLanguage(r)
-		if err := approvalExpiredTmpl.Execute(w, map[string]interface{}{
+		var buf bytes.Buffer
+		if err := approvalExpiredTmpl.Execute(&buf, map[string]interface{}{
 			"Theme": getTheme(r),
 			"Lang":  lang,
 			"T":     T(lang),
 		}); err != nil {
 			slog.Error("template execution", "err", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
 		}
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusNotFound)
+		buf.WriteTo(w)
 		return
 	}
 
@@ -1591,17 +1604,23 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	// Fragment mode — return only the row HTML for infinite-scroll "load more".
 	// Skips the full-page shell so the client can appendChild() the result.
 	if r.URL.Query().Get("fragment") == "1" {
-		w.Header().Set("Content-Type", "text/html")
 		hasMore := "false"
 		if page < totalPages {
 			hasMore = "true"
 		}
-		w.Header().Set("X-Has-More", hasMore)
-		_ = historyTmpl.ExecuteTemplate(w, "historyRows", map[string]interface{}{
+		var buf bytes.Buffer
+		if err := historyTmpl.ExecuteTemplate(&buf, "historyRows", map[string]interface{}{
 			"History": viewEntries,
 			"IsAdmin": isAdmin,
 			"T":       T(lang),
-		})
+		}); err != nil {
+			slog.Error("template execution", "err", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("X-Has-More", hasMore)
+		buf.WriteTo(w)
 		return
 	}
 
@@ -1609,8 +1628,8 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	historyCSRFToken := computeCSRFToken(s.hmacBase(), username, historyCSRFTs)
 	histJustChoices, histRequireJust := s.justificationTemplateData()
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := historyTmpl.Execute(w, map[string]interface{}{
+	var buf bytes.Buffer
+	if err := historyTmpl.Execute(&buf, map[string]interface{}{
 		"Username":        username,
 		"Initial":         strings.ToUpper(username[:1]),
 		"Avatar":          getAvatar(r),
@@ -1654,7 +1673,11 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"RequireJustification": histRequireJust,
 	}); err != nil {
 		slog.Error("template execution", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html")
+	buf.WriteTo(w)
 }
 
 // handleHistoryExport exports action history as CSV or JSON.
