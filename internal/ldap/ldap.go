@@ -692,6 +692,7 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 
 		// Collect SSH public keys from claims.
 		var sshKeys []string
+		sshKeySeen := make(map[string]struct{})
 		for _, cl := range u.CustomClaims {
 			if len(sshKeys) >= maxSSHKeys {
 				break
@@ -701,6 +702,16 @@ func (s *LDAPServer) searchPeople(w *gldap.ResponseWriter, req *gldap.Request, f
 					slog.Warn("ldap: ignoring malformed SSH public key claim", "user", u.Username, "claim", cl.Key)
 					continue
 				}
+				if len(cl.Value) > maxSSHKeyLen {
+					slog.Warn("ldap: ignoring SSH public key exceeding maximum length", "user", u.Username, "claim", cl.Key, "len", len(cl.Value))
+					continue
+				}
+				// Null bytes are already rejected by isValidLDAPAttrValue above.
+				if _, dup := sshKeySeen[cl.Value]; dup {
+					slog.Warn("ldap: ignoring duplicate SSH public key", "user", u.Username, "claim", cl.Key)
+					continue
+				}
+				sshKeySeen[cl.Value] = struct{}{}
 				sshKeys = append(sshKeys, cl.Value)
 			}
 		}
@@ -1389,6 +1400,11 @@ const maxClaimItems = 500
 
 // maxSSHKeys caps the number of SSH public key claims collected per user.
 const maxSSHKeys = 100
+
+// maxSSHKeyLen caps the byte length of a single SSH public key. No legitimate
+// SSH key (RSA-4096, ed25519, ECDSA-P521, or FIDO/SK variants) exceeds 16 KiB.
+// Oversized values likely indicate abuse or data corruption.
+const maxSSHKeyLen = 16384
 
 // splitClaim splits a comma-separated claim value into trimmed, non-empty values.
 func splitClaim(claims map[string]string, key string) []string {
