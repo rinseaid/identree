@@ -2,6 +2,10 @@
 
 All notable changes to identree will be documented in this file.
 
+## [0.2.0] - 2026-04-28
+
+Challenges and grace sessions are now backed by SQLite or Postgres, replacing the old JSON and Redis stores. Managed hosts phone home with heartbeat data, and their fleet status is surfaced directly in the admin hosts view. LDAP gains mutual TLS support, and the shared secret has been split into per-domain keys to limit the blast radius of a compromise. Native SAML was dropped in favor of a lighter SAML-to-OIDC bridge pattern.
+
 ## [0.1.0] - 2026-04-05
 
 ### Added
