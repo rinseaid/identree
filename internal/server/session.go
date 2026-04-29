@@ -74,7 +74,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, username, role string) 
 		Path:     "/",
 		MaxAge:   int(sessionCookieTTL.Seconds()),
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	}
 	if strings.HasPrefix(s.cfg.ExternalURL, "https://") {
 		cookie.Secure = true
