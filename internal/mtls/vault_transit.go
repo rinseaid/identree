@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // VaultTransitSigner implements crypto.Signer using HashiCorp Vault's Transit
@@ -32,7 +33,7 @@ type VaultTransitSigner struct {
 // validate that the key exists and is accessible.
 func NewVaultTransitSigner(addr, token, keyName string) (*VaultTransitSigner, error) {
 	s := &VaultTransitSigner{
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: 15 * time.Second},
 		addr:    strings.TrimRight(addr, "/"),
 		token:   token,
 		keyName: keyName,

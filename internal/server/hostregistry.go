@@ -418,7 +418,9 @@ func (r *HostRegistry) saveLocked() {
 	}
 	// Sync the parent directory so the rename is durable on power loss.
 	if d, err := os.Open(filepath.Dir(r.filePath)); err == nil {
-		_ = d.Sync()
+		if err := d.Sync(); err != nil {
+			slog.Warn("host registry directory fsync", "err", err)
+		}
 		d.Close()
 	}
 }

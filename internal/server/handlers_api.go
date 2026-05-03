@@ -391,10 +391,12 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	if requireJust && req.Reason == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":                  "justification_required",
-			"justification_choices":  justChoices,
-		})
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":                 "justification_required",
+			"justification_choices": justChoices,
+		}); err != nil {
+			slog.Warn("json encode justification response", "err", err)
+		}
 		return
 	}
 

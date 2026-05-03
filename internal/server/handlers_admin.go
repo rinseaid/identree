@@ -2469,7 +2469,9 @@ func (s *Server) handleGetUserClaims(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Warn("json encode ldap claims response", "err", err)
+	}
 }
 
 // handleAdminTestNotification sends a test notification to a named channel
@@ -2491,7 +2493,9 @@ func (s *Server) handleAdminTestNotification(w http.ResponseWriter, r *http.Requ
 	channelMap := s.notifyChannelMap()
 	if len(channelMap) == 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "no notification channels configured"})
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "no notification channels configured"}); err != nil {
+			slog.Warn("json encode test-notification response", "err", err)
+		}
 		return
 	}
 
@@ -2501,7 +2505,9 @@ func (s *Server) handleAdminTestNotification(w http.ResponseWriter, r *http.Requ
 		ch, ok := channelMap[channelName]
 		if !ok {
 			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "unknown channel: " + channelName})
+			if err := json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "unknown channel: " + channelName}); err != nil {
+				slog.Warn("json encode test-notification response", "err", err)
+			}
 			return
 		}
 		targets = []notify.Channel{ch}
@@ -2534,10 +2540,14 @@ func (s *Server) handleAdminTestNotification(w http.ResponseWriter, r *http.Requ
 
 	if len(errors) > 0 {
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "errors": errors})
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "errors": errors}); err != nil {
+			slog.Warn("json encode test-notification response", "err", err)
+		}
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{"ok": true}); err != nil {
+		slog.Warn("json encode test-notification response", "err", err)
+	}
 }
 
 // handleAdminRestart exits the process so the container/process supervisor can restart it,

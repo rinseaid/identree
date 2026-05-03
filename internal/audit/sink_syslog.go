@@ -64,10 +64,19 @@ func (s *SyslogSink) Emit(e Event) error {
 	_ = s.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	_, err = s.conn.Write(msg)
 	if err != nil {
-		// Drop the broken connection so next Emit reconnects.
 		s.conn.Close()
 		s.conn = nil
-		return fmt.Errorf("syslog write: %w", err)
+		// Retry once after reconnect.
+		s.conn, err = net.DialTimeout(s.network, s.addr, 5*time.Second)
+		if err != nil {
+			return fmt.Errorf("syslog reconnect: %w", err)
+		}
+		_ = s.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if _, err = s.conn.Write(msg); err != nil {
+			s.conn.Close()
+			s.conn = nil
+			return fmt.Errorf("syslog retry write: %w", err)
+		}
 	}
 	return nil
 }
