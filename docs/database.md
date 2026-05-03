@@ -1,8 +1,8 @@
 # Database backend
 
-identree persists every piece of mutable state — challenges, grace sessions,
+identree persists every piece of mutable state (challenges, grace sessions,
 the action log, escrow records, agent heartbeats, revocations, OIDC login
-nonces — to a SQL database. There is no other persistence layer; the
+nonces) to a SQL database. There is no other persistence layer; the
 database is the source of truth.
 
 Two drivers are supported:
@@ -13,7 +13,7 @@ Two drivers are supported:
 | `postgres` | HA, enterprise, multiple identree replicas | row-level locks via `SELECT ... FOR UPDATE` |
 
 Both share the same schema, the same query strings (placeholders are
-rewritten at execution time), and the same Go test suite — what works on
+rewritten at execution time), and the same Go test suite. What works on
 SQLite works on Postgres.
 
 ## Quick start (SQLite, default)
@@ -62,25 +62,25 @@ plain `INSERT/UPDATE/DELETE/SELECT` is enough.
 ## Schema
 
 The schema is applied at startup with `CREATE TABLE IF NOT EXISTS`. There
-is no migration framework yet — identree is greenfield, so v1 starts with
+is no migration framework yet. identree is greenfield, so v1 starts with
 a clean schema and any future evolution will introduce a versioned
 migrator. The current tables:
 
-- `challenges` — every sudo elevation request and its lifecycle
-- `action_log` — append-only audit trail surfaced by `/admin/history`
-- `grace_sessions` — active grace periods, HMAC-signed when
+- `challenges`: every sudo elevation request and its lifecycle
+- `action_log`: append-only audit trail shown in `/admin/history`
+- `grace_sessions`: active grace periods, HMAC-signed when
   `IDENTREE_SESSION_SECRET` is set
-- `agents` — last_seen / version / OS info per managed host (see
+- `agents`: last_seen / version / OS info per managed host (see
   [Agent heartbeats](#agent-heartbeats) below)
-- `revoked_nonces`, `revoked_admin_sessions`, `revoke_tokens_before` —
+- `revoked_nonces`, `revoked_admin_sessions`, `revoke_tokens_before`:
   session and token invalidation records
-- `escrowed_hosts`, `escrow_ciphertexts`, `used_escrow_tokens` — escrow
+- `escrowed_hosts`, `escrow_ciphertexts`, `used_escrow_tokens`: escrow
   metadata + replay protection
-- `last_oidc_auth`, `session_nonces` — OIDC login state
-- `rotate_breakglass_before` — per-host break-glass rotation timestamps
-- `cluster_messages` — overflow buffer for `LISTEN/NOTIFY` payloads
+- `last_oidc_auth`, `session_nonces`: OIDC login state
+- `rotate_breakglass_before`: per-host break-glass rotation timestamps
+- `cluster_messages`: overflow buffer for `LISTEN/NOTIFY` payloads
   larger than Postgres's 8 KB notification limit
-- `notify_admin_prefs`, `notify_config` — placeholders for future
+- `notify_admin_prefs`, `notify_config`: placeholders for future
   SQL-backed notification config
 
 A background goroutine ticks every 10 seconds to mark expired challenges,
@@ -100,8 +100,8 @@ rather than the generic "linux/arm64".
 `install.sh` (served at `/install.sh` from the identree server) writes
 two systemd units to every managed host and enables the timer:
 
-- `identree-heartbeat.service` — oneshot that invokes `identree heartbeat`
-- `identree-heartbeat.timer` — fires `OnBootSec=30s` then every `5min`
+- `identree-heartbeat.service`: oneshot that invokes `identree heartbeat`
+- `identree-heartbeat.timer`: fires `OnBootSec=30s` then every `5min`
   with `RandomizedDelaySec=60s` (jitter so a fleet of 100 hosts doesn't
   thunder the server in lockstep)
 
@@ -183,7 +183,7 @@ consistent snapshot with the SQLite backup API:
 sqlite3 /config/identree.db ".backup /backup/identree.db.$(date +%F)"
 ```
 
-`cp` while the server is running is **not** safe — WAL writes may be
+`cp` while the server is running is **not** safe. WAL writes may be
 mid-flight. Always use `.backup` or stop the server first.
 
 Restore: `cp identree.db.<date> /config/identree.db` with the server
@@ -200,9 +200,9 @@ transactions, so concurrent dumps don't block live traffic.
 There is no in-place migration. v1 is the first SQL-backed release; the
 old JSON state file (`/config/sessions.json`) and Redis backend are
 gone. If you're coming from a pre-release with a populated state file,
-the cleanest path is to start fresh — challenges and short-lived grace
+the cleanest path is to start fresh. Challenges and short-lived grace
 sessions don't need to carry over, and the action log is reconstructed
 naturally as new approvals flow.
 
-If preserving history matters, drop a feature request — a one-shot
+If preserving history matters, drop a feature request. A one-shot
 import command can be added.

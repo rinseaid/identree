@@ -125,7 +125,7 @@ The pending bar and modal display approval progress and disable the button for a
 
 If the approver's last OIDC authentication was more than 5 minutes ago, the approval is rejected with a "re-authentication required" error. The approver must log in again via OIDC before approving.
 
-This prevents stale browser sessions from being used for sensitive approvals.
+Stale browser sessions cannot be used for sensitive approvals.
 
 ---
 

@@ -4,7 +4,7 @@ identree has two operating modes. The right choice depends on your existing iden
 
 ---
 
-## Full mode — identree + PocketID
+## Full mode: identree + PocketID
 
 **Use this if you are starting fresh or already use PocketID.**
 
@@ -123,11 +123,11 @@ UIDs and GIDs are stable, never reused, and persisted to `/config/uidmap.json`.
 
 ---
 
-## PAM bridge mode — identree alongside your existing LDAP
+## PAM bridge mode: identree alongside your existing LDAP
 
 **Use this if you already have an LDAP server (Authentik, Kanidm, lldap, OpenLDAP, etc.).**
 
-Your existing LDAP handles user and group resolution. identree adds only the passkey-gated PAM approval flow on top. Any OIDC-compliant IdP can be used for authentication — PocketID is not required. If your IdP only supports SAML, deploy an OIDC-to-SAML bridge (see [`docs/saml-bridge.md`](saml-bridge.md)).
+Your existing LDAP handles user and group resolution. identree adds only the passkey-gated PAM approval flow on top. Any OIDC-compliant IdP can be used for authentication; PocketID is not required. If your IdP only supports SAML, deploy an OIDC-to-SAML bridge (see [`docs/saml-bridge.md`](saml-bridge.md)).
 
 ```
 Authentik / Kanidm / any IdP ──► LDAP (posixAccount, posixGroup)
@@ -138,14 +138,14 @@ Authentik / Kanidm / any IdP ──► LDAP (posixAccount, posixGroup)
 
 Managed hosts still point sssd at **your existing LDAP** for user/group resolution. identree is only contacted by the PAM helper when `sudo` is invoked.
 
-Optionally, identree can also serve `ou=sudoers` — managed via its admin UI — so you get fine-grained sudo policy without adding `sudoRole` attributes to your primary LDAP.
+Optionally, identree can also serve `ou=sudoers` (managed via its admin UI), so you get fine-grained sudo policy without adding `sudoRole` attributes to your primary LDAP.
 
 **Requirements:** Any OIDC-compliant IdP (or a SAML IdP behind an OIDC bridge). An existing LDAP server for user/group resolution.
 
 ### Key settings
 
 ```sh
-# No IDENTREE_POCKETID_API_KEY — omitting it activates bridge mode
+# No IDENTREE_POCKETID_API_KEY: omitting it activates bridge mode
 
 # Optional: serve ou=sudoers from identree's rules engine
 IDENTREE_LDAP_ENABLED=true

@@ -5,7 +5,7 @@ Every managed host running the identree PAM helper stores a **bcrypt-hashed fall
 The break-glass password is:
 - Auto-generated on first install
 - Auto-rotated on a configurable schedule (default 90 days)
-- Never stored in plaintext — only the bcrypt hash lives on the host
+- Never stored in plaintext. Only the bcrypt hash lives on the host.
 - Optionally escrowed to a secret manager so you can retrieve it when needed
 
 ---
@@ -13,7 +13,7 @@ The break-glass password is:
 ## Managing break-glass passwords
 
 ```sh
-# On the managed host — rotate immediately
+# On the managed host: rotate immediately
 identree rotate-breakglass
 
 # Verify the current password works
@@ -44,7 +44,7 @@ Clients whose hash is older than this timestamp will rotate on their next check-
 
 ## Escrow backends
 
-Escrow is optional. Without it, the break-glass password exists only as a hash on the managed host — you can verify it works but cannot recover the plaintext. With escrow, the server stores the plaintext in a secret manager during rotation so you can retrieve it if needed.
+Escrow is optional. Without it, the break-glass password exists only as a hash on the managed host; you can verify it works but cannot recover the plaintext. With escrow, the server stores the plaintext in a secret manager during rotation so you can retrieve it if needed.
 
 ### Local (no external service)
 

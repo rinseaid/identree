@@ -139,7 +139,7 @@ All filters use `filepath.Match` glob syntax. Routes are evaluated in order; all
 
 ## Per-admin notification preferences
 
-Each admin can subscribe to notifications independently via **Admin > Notifications > My Notification Preferences**. This enables:
+Each admin can subscribe to notifications independently via **Admin > Notifications > My Notification Preferences**:
 
 - **"Notify me about everything"**: set events to `*` and leave hosts empty
 - **Targeted subscriptions**: e.g., only `challenge_created` events on `*.prod` hosts

@@ -352,7 +352,7 @@ func (c *PocketIDClient) apiGet(url string) ([]byte, error) {
 
 // ── Admin API (used by LDAP server) ──────────────────────────────────────────
 // These methods use the PocketID admin API (/api/admin/*) with the API key
-// to fetch comprehensive user/group data for LDAP directory serving.
+// to fetch full user/group data for LDAP directory serving.
 
 // PocketIDAdminUser is a user from the admin API (richer than the regular API).
 type PocketIDAdminUser struct {

@@ -547,7 +547,7 @@ func IsServerUnreachable(err error) bool {
 	}
 
 	// Check for typed network errors in the error chain.
-	// These are more robust than string matching, which could be spoofed
+	// Typed errors are reliable; string matching could be spoofed
 	// by a malicious server's HTTP response body.
 	//
 	// Only match dial-phase OpErrors (Op=="dial") to avoid false positives

@@ -1,6 +1,6 @@
 # Audit Streaming
 
-identree can stream structured audit events to external SIEM and log aggregation systems. Every security-relevant action — challenge creation, approval, rejection, session revocation, break-glass usage, config changes — is emitted as a JSON event to one or more configurable sinks.
+identree can stream structured audit events to external SIEM and log aggregation systems. Every security-relevant action (challenge creation, approval, rejection, session revocation, break-glass usage, config changes) is emitted as a JSON event to one or more configurable sinks.
 
 Audit streaming is independent of the [notification system](notifications.md). Notifications are human-facing alerts (Slack, ntfy); audit events are machine-readable records for compliance, forensics, and monitoring. Both can run simultaneously.
 

@@ -234,12 +234,12 @@ Both dashboards default to a 6-hour time range with 30-second refresh. The overv
 
 ## Audit Durability and Event Loss
 
-identree supports multiple audit sinks running simultaneously. Each has different durability characteristics. Understanding these tradeoffs is critical for compliance.
+identree supports multiple audit sinks running simultaneously. Each has different durability characteristics. Understanding these tradeoffs matters for compliance.
 
 ### JSON log sink (stdout or file)
 
 - **Durability:** Synchronous write. Events are written to the output stream before the function returns.
-- **Loss scenario:** A process crash (SIGKILL, OOM) may lose the event currently being written. In practice, this is effectively zero-loss for normal operations.
+- **Loss scenario:** A process crash (SIGKILL, OOM) may lose the event currently being written. In practice, this is zero-loss for normal operations.
 - **Recommendation:** Use as your primary sink. Container runtimes (Docker, Kubernetes) capture stdout automatically, making it the simplest and most reliable option.
 
 ```sh
@@ -295,7 +295,7 @@ IDENTREE_AUDIT_SYSLOG_URL=tcp://syslog.local:601                   # secondary: 
 
 ### Single-instance (default)
 
-By default, identree runs as a single-node service backed by SQLite at `/config/identree.db`. All state — challenges, grace sessions, the action log, escrow records, agent heartbeats — lives in that one file. The SQLite database uses WAL mode and serialises writes through a single connection, so the operational footprint is minimal: one volume, one process, no clustering.
+By default, identree runs as a single-node service backed by SQLite at `/config/identree.db`. All state (challenges, grace sessions, the action log, escrow records, agent heartbeats) lives in that one file. The SQLite database uses WAL mode and serialises writes through a single connection, so the operational footprint is minimal: one volume, one process, no clustering.
 
 Do not run multiple identree replicas against the same SQLite file. SQLite is single-writer; a second instance trying to write to the same `.db` would corrupt state.
 
@@ -370,7 +370,7 @@ Review this list before going to production.
   The auto-generated keypair is convenient for development but lives on the server. In production, generate a keypair offline and keep the private key on a trusted workstation. Configure `IDENTREE_INSTALL_SIGNING_KEY` and `IDENTREE_INSTALL_VERIFY_KEY` to point to your keys. See [install-scripts.md](install-scripts.md) for the full production flow.
 
 - [ ] **Distribute the install verification public key out-of-band (bake into host images)**
-  Do not fetch the public key from the server at install time (TOFU). Instead, bake it into your base images, distribute it via configuration management (Ansible, Puppet, Chef), or include it in your provisioning pipeline. This ensures verification does not depend on the server's integrity.
+  Do not fetch the public key from the server at install time (TOFU). Instead, bake it into your base images, distribute it via configuration management (Ansible, Puppet, Chef), or include it in your provisioning pipeline. Verification should not depend on the server's integrity.
 
 - [ ] **Verify install script signatures before execution on all new hosts**
   Before running the install script on any host, verify its detached Ed25519 signature:

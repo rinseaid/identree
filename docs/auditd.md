@@ -137,7 +137,7 @@ if $programname == 'audit' then @@syslog.example.com:514
 
 - **Kernel-level monitoring.** auditd rules are loaded into the kernel. User-space processes cannot suppress audit events without unloading the auditd daemon (which itself generates an audit event).
 - **Tamper detection.** If an attacker modifies `/etc/pam.d/sudo` to remove the identree PAM line, the `identree-pam-config` audit event fires before the write completes.
-- **Independent of identree.** The audit trail works even if identree is not running, has been removed, or has been compromised. This makes it a defense-in-depth layer.
+- **Independent of identree.** The audit trail works even if identree is not running, has been removed, or has been compromised. It is a defense-in-depth layer.
 - **Immutable mode.** For maximum security, enable auditd's immutable mode (`-e 2` in `/etc/audit/audit.rules`). Once set, audit rules cannot be changed without a reboot -- even by root.
 
 ---
