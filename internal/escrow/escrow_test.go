@@ -23,11 +23,11 @@ func newMemStorer() *memStorer {
 	return &memStorer{data: make(map[string]string)}
 }
 
-func (s *memStorer) StoreEscrowCiphertext(hostname, ciphertext string) {
+func (s *memStorer) StoreEscrowCiphertext(_ context.Context, hostname, ciphertext string) {
 	s.data[hostname] = ciphertext
 }
 
-func (s *memStorer) GetEscrowCiphertext(hostname string) (string, bool) {
+func (s *memStorer) GetEscrowCiphertext(_ context.Context, hostname string) (string, bool) {
 	v, ok := s.data[hostname]
 	return v, ok
 }
@@ -139,11 +139,11 @@ func TestLocalEscrowBackend_HostnameAADBinding(t *testing.T) {
 	}
 
 	// Copy the ciphertext from host-A to host-B to simulate replay.
-	ct, ok := storer.GetEscrowCiphertext("host-A.example.com")
+	ct, ok := storer.GetEscrowCiphertext(context.Background(), "host-A.example.com")
 	if !ok {
 		t.Fatal("expected ciphertext stored for host-A")
 	}
-	storer.StoreEscrowCiphertext("host-B.example.com", ct)
+	storer.StoreEscrowCiphertext(context.Background(), "host-B.example.com", ct)
 
 	// Retrieve with host-B should fail because AAD won't match.
 	_, err = backend.Retrieve(ctx, "host-B.example.com", "", "")
@@ -450,7 +450,7 @@ func TestLocalEscrowBackend_ModifiedCiphertextFailsDecrypt(t *testing.T) {
 	}
 
 	// Tamper with the ciphertext
-	encoded, ok := storer.GetEscrowCiphertext(hostname)
+	encoded, ok := storer.GetEscrowCiphertext(context.Background(), hostname)
 	if !ok {
 		t.Fatal("no ciphertext stored")
 	}
@@ -462,7 +462,7 @@ func TestLocalEscrowBackend_ModifiedCiphertextFailsDecrypt(t *testing.T) {
 	if len(blob) > 13 {
 		blob[13] ^= 0xFF
 	}
-	storer.StoreEscrowCiphertext(hostname, base64.StdEncoding.EncodeToString(blob))
+	storer.StoreEscrowCiphertext(context.Background(), hostname, base64.StdEncoding.EncodeToString(blob))
 
 	_, err = backend.Retrieve(ctx, hostname, "", "")
 	if err == nil {
@@ -483,8 +483,8 @@ func TestLocalEscrowBackend_SwapHostnameOnRetrieve(t *testing.T) {
 	}
 
 	// Manually copy ciphertext under a different hostname key
-	ct, _ := storer.GetEscrowCiphertext("host-A.example.com")
-	storer.StoreEscrowCiphertext("host-C.example.com", ct)
+	ct, _ := storer.GetEscrowCiphertext(context.Background(), "host-A.example.com")
+	storer.StoreEscrowCiphertext(context.Background(), "host-C.example.com", ct)
 
 	_, err = backend.Retrieve(ctx, "host-C.example.com", "", "")
 	if err == nil {
@@ -568,13 +568,13 @@ type syncMemStorer struct {
 	data map[string]string
 }
 
-func (s *syncMemStorer) StoreEscrowCiphertext(hostname, ciphertext string) {
+func (s *syncMemStorer) StoreEscrowCiphertext(_ context.Context, hostname, ciphertext string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data[hostname] = ciphertext
 }
 
-func (s *syncMemStorer) GetEscrowCiphertext(hostname string) (string, bool) {
+func (s *syncMemStorer) GetEscrowCiphertext(_ context.Context, hostname string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v, ok := s.data[hostname]

@@ -176,7 +176,7 @@ func (s *Server) handleAdminNotifications(w http.ResponseWriter, r *http.Request
 		"NotifyRoutes":          routes,
 		"MyNotifyPref":          myPref,
 		"ChannelNames":          channelNames,
-		"Pending":               s.buildAllPendingViews(username, lang),
+		"Pending":               s.buildAllPendingViews(r.Context(), username, lang),
 		"JustificationChoices":  func() []string { c, _ := s.justificationTemplateData(); return c }(),
 		"RequireJustification":  func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"CSRFToken":             csrfToken,
@@ -277,7 +277,7 @@ func (s *Server) handleProfileNotifications(w http.ResponseWriter, r *http.Reque
 		"IsAdmin":      true,
 		"MyNotifyPref": myPref,
 		"ChannelNames": channelNames,
-		"Pending":      s.buildAllPendingViews(username, lang),
+		"Pending":      s.buildAllPendingViews(r.Context(), username, lang),
 		"CSRFToken":    csrfToken,
 		"CSRFTs":       csrfTs,
 	}); err != nil {

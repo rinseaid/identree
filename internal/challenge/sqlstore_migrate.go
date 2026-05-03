@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 )
 
 // migration defines a single forward-only schema change. Each migration
@@ -134,9 +135,11 @@ func (s *SQLStore) ensureMigrationsTable(ctx context.Context) error {
 
 // schemaVersion returns the current schema version, or 0 if no
 // migrations have been applied. Exported for diagnostics.
-func (s *SQLStore) SchemaVersion() int {
+func (s *SQLStore) SchemaVersion(ctx context.Context) int {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	var v int
-	err := s.db.QueryRowContext(context.Background(),
+	err := s.db.QueryRowContext(ctx,
 		"SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&v)
 	if err != nil {
 		return 0

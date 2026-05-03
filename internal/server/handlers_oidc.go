@@ -172,7 +172,7 @@ func (s *Server) handleSessionsLogin(w http.ResponseWriter, r *http.Request) {
 
 	verifier := oauth2.GenerateVerifier()
 
-	if err := s.store.StoreSessionNonce(nonce, challenge.SessionNonceData{
+	if err := s.store.StoreSessionNonce(r.Context(), nonce, challenge.SessionNonceData{
 		IssuedAt:     time.Now(),
 		CodeVerifier: verifier,
 		ClientIP:     remoteAddr(r),
@@ -218,9 +218,9 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Verify and consume the nonce
-	storeNonceData, nonceValid := s.store.GetSessionNonce(stateNonce)
+	storeNonceData, nonceValid := s.store.GetSessionNonce(r.Context(), stateNonce)
 	if nonceValid {
-		s.store.DeleteSessionNonce(stateNonce)
+		s.store.DeleteSessionNonce(r.Context(), stateNonce)
 	}
 	// Convert to local type for compatibility.
 	nonceData := sessionNonceData{
@@ -361,7 +361,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 	})
 
 	// Record OIDC authentication time for one-tap freshness checks.
-	s.store.RecordOIDCAuth(username)
+	s.store.RecordOIDCAuth(r.Context(), username)
 
 	// Set session cookie and avatar cookie, then redirect to dashboard.
 	s.setSessionCookie(w, username, role)
@@ -408,7 +408,7 @@ func (s *Server) handleSessionsCallback(w http.ResponseWriter, r *http.Request) 
 		// a decimal integer and parts[2] must be a 64-char lowercase hex HMAC.
 		parts := strings.SplitN(onetapCookie.Value, ".", 3)
 		if len(parts) == 3 && isDecimal(parts[1]) && isHex(parts[2]) && len(parts[2]) == 64 {
-			if challenge, ok := s.store.Get(parts[0]); ok && challenge.Username == username {
+			if challenge, ok := s.store.Get(r.Context(), parts[0]); ok && challenge.Username == username {
 				expected := s.computeOneTapToken(challenge.ID, challenge.Username, challenge.Hostname, challenge.ExpiresAt)
 				if expected != "" && subtle.ConstantTimeCompare([]byte(expected), []byte(onetapCookie.Value)) == 1 {
 					onetapURL := s.baseURL + "/api/onetap/" + onetapCookie.Value

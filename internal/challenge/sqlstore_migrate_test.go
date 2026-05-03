@@ -8,7 +8,7 @@ import (
 
 func TestMigrate_FreshDatabase(t *testing.T) {
 	s := newTestSQLStore(t)
-	v := s.SchemaVersion()
+	v := s.SchemaVersion(context.Background())
 	if v != 1 {
 		t.Fatalf("SchemaVersion: got %d, want 1", v)
 	}
@@ -32,7 +32,7 @@ func TestMigrate_Idempotent(t *testing.T) {
 	if err := s.migrate(context.Background()); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
-	v := s.SchemaVersion()
+	v := s.SchemaVersion(context.Background())
 	if v != 1 {
 		t.Fatalf("SchemaVersion after second migrate: got %d, want 1", v)
 	}
@@ -70,7 +70,7 @@ func TestMigrate_PreExistingSchema(t *testing.T) {
 	}
 	t.Cleanup(store.Stop)
 
-	if v := store.SchemaVersion(); v != 1 {
+	if v := store.SchemaVersion(context.Background()); v != 1 {
 		t.Fatalf("SchemaVersion: got %d, want 1", v)
 	}
 }
@@ -138,7 +138,7 @@ func TestMigrate_FailureRollback(t *testing.T) {
 	}
 
 	// Version 1 should have been applied, but version 2 should not.
-	v := s.SchemaVersion()
+	v := s.SchemaVersion(context.Background())
 	if v != 1 {
 		t.Fatalf("SchemaVersion after failed migration: got %d, want 1", v)
 	}

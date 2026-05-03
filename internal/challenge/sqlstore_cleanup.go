@@ -15,11 +15,11 @@ import (
 // preserved (legacy behaviour was to delete them, but for audit purposes
 // we keep them and let KnownHosts/AllKnownHosts filter on action <>
 // ActionRemovedHost — caller should log such an entry first).
-func (s *SQLStore) RemoveHost(hostname string) {
+func (s *SQLStore) RemoveHost(ctx context.Context, hostname string) {
 	if hostname == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -60,11 +60,11 @@ func (s *SQLStore) RemoveHost(hostname string) {
 // We delete pending challenges so the per-user pending counter (now
 // derived from a SELECT COUNT) reflects reality; resolved challenges are
 // also removed for hygiene.
-func (s *SQLStore) RemoveUser(username string) {
+func (s *SQLStore) RemoveUser(ctx context.Context, username string) {
 	if username == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -1291,11 +1292,11 @@ func TestHandleRemoveUser_HappyPath_ClearsSessionsAndLogsAction(t *testing.T) {
 	s := newAdminTestServer(t, secret)
 
 	// Pre-populate state that must be scrubbed.
-	s.store.CreateGraceSession("target1", "host-a", 10*time.Minute)
-	s.store.CreateGraceSession("target1", "host-b", 10*time.Minute)
-	s.store.LogAction("target1", challpkg.ActionAutoApproved, "host-a", "code1", "target1")
+	s.store.CreateGraceSession(context.Background(), "target1", "host-a", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "target1", "host-b", 10*time.Minute)
+	s.store.LogAction(context.Background(), "target1", challpkg.ActionAutoApproved, "host-a", "code1", "target1")
 
-	before := s.store.RevokeTokensBefore("target1")
+	before := s.store.RevokeTokensBefore(context.Background(), "target1")
 
 	form := url.Values{"target_user": {"target1"}}
 	r := buildFormRequest(secret, "admin1", "admin", "/api/admin/users/remove", form)
@@ -1307,13 +1308,13 @@ func TestHandleRemoveUser_HappyPath_ClearsSessionsAndLogsAction(t *testing.T) {
 	}
 
 	// All sessions for the user must be gone.
-	if sess := s.store.ActiveSessions("target1"); len(sess) != 0 {
+	if sess := s.store.ActiveSessions(context.Background(), "target1"); len(sess) != 0 {
 		t.Errorf("expected 0 active sessions after removal, got %d", len(sess))
 	}
 
 	// A revoke-tokens-before timestamp must now exist (or be advanced). This
 	// invalidates any previously-issued token the user had.
-	after := s.store.RevokeTokensBefore("target1")
+	after := s.store.RevokeTokensBefore(context.Background(), "target1")
 	if !after.After(before) && after.IsZero() {
 		t.Errorf("expected RevokeTokensBefore to be set/advanced, before=%v after=%v", before, after)
 	}
@@ -1551,7 +1552,7 @@ func TestHandleUpdateUserClaims_HappyPath_PreservesUnmanagedClaims(t *testing.T)
 	// Audit: an action log entry was recorded for the change. The handler logs
 	// under the acting admin's username with the target's username in the
 	// hostname column, so we fetch by admin and check both hostname and action.
-	hist := s.store.ActionHistory("admin1", 10)
+	hist := s.store.ActionHistory(context.Background(), "admin1", 10)
 	foundAudit := false
 	for _, e := range hist {
 		if e.Action == challpkg.ActionClaimsUpdated && e.Hostname == "alice" {
@@ -1963,7 +1964,7 @@ func TestHandleAdminUsers_WithPocketIDAndSort(t *testing.T) {
 	s, _ := newAdminClaimsTestServer(t, secret, mux)
 
 	// Give bob some identree activity so he isn't filtered out for lacking sudo groups.
-	s.store.LogAction("bob", challpkg.ActionApproved, "hostname", "", "")
+	s.store.LogAction(context.Background(), "bob", challpkg.ActionApproved, "hostname", "", "")
 
 	ts := time.Now().Unix()
 	for _, sortQ := range []string{"name", "sessions", "lastactive"} {

@@ -71,7 +71,7 @@ func scanChallenge(r rowScanner) (Challenge, error) {
 // the cap can overrun by 1–2 entries; this is acceptable since the cap
 // exists for DoS protection and the legacy contract is preserved by
 // SQLite via single-writer serialization.
-func (s *SQLStore) Create(username, hostname, breakglassRotateBefore, reason string) (*Challenge, error) {
+func (s *SQLStore) Create(ctx context.Context, username, hostname, breakglassRotateBefore, reason string) (*Challenge, error) {
 	id, err := randutil.Hex(16)
 	if err != nil {
 		return nil, fmt.Errorf("generating challenge ID: %w", err)
@@ -83,16 +83,16 @@ func (s *SQLStore) Create(username, hostname, breakglassRotateBefore, reason str
 	now := time.Now()
 	expires := now.Add(s.ttl)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Per-host rotate-before may be newer than the global value passed in.
 	revokeTokensBefore := ""
-	if t := s.RevokeTokensBefore(username); !t.IsZero() {
+	if t := s.RevokeTokensBefore(ctx, username); !t.IsZero() {
 		revokeTokensBefore = t.Format(time.RFC3339)
 	}
 	if hostname != "" {
-		if perHostT := s.HostRotateBefore(hostname); !perHostT.IsZero() {
+		if perHostT := s.HostRotateBefore(ctx, hostname); !perHostT.IsZero() {
 			var globalT time.Time
 			if breakglassRotateBefore != "" {
 				if t, perr := time.Parse(time.RFC3339, breakglassRotateBefore); perr == nil {
@@ -166,8 +166,8 @@ func (s *SQLStore) Create(username, hostname, breakglassRotateBefore, reason str
 
 // ── Get / GetByCode ─────────────────────────────────────────────────────────
 
-func (s *SQLStore) Get(id string) (Challenge, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) Get(ctx context.Context, id string) (Challenge, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	row := s.queryRow(ctx, `SELECT `+challengeColumns+` FROM challenges WHERE id = ?`, id)
 	c, err := scanChallenge(row)
@@ -184,8 +184,8 @@ func (s *SQLStore) Get(id string) (Challenge, bool) {
 	return c, true
 }
 
-func (s *SQLStore) GetByCode(code string) (Challenge, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) GetByCode(ctx context.Context, code string) (Challenge, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	row := s.queryRow(ctx, `SELECT `+challengeColumns+` FROM challenges WHERE user_code = ?`, code)
 	c, err := scanChallenge(row)
@@ -204,8 +204,8 @@ func (s *SQLStore) GetByCode(code string) (Challenge, bool) {
 
 // ── Light setters ───────────────────────────────────────────────────────────
 
-func (s *SQLStore) SetNonce(id string, nonce string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) SetNonce(ctx context.Context, id string, nonce string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	tx, err := s.beginTxRMW(ctx)
 	if err != nil {
@@ -246,24 +246,24 @@ func (s *SQLStore) SetNonce(id string, nonce string) error {
 	return nil
 }
 
-func (s *SQLStore) SetRequestedGrace(id string, d time.Duration) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) SetRequestedGrace(ctx context.Context, id string, d time.Duration) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if _, err := s.exec(ctx, `UPDATE challenges SET requested_grace_ns = ? WHERE id = ?`, int64(d), id); err != nil {
 		logErr("SetRequestedGrace", err)
 	}
 }
 
-func (s *SQLStore) SetBreakglassOverride(id string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) SetBreakglassOverride(ctx context.Context, id string) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if _, err := s.exec(ctx, `UPDATE challenges SET breakglass_override = 1 WHERE id = ?`, id); err != nil {
 		logErr("SetBreakglassOverride", err)
 	}
 }
 
-func (s *SQLStore) SetChallengePolicy(id, policyName string, requiredApprovals int, requireAdmin, breakglassBypassAllowed bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) SetChallengePolicy(ctx context.Context, id, policyName string, requiredApprovals int, requireAdmin, breakglassBypassAllowed bool) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if _, err := s.exec(ctx,
 		`UPDATE challenges
@@ -346,8 +346,8 @@ func (s *SQLStore) finalizeApproval(ctx context.Context, tx *sql.Tx, id, approve
 	return nil
 }
 
-func (s *SQLStore) Approve(id string, approvedBy string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) Approve(ctx context.Context, id string, approvedBy string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	tx, err := s.beginTxRMW(ctx)
 	if err != nil {
@@ -371,8 +371,8 @@ func (s *SQLStore) Approve(id string, approvedBy string) error {
 	return nil
 }
 
-func (s *SQLStore) AddApproval(id string, approver string, requiredApprovals int) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) AddApproval(ctx context.Context, id string, approver string, requiredApprovals int) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	tx, err := s.beginTxRMW(ctx)
 	if err != nil {
@@ -445,8 +445,8 @@ func (s *SQLStore) AddApproval(id string, approver string, requiredApprovals int
 	return fullyApproved, nil
 }
 
-func (s *SQLStore) Deny(id, reason string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) Deny(ctx context.Context, id, reason string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	tx, err := s.beginTxRMW(ctx)
 	if err != nil {
@@ -486,8 +486,8 @@ func (s *SQLStore) Deny(id, reason string) error {
 	return nil
 }
 
-func (s *SQLStore) AutoApprove(id string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) AutoApprove(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	tx, err := s.beginTxRMW(ctx)
 	if err != nil {
@@ -529,11 +529,11 @@ func (s *SQLStore) AutoApprove(id string) error {
 	return nil
 }
 
-func (s *SQLStore) AutoApproveIfWithinGracePeriod(username, hostname, id string) bool {
+func (s *SQLStore) AutoApproveIfWithinGracePeriod(ctx context.Context, username, hostname, id string) bool {
 	if s.gracePeriod <= 0 {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	tx, err := s.beginTxRMW(ctx)
 	if err != nil {
@@ -602,8 +602,8 @@ func (s *SQLStore) AutoApproveIfWithinGracePeriod(username, hostname, id string)
 
 // ── One-tap ─────────────────────────────────────────────────────────────────
 
-func (s *SQLStore) ConsumeOneTap(challengeID string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) ConsumeOneTap(ctx context.Context, challengeID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	tx, err := s.beginTxRMW(ctx)
 	if err != nil {
@@ -642,8 +642,8 @@ func (s *SQLStore) ConsumeOneTap(challengeID string) error {
 	return nil
 }
 
-func (s *SQLStore) ConsumeAndApprove(challengeID, approvedBy string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) ConsumeAndApprove(ctx context.Context, challengeID, approvedBy string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	tx, err := s.beginTxRMW(ctx)
 	if err != nil {
@@ -716,8 +716,8 @@ func (s *SQLStore) ConsumeAndApprove(challengeID, approvedBy string) error {
 
 // ── Pending queries ─────────────────────────────────────────────────────────
 
-func (s *SQLStore) PendingChallenges(username string) []Challenge {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) PendingChallenges(ctx context.Context, username string) []Challenge {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
 		`SELECT `+challengeColumns+` FROM challenges
@@ -745,8 +745,8 @@ func (s *SQLStore) PendingChallenges(username string) []Challenge {
 	return out
 }
 
-func (s *SQLStore) AllPendingChallenges() []Challenge {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) AllPendingChallenges(ctx context.Context) []Challenge {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
 		`SELECT `+challengeColumns+` FROM challenges

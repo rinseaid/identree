@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -61,7 +62,7 @@ func buildFormRequest(secret, username, role, path string, formValues url.Values
 // createPendingChallenge creates a challenge via the store and returns it.
 func createPendingChallenge(t *testing.T, s *Server, username, hostname string) *challpkg.Challenge {
 	t.Helper()
-	c, err := s.store.Create(username, hostname, "", "")
+	c, err := s.store.Create(context.Background(), username, hostname, "", "")
 	if err != nil {
 		t.Fatalf("failed to create challenge: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestHandleRevokeSession_Success(t *testing.T) {
 	s := newMutationTestServer(t, secret)
 
 	// Create a grace session to revoke.
-	s.store.CreateGraceSession("alice", "web01", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
 
 	form := url.Values{
 		"hostname": {"web01"},
@@ -224,7 +225,7 @@ func TestHandleRejectChallenge_WithReason(t *testing.T) {
 	}
 
 	// Verify the challenge is denied.
-	ch, ok := s.store.Get(c.ID)
+	ch, ok := s.store.Get(context.Background(), c.ID)
 	if !ok {
 		t.Fatal("challenge not found after rejection")
 	}
@@ -253,7 +254,7 @@ func TestHandleRejectChallenge_WithoutReason(t *testing.T) {
 		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
 	}
 
-	ch, ok := s.store.Get(c.ID)
+	ch, ok := s.store.Get(context.Background(), c.ID)
 	if !ok {
 		t.Fatal("challenge not found after rejection")
 	}
@@ -303,7 +304,7 @@ func TestHandleBulkApprove_MultiApproval_Partial(t *testing.T) {
 	}
 
 	// Verify challenge is still pending.
-	ch, ok := s.store.Get(challengeID)
+	ch, ok := s.store.Get(context.Background(), challengeID)
 	if !ok {
 		t.Fatal("challenge not found after partial approval")
 	}
@@ -353,7 +354,7 @@ func TestHandleBulkApprove_MultiApproval_Full(t *testing.T) {
 	}
 
 	// Verify challenge is now approved.
-	ch, ok := s.store.Get(challengeID)
+	ch, ok := s.store.Get(context.Background(), challengeID)
 	if !ok {
 		t.Fatal("challenge not found after full approval")
 	}
@@ -385,7 +386,7 @@ func TestHandleBulkApprove_SingleApproval(t *testing.T) {
 	}
 
 	// Verify challenge is approved.
-	ch, ok := s.store.Get(c.ID)
+	ch, ok := s.store.Get(context.Background(), c.ID)
 	if !ok {
 		t.Fatal("challenge not found")
 	}
@@ -481,7 +482,7 @@ func TestHandleBreakglassOverride_Allowed(t *testing.T) {
 	}
 
 	// Verify the challenge is approved and marked as break-glass override.
-	ch, ok := s.store.Get(challengeID)
+	ch, ok := s.store.Get(context.Background(), challengeID)
 	if !ok {
 		t.Fatal("challenge not found after override")
 	}
@@ -524,7 +525,7 @@ func TestHandleBreakglassOverride_NotAllowed(t *testing.T) {
 	}
 
 	// Verify challenge is still pending.
-	ch, ok := s.store.Get(challengeID)
+	ch, ok := s.store.Get(context.Background(), challengeID)
 	if !ok {
 		t.Fatal("challenge not found")
 	}

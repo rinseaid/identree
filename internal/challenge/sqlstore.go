@@ -374,8 +374,8 @@ func (s *SQLStore) Stop() {
 }
 
 // HealthCheck pings the underlying database.
-func (s *SQLStore) HealthCheck() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) HealthCheck(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := s.db.PingContext(ctx); err != nil {
 		return fmt.Errorf("sql health: %w", err)

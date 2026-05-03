@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,14 +27,14 @@ func TestHandleAdminHosts_RendersAgentColumn(t *testing.T) {
 
 	// Seed an action_log entry so the host appears, then a heartbeat so
 	// it gets the chevron + detail row.
-	s.store.LogAction("alice", challpkg.ActionApproved, "prod-web-01", "ABC123", "")
-	s.store.RecordHeartbeat(challpkg.AgentHeartbeat{
+	s.store.LogAction(context.Background(), "alice", challpkg.ActionApproved, "prod-web-01", "ABC123", "")
+	s.store.RecordHeartbeat(context.Background(), challpkg.AgentHeartbeat{
 		Hostname: "prod-web-01", Version: "0.42.0",
 		OSInfo: "Ubuntu 24.04.4 LTS (arm64)", IP: "10.0.0.1",
 	})
 	// Also seed an action-only host (no heartbeat) so we can assert it
 	// renders without a chevron and shows "--" in last seen.
-	s.store.LogAction("alice", challpkg.ActionApproved, "no-agent-host", "DEF456", "")
+	s.store.LogAction(context.Background(), "alice", challpkg.ActionApproved, "no-agent-host", "DEF456", "")
 
 	r := httptest.NewRequest(http.MethodGet, "/admin/hosts", nil)
 	loginAdminCookie(t, secret, "alice", r)
@@ -94,8 +95,8 @@ func TestHandleAdminHosts_StatusPillBuckets(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newAdminTestServer(t, secret)
-			s.store.LogAction("alice", challpkg.ActionApproved, "h", "C", "")
-			s.store.RecordHeartbeat(challpkg.AgentHeartbeat{Hostname: "h"})
+			s.store.LogAction(context.Background(), "alice", challpkg.ActionApproved, "h", "C", "")
+			s.store.RecordHeartbeat(context.Background(), challpkg.AgentHeartbeat{Hostname: "h"})
 			// Backdate last_seen by directly writing the agents row.
 			db := s.store.(*challpkg.SQLStore).DB()
 			past := time.Now().Add(-time.Duration(tc.ageSec) * time.Second).Unix()
@@ -154,8 +155,8 @@ func TestHandleHistoryPage_RendersRows(t *testing.T) {
 	cfg := emptyConfig(secret)
 	s := newDashboardTestServer(t, &cfg)
 
-	s.store.LogAction("alice", challpkg.ActionApproved, "host1", "CODE-X", "admin")
-	s.store.LogAction("alice", challpkg.ActionRevoked, "host1", "CODE-Y", "admin")
+	s.store.LogAction(context.Background(), "alice", challpkg.ActionApproved, "host1", "CODE-X", "admin")
+	s.store.LogAction(context.Background(), "alice", challpkg.ActionRevoked, "host1", "CODE-Y", "admin")
 
 	r := httptest.NewRequest(http.MethodGet, "/history", nil)
 	loginAdminCookie(t, secret, "alice", r)

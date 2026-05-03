@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	challpkg "github.com/rinseaid/identree/internal/challenge"
@@ -245,13 +246,6 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ── 1b. Database health check (always — SQL is the only backend) ────────
-	if err := s.store.HealthCheck(); err != nil {
-		res.database = "error"
-	} else {
-		res.database = "ok"
-	}
-
 	// ── 2. LDAP sync staleness ────────────────────────────────────────────────
 	if s.cfg.LDAPEnabled {
 		res.ldapSync = "ok"
@@ -276,54 +270,84 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ── 4. External connectivity checks (cached 30 s) ────────────────────────
-	// These are "degraded" failures only — the server can still serve LDAP from
-	// cache even when PocketID or the OIDC issuer is temporarily unreachable.
+	// ── 4. Parallel probes: database, PocketID, OIDC ─────────────────────────
+	// Run all network/IO probes concurrently so total latency is bounded by the
+	// slowest single probe (~2 s) instead of the sum (~6 s).
 	s.healthzConnMu.Lock()
 	needRefresh := time.Since(s.healthzConnLast) > 30*time.Second
 	pocketIDOK := s.healthzPocketIDOK
 	oidcOK := s.healthzOIDCOK
 	s.healthzConnMu.Unlock()
 
+	var wg sync.WaitGroup
+	var dbOK bool
+
+	// 4a. Database health check.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dbOK = s.store.HealthCheck(r.Context()) == nil
+	}()
+
+	newPocketIDOK := true
+	newOIDCOK := true
+
 	if needRefresh {
 		probeClient := &http.Client{Timeout: 2 * time.Second}
 
-		// PocketID API probe (full mode only — bridge mode has no API key).
-		newPocketIDOK := true
+		// 4b. PocketID API probe (full mode only — bridge mode has no API key).
 		if s.cfg.APIKey != "" && s.cfg.APIURL != "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			req, err := http.NewRequestWithContext(ctx, http.MethodHead,
-				strings.TrimRight(s.cfg.APIURL, "/")+"/api/v1/users", nil)
-			if err == nil {
-				resp, rerr := probeClient.Do(req)
-				if rerr != nil || resp.StatusCode >= 500 {
-					newPocketIDOK = false
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				req, err := http.NewRequestWithContext(ctx, http.MethodHead,
+					strings.TrimRight(s.cfg.APIURL, "/")+"/api/v1/users", nil)
+				if err == nil {
+					resp, rerr := probeClient.Do(req)
+					if rerr != nil || resp.StatusCode >= 500 {
+						newPocketIDOK = false
+					}
+					if resp != nil {
+						resp.Body.Close()
+					}
 				}
-				if resp != nil {
-					resp.Body.Close()
-				}
-			}
-			cancel()
+			}()
 		}
 
-		// OIDC issuer probe.
-		newOIDCOK := true
+		// 4c. OIDC issuer probe.
 		if s.cfg.IssuerURL != "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-				strings.TrimRight(s.cfg.IssuerURL, "/")+"/.well-known/openid-configuration", nil)
-			if err == nil {
-				resp, rerr := probeClient.Do(req)
-				if rerr != nil || resp.StatusCode >= 500 {
-					newOIDCOK = false
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+					strings.TrimRight(s.cfg.IssuerURL, "/")+"/.well-known/openid-configuration", nil)
+				if err == nil {
+					resp, rerr := probeClient.Do(req)
+					if rerr != nil || resp.StatusCode >= 500 {
+						newOIDCOK = false
+					}
+					if resp != nil {
+						resp.Body.Close()
+					}
 				}
-				if resp != nil {
-					resp.Body.Close()
-				}
-			}
-			cancel()
+			}()
 		}
+	}
 
+	wg.Wait()
+
+	// Store database result.
+	if dbOK {
+		res.database = "ok"
+	} else {
+		res.database = "error"
+	}
+
+	if needRefresh {
 		s.healthzConnMu.Lock()
 		s.healthzPocketIDOK = newPocketIDOK
 		s.healthzOIDCOK = newOIDCOK
@@ -478,8 +502,8 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":             true,
 		"CSRFToken":            infoCSRFToken,
 		"CSRFTs":               infoCSRFTs,
-		"Pending":              s.buildAllPendingViews(username, lang),
-		"AllPendingQueue":      s.buildAllPendingViews(username, lang),
+		"Pending":              s.buildAllPendingViews(r.Context(), username, lang),
+		"AllPendingQueue":      s.buildAllPendingViews(r.Context(), username, lang),
 		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
 		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"Version":             version,
@@ -490,8 +514,8 @@ func (s *Server) handleAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"OSArch":              runtime.GOOS + "/" + runtime.GOARCH,
 		"Goroutines":          runtime.NumGoroutine(),
 		"MemUsage":            fmt.Sprintf("%.1f MB alloc / %.1f MB sys", float64(memStats.Alloc)/1024/1024, float64(memStats.Sys)/1024/1024),
-		"ActiveSessionsCount":  len(s.store.AllActiveSessions()),
-		"ActiveChallengeCount": len(s.store.AllPendingChallenges()),
+		"ActiveSessionsCount":  len(s.store.AllActiveSessions(r.Context())),
+		"ActiveChallengeCount": len(s.store.AllPendingChallenges(r.Context())),
 		"LDAPSyncError":        s.ldapSyncError(),
 		"PocketIDSyncAge":      s.pocketIDSyncAge(),
 	}); err != nil {
@@ -608,7 +632,7 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		// Apply live-safe changes.
 		s.applyLiveConfigUpdates(values, username)
 
-		s.store.LogAction(username, challpkg.ActionConfigChanged, "", "", username)
+		s.store.LogAction(r.Context(), username, challpkg.ActionConfigChanged, "", "", username)
 		s.dispatchNotification(notify.WebhookData{
 			Event:      "config_changed",
 			Username:   username,
@@ -687,8 +711,8 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":       true,
 		"CSRFToken":            csrfToken,
 		"CSRFTs":               csrfTs,
-		"Pending":              s.buildAllPendingViews(username, lang),
-		"AllPendingQueue":      s.buildAllPendingViews(username, lang),
+		"Pending":              s.buildAllPendingViews(r.Context(), username, lang),
+		"AllPendingQueue":      s.buildAllPendingViews(r.Context(), username, lang),
 		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
 		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"ConfigValues":          configToValues(s.cfg),
@@ -1318,7 +1342,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	users := s.store.AllUsers()
+	users := s.store.AllUsers(r.Context())
 
 	// Fetch group permissions from Pocket ID (cached)
 	var userPerms map[string][]pocketid.GroupInfo
@@ -1413,11 +1437,11 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	// Bulk-fetch all active sessions and action history to avoid N+1 store queries.
 	allSessionsByUser := make(map[string][]challpkg.GraceSession)
-	for _, sess := range s.store.AllActiveSessions() {
+	for _, sess := range s.store.AllActiveSessions(r.Context()) {
 		allSessionsByUser[sess.Username] = append(allSessionsByUser[sess.Username], sess)
 	}
 	latestActionByUser := make(map[string]time.Time)
-	for _, entry := range s.store.AllActionHistoryWithUsers() {
+	for _, entry := range s.store.AllActionHistoryWithUsers(r.Context(), 10000, 0) {
 		if entry.Timestamp.After(latestActionByUser[entry.Username]) {
 			latestActionByUser[entry.Username] = entry.Timestamp
 		}
@@ -1528,8 +1552,8 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		"UserDir":       userSortDir,
 		"CSRFToken":            csrfToken,
 		"CSRFTs":               csrfTs,
-		"Pending":              s.buildAllPendingViews(username, lang),
-		"AllPendingQueue":      s.buildAllPendingViews(username, lang),
+		"Pending":              s.buildAllPendingViews(r.Context(), username, lang),
+		"AllPendingQueue":      s.buildAllPendingViews(r.Context(), username, lang),
 		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
 		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"CanEditClaims": s.pocketIDClient != nil,
@@ -1722,8 +1746,8 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		"Lang":          lang,
 		"Languages":     supportedLanguages,
 		"IsAdmin":       true,
-		"Pending":              s.buildAllPendingViews(username, lang),
-		"AllPendingQueue":      s.buildAllPendingViews(username, lang),
+		"Pending":              s.buildAllPendingViews(r.Context(), username, lang),
+		"AllPendingQueue":      s.buildAllPendingViews(r.Context(), username, lang),
 		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
 		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"CanEditClaims": s.pocketIDClient != nil,
@@ -1811,9 +1835,9 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		// Removing a host from the registry should immediately remove it from this page.
 		hosts = s.hostRegistry.RegisteredHosts()
 	} else {
-		hosts = s.store.AllKnownHosts()
+		hosts = s.store.AllKnownHosts(r.Context())
 	}
-	escrowed := s.store.EscrowedHosts()
+	escrowed := s.store.EscrowedHosts(r.Context())
 
 	// Merge escrowed hosts into the known hosts list.
 	// All escrowed hosts are visible to admins regardless of host-registry scoping.
@@ -1934,16 +1958,16 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 			userPerms = perms
 		}
 	}
-	allKnownUsers := s.store.AllUsers()
+	allKnownUsers := s.store.AllUsers(r.Context())
 
 	// Bulk-fetch all active sessions once and index by hostname to avoid N+1 store queries.
 	allSessionsByHost := make(map[string][]challpkg.GraceSession)
-	for _, sess := range s.store.AllActiveSessions() {
+	for _, sess := range s.store.AllActiveSessions(r.Context()) {
 		allSessionsByHost[sess.Hostname] = append(allSessionsByHost[sess.Hostname], sess)
 	}
 
 	// Bulk-fetch agent heartbeats so we can decorate each host row with last-seen info.
-	allAgents := s.store.ListAgents()
+	allAgents := s.store.ListAgents(r.Context())
 	agentByHost := make(map[string]challpkg.AgentStatus, len(allAgents))
 	for _, a := range allAgents {
 		agentByHost[a.Hostname] = a
@@ -2126,8 +2150,8 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 		"Lang":             lang,
 		"Languages":        supportedLanguages,
 		"IsAdmin":          true,
-		"Pending":              s.buildAllPendingViews(username, lang),
-		"AllPendingQueue":      s.buildAllPendingViews(username, lang),
+		"Pending":              s.buildAllPendingViews(r.Context(), username, lang),
+		"AllPendingQueue":      s.buildAllPendingViews(r.Context(), username, lang),
 		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
 		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"HasEscrowedHosts": hasEscrowed,
@@ -2175,8 +2199,8 @@ func (s *Server) handleRemoveUser(w http.ResponseWriter, r *http.Request) {
 		s.hostRegistry.RemoveUserFromAllHosts(targetUser)
 	}
 
-	s.store.LogAction(targetUser, challpkg.ActionRemovedUser, "", "", adminUser)
-	s.store.RemoveUser(targetUser)
+	s.store.LogAction(r.Context(), targetUser, challpkg.ActionRemovedUser, "", "", adminUser)
+	s.store.RemoveUser(r.Context(), targetUser)
 	s.removedUsersMu.Lock()
 	s.removedUsers[targetUser] = time.Now()
 	s.removedUsersMu.Unlock()
@@ -2275,7 +2299,7 @@ func (s *Server) handleUpdateGroupClaims(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.pocketIDClient.InvalidateCache()
-	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Name, "", adminUser)
+	s.store.LogAction(r.Context(), adminUser, challpkg.ActionClaimsUpdated, current.Name, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "claims_updated",
 		Username:   current.Name,
@@ -2403,7 +2427,7 @@ func (s *Server) handleUpdateUserClaims(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.pocketIDClient.InvalidateCache()
-	s.store.LogAction(adminUser, challpkg.ActionClaimsUpdated, current.Username, "", adminUser)
+	s.store.LogAction(r.Context(), adminUser, challpkg.ActionClaimsUpdated, current.Username, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "claims_updated",
 		Username:   current.Username,
@@ -2566,7 +2590,7 @@ func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	s.store.LogAction(username, challpkg.ActionServerRestarted, "", "", username)
+	s.store.LogAction(r.Context(), username, challpkg.ActionServerRestarted, "", "", username)
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "server_restarted",
 		Username:   username,

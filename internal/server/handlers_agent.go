@@ -56,7 +56,7 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.RecordHeartbeat(challenge.AgentHeartbeat{
+	s.store.RecordHeartbeat(r.Context(), challenge.AgentHeartbeat{
 		Hostname: req.Hostname,
 		Version:  strings.TrimSpace(req.Version),
 		OSInfo:   strings.TrimSpace(req.OSInfo),
@@ -91,7 +91,7 @@ func (s *Server) handleAgentList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	agents := s.store.ListAgents()
+	agents := s.store.ListAgents(r.Context())
 	out := make([]agentListEntry, 0, len(agents))
 	for _, a := range agents {
 		entry := agentListEntry{

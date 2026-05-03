@@ -304,7 +304,7 @@ func TestHandleCreateChallenge_GraceAutoApprove(t *testing.T) {
 	firstID := resp1["challenge_id"].(string)
 
 	// Step 2: Approve first challenge (creates a grace session).
-	if err := store.Approve(firstID, "admin"); err != nil {
+	if err := store.Approve(context.Background(), firstID, "admin"); err != nil {
 		t.Fatalf("approving first challenge: %v", err)
 	}
 
@@ -359,7 +359,7 @@ func TestHandleCreateChallenge_GraceAutoApprove_DifferentHost(t *testing.T) {
 	}
 	var resp1 map[string]interface{}
 	json.NewDecoder(w1.Body).Decode(&resp1)
-	store.Approve(resp1["challenge_id"].(string), "admin")
+	store.Approve(context.Background(), resp1["challenge_id"].(string), "admin")
 
 	// Create challenge for DIFFERENT host — should NOT auto-approve.
 	w2 := postChallenge(s, map[string]string{
@@ -470,7 +470,7 @@ func TestHandleGraceStatus_WithActiveGrace(t *testing.T) {
 	s := newAPITestServer(t, secret)
 
 	// Create a grace session.
-	s.store.CreateGraceSession("alice", "web01", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
 
 	r := httptest.NewRequest(http.MethodGet, "/api/grace-status?username=alice&hostname=web01", nil)
 	r.Header.Set("X-Shared-Secret", secret)
@@ -748,7 +748,7 @@ func TestHandlePollChallenge_ApprovedChallenge(t *testing.T) {
 	json.NewDecoder(cw.Body).Decode(&createResp)
 	challengeID := createResp["challenge_id"].(string)
 
-	s.store.Approve(challengeID, "admin")
+	s.store.Approve(context.Background(), challengeID, "admin")
 
 	// Poll should return approved.
 	r := httptest.NewRequest(http.MethodGet, "/api/challenge/"+challengeID+"?hostname=web01", nil)
@@ -783,7 +783,7 @@ func TestHandlePollChallenge_DeniedChallenge(t *testing.T) {
 	json.NewDecoder(cw.Body).Decode(&createResp)
 	challengeID := createResp["challenge_id"].(string)
 
-	s.store.Deny(challengeID, "test reason")
+	s.store.Deny(context.Background(), challengeID, "test reason")
 
 	r := httptest.NewRequest(http.MethodGet, "/api/challenge/"+challengeID+"?hostname=web01", nil)
 	r.Header.Set("X-Shared-Secret", secret)
@@ -891,7 +891,7 @@ func TestHandlePollChallenge_ExpiredChallenge(t *testing.T) {
 	}
 
 	// Create a challenge via the store directly.
-	c, err := store.Create("alice", "web01", "", "")
+	c, err := store.Create(context.Background(), "alice", "web01", "", "")
 	if err != nil {
 		t.Fatalf("creating challenge: %v", err)
 	}
@@ -983,10 +983,10 @@ func TestHandleBreakglassEscrow_Success(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
 	}
-	if _, ok := s.store.EscrowedHosts()["web01"]; !ok {
+	if _, ok := s.store.EscrowedHosts(context.Background())["web01"]; !ok {
 		t.Error("expected escrow record for web01")
 	}
-	ct, ok := s.store.GetEscrowCiphertext("web01")
+	ct, ok := s.store.GetEscrowCiphertext(context.Background(), "web01")
 	if !ok || ct == "" {
 		t.Error("expected non-empty ciphertext stored for web01")
 	}
@@ -1000,7 +1000,7 @@ func TestHandleBreakglassEscrow_MissingSharedSecret(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d; body: %s", w.Code, w.Body.String())
 	}
-	if _, ok := s.store.EscrowedHosts()["web01"]; ok {
+	if _, ok := s.store.EscrowedHosts(context.Background())["web01"]; ok {
 		t.Error("escrow record must not exist after unauthorized request")
 	}
 }
@@ -1016,7 +1016,7 @@ func TestHandleBreakglassEscrow_WrongEscrowToken(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "invalid escrow token") {
 		t.Errorf("expected 'invalid escrow token' error, got %s", w.Body.String())
 	}
-	if _, ok := s.store.EscrowedHosts()["web01"]; ok {
+	if _, ok := s.store.EscrowedHosts(context.Background())["web01"]; ok {
 		t.Error("escrow record must not exist after bad token")
 	}
 }
@@ -1165,7 +1165,7 @@ func seedEscrow(t *testing.T, s *Server, hostname, password string) {
 	if _, _, err := backend.Store(context.Background(), hostname, password, ""); err != nil {
 		t.Fatalf("seed escrow: %v", err)
 	}
-	s.store.RecordEscrow(hostname, "", "")
+	s.store.RecordEscrow(context.Background(), hostname, "", "")
 }
 
 func buildAdminReveal(secret, username, hostname string) *http.Request {
@@ -1202,7 +1202,7 @@ func TestHandleBreakglassReveal_AdminSuccess(t *testing.T) {
 	if resp["password"] != "rotated-password-123" {
 		t.Errorf("expected decrypted password, got %q", resp["password"])
 	}
-	actions := s.store.ActionHistory("admin-user", 10)
+	actions := s.store.ActionHistory(context.Background(), "admin-user", 10)
 	found := false
 	for _, a := range actions {
 		if a.Hostname == "web01" && strings.Contains(strings.ToLower(string(a.Action)), "breakglass") {
@@ -1279,7 +1279,7 @@ func TestHandleBreakglassReveal_MultipleRevealsAuditedSeparately(t *testing.T) {
 		}
 	}
 
-	actions := s.store.ActionHistory("admin-user", 10)
+	actions := s.store.ActionHistory(context.Background(), "admin-user", 10)
 	count := 0
 	for _, a := range actions {
 		if a.Hostname == "web01" && strings.Contains(strings.ToLower(string(a.Action)), "breakglass") {
@@ -1326,7 +1326,7 @@ func TestHandleBreakglassReport_Success(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
 	}
-	actions := s.store.ActionHistory("alice", 10)
+	actions := s.store.ActionHistory(context.Background(), "alice", 10)
 	found := false
 	for _, a := range actions {
 		if a.Hostname == "web01" {

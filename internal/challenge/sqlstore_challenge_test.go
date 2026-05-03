@@ -1,6 +1,7 @@
 package challenge
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -10,7 +11,7 @@ import (
 func TestSQLStore_CreateAndGet(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	c, err := s.Create("alice", "host1", "", "needs root")
+	c, err := s.Create(context.Background(), "alice", "host1", "", "needs root")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -24,7 +25,7 @@ func TestSQLStore_CreateAndGet(t *testing.T) {
 		t.Errorf("Create roundtrip: %+v", c)
 	}
 
-	got, ok := s.Get(c.ID)
+	got, ok := s.Get(context.Background(), c.ID)
 	if !ok {
 		t.Fatal("Get: not found")
 	}
@@ -32,15 +33,15 @@ func TestSQLStore_CreateAndGet(t *testing.T) {
 		t.Errorf("Get: got %+v", got)
 	}
 
-	gotByCode, ok := s.GetByCode(c.UserCode)
+	gotByCode, ok := s.GetByCode(context.Background(), c.UserCode)
 	if !ok || gotByCode.ID != c.ID {
 		t.Errorf("GetByCode: got (%+v, %v)", gotByCode, ok)
 	}
 
-	if _, ok := s.Get("missing"); ok {
+	if _, ok := s.Get(context.Background(), "missing"); ok {
 		t.Error("Get(missing): want false")
 	}
-	if _, ok := s.GetByCode("MISSING"); ok {
+	if _, ok := s.GetByCode(context.Background(), "MISSING"); ok {
 		t.Error("GetByCode(missing): want false")
 	}
 }
@@ -49,36 +50,36 @@ func TestSQLStore_CreatePerUserCap(t *testing.T) {
 	s := newTestSQLStore(t)
 
 	for i := 0; i < maxChallengesPerUser; i++ {
-		if _, err := s.Create("alice", "h", "", ""); err != nil {
+		if _, err := s.Create(context.Background(), "alice", "h", "", ""); err != nil {
 			t.Fatalf("Create #%d: %v", i, err)
 		}
 	}
-	_, err := s.Create("alice", "h", "", "")
+	_, err := s.Create(context.Background(), "alice", "h", "", "")
 	if !errors.Is(err, ErrTooManyPerUser) {
 		t.Errorf("Create over per-user cap: got %v, want ErrTooManyPerUser", err)
 	}
 	// A different user is unaffected.
-	if _, err := s.Create("bob", "h", "", ""); err != nil {
+	if _, err := s.Create(context.Background(), "bob", "h", "", ""); err != nil {
 		t.Errorf("Create bob: %v", err)
 	}
 }
 
 func TestSQLStore_SetNonce(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, _ := s.Create("alice", "h", "", "")
+	c, _ := s.Create(context.Background(), "alice", "h", "", "")
 
-	if err := s.SetNonce(c.ID, "nonce-1"); err != nil {
+	if err := s.SetNonce(context.Background(), c.ID, "nonce-1"); err != nil {
 		t.Fatalf("SetNonce first: %v", err)
 	}
-	if err := s.SetNonce(c.ID, "nonce-2"); err == nil {
+	if err := s.SetNonce(context.Background(), c.ID, "nonce-2"); err == nil {
 		t.Error("SetNonce twice: want error")
 	}
-	if err := s.SetNonce("missing", "n"); err == nil {
+	if err := s.SetNonce(context.Background(), "missing", "n"); err == nil {
 		t.Error("SetNonce(missing): want error")
 	}
 
 	// Verify the nonce landed.
-	got, _ := s.Get(c.ID)
+	got, _ := s.Get(context.Background(), c.ID)
 	if got.Nonce != "nonce-1" {
 		t.Errorf("Nonce: got %q, want nonce-1", got.Nonce)
 	}
@@ -86,12 +87,12 @@ func TestSQLStore_SetNonce(t *testing.T) {
 
 func TestSQLStore_Approve(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, _ := s.Create("alice", "h1", "", "")
+	c, _ := s.Create(context.Background(), "alice", "h1", "", "")
 
-	if err := s.Approve(c.ID, "admin"); err != nil {
+	if err := s.Approve(context.Background(), c.ID, "admin"); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	got, ok := s.Get(c.ID)
+	got, ok := s.Get(context.Background(), c.ID)
 	if !ok {
 		t.Fatal("Get after Approve: not found")
 	}
@@ -105,44 +106,44 @@ func TestSQLStore_Approve(t *testing.T) {
 		t.Error("ApprovedAt: want non-zero")
 	}
 	// Grace session should now exist.
-	if !s.WithinGracePeriod("alice", "h1") {
+	if !s.WithinGracePeriod(context.Background(), "alice", "h1") {
 		t.Error("WithinGracePeriod after Approve: want true")
 	}
 
 	// Second approval rejected.
-	if err := s.Approve(c.ID, "admin"); !errors.Is(err, ErrAlreadyResolved) {
+	if err := s.Approve(context.Background(), c.ID, "admin"); !errors.Is(err, ErrAlreadyResolved) {
 		t.Errorf("Approve twice: got %v, want ErrAlreadyResolved", err)
 	}
 }
 
 func TestSQLStore_ApproveBlockedByRevocation(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, _ := s.Create("alice", "h", "", "")
+	c, _ := s.Create(context.Background(), "alice", "h", "", "")
 
 	// Revoke tokens AFTER the challenge was created.
 	time.Sleep(1100 * time.Millisecond) // ensure revoked_at > created_at given Unix-second resolution
-	s.RevokeSession("alice", "h")
+	s.RevokeSession(context.Background(), "alice", "h")
 
-	if err := s.Approve(c.ID, "admin"); err == nil {
+	if err := s.Approve(context.Background(), c.ID, "admin"); err == nil {
 		t.Error("Approve after revocation: want error")
 	}
 }
 
 func TestSQLStore_Deny(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, _ := s.Create("alice", "h", "", "")
+	c, _ := s.Create(context.Background(), "alice", "h", "", "")
 
-	if err := s.Deny(c.ID, "no thanks"); err != nil {
+	if err := s.Deny(context.Background(), c.ID, "no thanks"); err != nil {
 		t.Fatalf("Deny: %v", err)
 	}
-	got, _ := s.Get(c.ID)
+	got, _ := s.Get(context.Background(), c.ID)
 	if got.Status != StatusDenied {
 		t.Errorf("Status: got %q, want %q", got.Status, StatusDenied)
 	}
 	if got.DenyReason != "no thanks" {
 		t.Errorf("DenyReason: got %q", got.DenyReason)
 	}
-	if err := s.Deny(c.ID, "again"); !errors.Is(err, ErrAlreadyResolved) {
+	if err := s.Deny(context.Background(), c.ID, "again"); !errors.Is(err, ErrAlreadyResolved) {
 		t.Errorf("Deny twice: got %v, want ErrAlreadyResolved", err)
 	}
 }
@@ -150,27 +151,27 @@ func TestSQLStore_Deny(t *testing.T) {
 func TestSQLStore_AutoApproveDoesNotExtendGrace(t *testing.T) {
 	s := newTestSQLStore(t)
 	// First, create a grace session for alice on h via Approve.
-	c1, _ := s.Create("alice", "h", "", "")
-	if err := s.Approve(c1.ID, "admin"); err != nil {
+	c1, _ := s.Create(context.Background(), "alice", "h", "", "")
+	if err := s.Approve(context.Background(), c1.ID, "admin"); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	originalRem := s.GraceRemaining("alice", "h")
+	originalRem := s.GraceRemaining(context.Background(), "alice", "h")
 
 	time.Sleep(1100 * time.Millisecond)
 
-	c2, _ := s.Create("alice", "h", "", "")
-	if err := s.AutoApprove(c2.ID); err != nil {
+	c2, _ := s.Create(context.Background(), "alice", "h", "", "")
+	if err := s.AutoApprove(context.Background(), c2.ID); err != nil {
 		t.Fatalf("AutoApprove: %v", err)
 	}
 	// AutoApprove should NOT push the grace expiry forward.
-	newRem := s.GraceRemaining("alice", "h")
+	newRem := s.GraceRemaining(context.Background(), "alice", "h")
 	// New remaining should be strictly less than the originally captured value
 	// (because time has passed).
 	if newRem >= originalRem {
 		t.Errorf("AutoApprove extended grace: original=%v new=%v", originalRem, newRem)
 	}
 
-	got, _ := s.Get(c2.ID)
+	got, _ := s.Get(context.Background(), c2.ID)
 	if got.Status != StatusApproved {
 		t.Errorf("Status: got %q, want %q", got.Status, StatusApproved)
 	}
@@ -182,18 +183,18 @@ func TestSQLStore_AutoApproveDoesNotExtendGrace(t *testing.T) {
 func TestSQLStore_AutoApproveIfWithinGracePeriod(t *testing.T) {
 	s := newTestSQLStore(t)
 	// No grace session yet.
-	c, _ := s.Create("alice", "h", "", "")
-	if ok := s.AutoApproveIfWithinGracePeriod("alice", "h", c.ID); ok {
+	c, _ := s.Create(context.Background(), "alice", "h", "", "")
+	if ok := s.AutoApproveIfWithinGracePeriod(context.Background(), "alice", "h", c.ID); ok {
 		t.Error("AutoApproveIfWithinGracePeriod with no grace: want false")
 	}
 
 	// Create grace session, then try again with a fresh challenge.
-	s.CreateGraceSession("alice", "h", time.Hour)
-	c2, _ := s.Create("alice", "h", "", "")
-	if !s.AutoApproveIfWithinGracePeriod("alice", "h", c2.ID) {
+	s.CreateGraceSession(context.Background(), "alice", "h", time.Hour)
+	c2, _ := s.Create(context.Background(), "alice", "h", "", "")
+	if !s.AutoApproveIfWithinGracePeriod(context.Background(), "alice", "h", c2.ID) {
 		t.Error("AutoApproveIfWithinGracePeriod with active grace: want true")
 	}
-	got, _ := s.Get(c2.ID)
+	got, _ := s.Get(context.Background(), c2.ID)
 	if got.Status != StatusApproved {
 		t.Errorf("Status: got %q", got.Status)
 	}
@@ -201,16 +202,16 @@ func TestSQLStore_AutoApproveIfWithinGracePeriod(t *testing.T) {
 
 func TestSQLStore_AddApproval(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, _ := s.Create("alice", "h", "", "")
+	c, _ := s.Create(context.Background(), "alice", "h", "", "")
 
-	full, err := s.AddApproval(c.ID, "approver1", 2)
+	full, err := s.AddApproval(context.Background(), c.ID, "approver1", 2)
 	if err != nil {
 		t.Fatalf("AddApproval #1: %v", err)
 	}
 	if full {
 		t.Error("AddApproval #1: should not be fully approved yet")
 	}
-	got, _ := s.Get(c.ID)
+	got, _ := s.Get(context.Background(), c.ID)
 	if got.Status != StatusPending {
 		t.Errorf("Status after partial: got %q, want pending", got.Status)
 	}
@@ -219,18 +220,18 @@ func TestSQLStore_AddApproval(t *testing.T) {
 	}
 
 	// Duplicate from same approver rejected.
-	if _, err := s.AddApproval(c.ID, "approver1", 2); !errors.Is(err, ErrDuplicateApprover) {
+	if _, err := s.AddApproval(context.Background(), c.ID, "approver1", 2); !errors.Is(err, ErrDuplicateApprover) {
 		t.Errorf("AddApproval duplicate: got %v, want ErrDuplicateApprover", err)
 	}
 
-	full, err = s.AddApproval(c.ID, "approver2", 2)
+	full, err = s.AddApproval(context.Background(), c.ID, "approver2", 2)
 	if err != nil {
 		t.Fatalf("AddApproval #2: %v", err)
 	}
 	if !full {
 		t.Error("AddApproval #2: should be fully approved")
 	}
-	got, _ = s.Get(c.ID)
+	got, _ = s.Get(context.Background(), c.ID)
 	if got.Status != StatusApproved {
 		t.Errorf("Status after full: got %q, want approved", got.Status)
 	}
@@ -241,27 +242,27 @@ func TestSQLStore_AddApproval(t *testing.T) {
 
 func TestSQLStore_OneTap(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, _ := s.Create("alice", "h", "", "")
+	c, _ := s.Create(context.Background(), "alice", "h", "", "")
 
-	if err := s.ConsumeOneTap(c.ID); err != nil {
+	if err := s.ConsumeOneTap(context.Background(), c.ID); err != nil {
 		t.Fatalf("ConsumeOneTap: %v", err)
 	}
-	if err := s.ConsumeOneTap(c.ID); err == nil {
+	if err := s.ConsumeOneTap(context.Background(), c.ID); err == nil {
 		t.Error("ConsumeOneTap twice: want error")
 	}
-	if err := s.ConsumeOneTap("missing"); err == nil {
+	if err := s.ConsumeOneTap(context.Background(), "missing"); err == nil {
 		t.Error("ConsumeOneTap(missing): want error")
 	}
 }
 
 func TestSQLStore_ConsumeAndApprove(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, _ := s.Create("alice", "h", "", "")
+	c, _ := s.Create(context.Background(), "alice", "h", "", "")
 
-	if err := s.ConsumeAndApprove(c.ID, "admin"); err != nil {
+	if err := s.ConsumeAndApprove(context.Background(), c.ID, "admin"); err != nil {
 		t.Fatalf("ConsumeAndApprove: %v", err)
 	}
-	got, _ := s.Get(c.ID)
+	got, _ := s.Get(context.Background(), c.ID)
 	if got.Status != StatusApproved {
 		t.Errorf("Status: got %q", got.Status)
 	}
@@ -269,15 +270,15 @@ func TestSQLStore_ConsumeAndApprove(t *testing.T) {
 		t.Errorf("ApprovedBy: got %q", got.ApprovedBy)
 	}
 	// One-tap can't be reused.
-	if err := s.ConsumeAndApprove(c.ID, "admin"); err == nil {
+	if err := s.ConsumeAndApprove(context.Background(), c.ID, "admin"); err == nil {
 		t.Error("ConsumeAndApprove twice: want error")
 	}
 	// And the standard ConsumeOneTap rejects the consumed flag too.
-	c2, _ := s.Create("bob", "h", "", "")
-	if err := s.ConsumeOneTap(c2.ID); err != nil {
+	c2, _ := s.Create(context.Background(), "bob", "h", "", "")
+	if err := s.ConsumeOneTap(context.Background(), c2.ID); err != nil {
 		t.Fatalf("ConsumeOneTap bob: %v", err)
 	}
-	if err := s.ConsumeAndApprove(c2.ID, "admin"); err == nil {
+	if err := s.ConsumeAndApprove(context.Background(), c2.ID, "admin"); err == nil {
 		t.Error("ConsumeAndApprove after ConsumeOneTap: want error")
 	}
 }
@@ -285,19 +286,19 @@ func TestSQLStore_ConsumeAndApprove(t *testing.T) {
 func TestSQLStore_PendingChallenges(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	c1, _ := s.Create("alice", "h", "", "")
-	_, _ = s.Create("alice", "h2", "", "")
-	c3, _ := s.Create("bob", "h", "", "")
+	c1, _ := s.Create(context.Background(), "alice", "h", "", "")
+	_, _ = s.Create(context.Background(), "alice", "h2", "", "")
+	c3, _ := s.Create(context.Background(), "bob", "h", "", "")
 
 	// Approve one to remove it from pending.
-	_ = s.Approve(c1.ID, "admin")
+	_ = s.Approve(context.Background(), c1.ID, "admin")
 
-	pending := s.PendingChallenges("alice")
+	pending := s.PendingChallenges(context.Background(), "alice")
 	if len(pending) != 1 {
 		t.Errorf("PendingChallenges(alice): got %d, want 1", len(pending))
 	}
 
-	all := s.AllPendingChallenges()
+	all := s.AllPendingChallenges(context.Background())
 	if len(all) != 2 {
 		t.Errorf("AllPendingChallenges: got %d, want 2", len(all))
 	}
@@ -309,43 +310,43 @@ func TestSQLStore_PendingChallenges(t *testing.T) {
 func TestSQLStore_GraceSessionLifecycle(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	if s.WithinGracePeriod("alice", "h") {
+	if s.WithinGracePeriod(context.Background(), "alice", "h") {
 		t.Error("WithinGracePeriod with no session: want false")
 	}
-	if rem := s.GraceRemaining("alice", "h"); rem != 0 {
+	if rem := s.GraceRemaining(context.Background(), "alice", "h"); rem != 0 {
 		t.Errorf("GraceRemaining with no session: got %v, want 0", rem)
 	}
 
-	s.CreateGraceSession("alice", "h", 10*time.Minute)
-	if !s.WithinGracePeriod("alice", "h") {
+	s.CreateGraceSession(context.Background(), "alice", "h", 10*time.Minute)
+	if !s.WithinGracePeriod(context.Background(), "alice", "h") {
 		t.Error("WithinGracePeriod after Create: want true")
 	}
-	if rem := s.GraceRemaining("alice", "h"); rem <= 0 || rem > 10*time.Minute {
+	if rem := s.GraceRemaining(context.Background(), "alice", "h"); rem <= 0 || rem > 10*time.Minute {
 		t.Errorf("GraceRemaining: got %v", rem)
 	}
 
-	sessions := s.ActiveSessions("alice")
+	sessions := s.ActiveSessions(context.Background(), "alice")
 	if len(sessions) != 1 || sessions[0].Hostname != "h" {
 		t.Errorf("ActiveSessions: got %+v", sessions)
 	}
 
-	all := s.AllActiveSessions()
+	all := s.AllActiveSessions(context.Background())
 	if len(all) != 1 {
 		t.Errorf("AllActiveSessions: got %d, want 1", len(all))
 	}
 
-	forHost := s.ActiveSessionsForHost("h")
+	forHost := s.ActiveSessionsForHost(context.Background(), "h")
 	if len(forHost) != 1 {
 		t.Errorf("ActiveSessionsForHost(h): got %d, want 1", len(forHost))
 	}
 
 	// Revoke removes the session and bumps revoke_tokens_before.
-	beforeRev := s.RevokeTokensBefore("alice")
-	s.RevokeSession("alice", "h")
-	if s.WithinGracePeriod("alice", "h") {
+	beforeRev := s.RevokeTokensBefore(context.Background(), "alice")
+	s.RevokeSession(context.Background(), "alice", "h")
+	if s.WithinGracePeriod(context.Background(), "alice", "h") {
 		t.Error("WithinGracePeriod after Revoke: want false")
 	}
-	afterRev := s.RevokeTokensBefore("alice")
+	afterRev := s.RevokeTokensBefore(context.Background(), "alice")
 	if !afterRev.After(beforeRev) {
 		t.Errorf("RevokeTokensBefore: not bumped (before=%v after=%v)", beforeRev, afterRev)
 	}
@@ -355,8 +356,8 @@ func TestSQLStore_ExtendGraceSession(t *testing.T) {
 	s := newTestSQLStore(t)
 	// Grace period is 30 minutes per newTestSQLStore.
 
-	s.CreateGraceSession("alice", "h", 5*time.Minute) // less than 75% of 30m
-	dur, err := s.ExtendGraceSession("alice", "h")
+	s.CreateGraceSession(context.Background(), "alice", "h", 5*time.Minute) // less than 75% of 30m
+	dur, err := s.ExtendGraceSession(context.Background(), "alice", "h")
 	if err != nil {
 		t.Fatalf("ExtendGraceSession: %v", err)
 	}
@@ -365,25 +366,25 @@ func TestSQLStore_ExtendGraceSession(t *testing.T) {
 	}
 
 	// Now there is plenty of time left, so a second extend hits the 75% guard.
-	_, err = s.ExtendGraceSession("alice", "h")
+	_, err = s.ExtendGraceSession(context.Background(), "alice", "h")
 	if !errors.Is(err, ErrSessionSufficientlyExtended) {
 		t.Errorf("Extend with plenty remaining: got %v, want ErrSessionSufficientlyExtended", err)
 	}
 
 	// ForceExtend ignores the guard.
-	dur = s.ForceExtendGraceSession("alice", "h")
+	dur = s.ForceExtendGraceSession(context.Background(), "alice", "h")
 	if dur != 30*time.Minute {
 		t.Errorf("ForceExtend duration: got %v, want 30m", dur)
 	}
 
 	// ExtendFor caps at gracePeriod.
-	dur = s.ExtendGraceSessionFor("alice", "h", 2*time.Hour)
+	dur = s.ExtendGraceSessionFor(context.Background(), "alice", "h", 2*time.Hour)
 	if dur != 30*time.Minute {
 		t.Errorf("ExtendFor cap: got %v, want 30m", dur)
 	}
 
 	// Operations on non-existent sessions return zero.
-	if dur := s.ForceExtendGraceSession("nobody", "h"); dur != 0 {
+	if dur := s.ForceExtendGraceSession(context.Background(), "nobody", "h"); dur != 0 {
 		t.Errorf("ForceExtend on missing: got %v, want 0", dur)
 	}
 }
@@ -391,34 +392,34 @@ func TestSQLStore_ExtendGraceSession(t *testing.T) {
 func TestSQLStore_RemoveHost(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	c, _ := s.Create("alice", "victim", "", "")
-	_ = s.Approve(c.ID, "admin")
-	s.RecordEscrow("victim", "i", "v")
-	s.StoreEscrowCiphertext("victim", "ct")
-	s.SetHostRotateBefore("victim")
+	c, _ := s.Create(context.Background(), "alice", "victim", "", "")
+	_ = s.Approve(context.Background(), c.ID, "admin")
+	s.RecordEscrow(context.Background(), "victim", "i", "v")
+	s.StoreEscrowCiphertext(context.Background(), "victim", "ct")
+	s.SetHostRotateBefore(context.Background(), "victim")
 
-	if !s.WithinGracePeriod("alice", "victim") {
+	if !s.WithinGracePeriod(context.Background(), "alice", "victim") {
 		t.Fatal("precondition: WithinGracePeriod want true")
 	}
-	if _, ok := s.GetEscrowCiphertext("victim"); !ok {
+	if _, ok := s.GetEscrowCiphertext(context.Background(), "victim"); !ok {
 		t.Fatal("precondition: GetEscrowCiphertext want ok")
 	}
-	if hosts := s.EscrowedHosts(); len(hosts) != 1 {
+	if hosts := s.EscrowedHosts(context.Background()); len(hosts) != 1 {
 		t.Fatalf("precondition: EscrowedHosts want 1, got %d", len(hosts))
 	}
 
-	s.RemoveHost("victim")
+	s.RemoveHost(context.Background(), "victim")
 
-	if s.WithinGracePeriod("alice", "victim") {
+	if s.WithinGracePeriod(context.Background(), "alice", "victim") {
 		t.Error("WithinGracePeriod after RemoveHost: want false")
 	}
-	if _, ok := s.GetEscrowCiphertext("victim"); ok {
+	if _, ok := s.GetEscrowCiphertext(context.Background(), "victim"); ok {
 		t.Error("GetEscrowCiphertext after RemoveHost: want false")
 	}
-	if hosts := s.EscrowedHosts(); len(hosts) != 0 {
+	if hosts := s.EscrowedHosts(context.Background()); len(hosts) != 0 {
 		t.Errorf("EscrowedHosts after RemoveHost: got %d, want 0", len(hosts))
 	}
-	if !s.HostRotateBefore("victim").IsZero() {
+	if !s.HostRotateBefore(context.Background(), "victim").IsZero() {
 		t.Error("HostRotateBefore after RemoveHost: want zero")
 	}
 }
@@ -426,28 +427,28 @@ func TestSQLStore_RemoveHost(t *testing.T) {
 func TestSQLStore_RemoveUser(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	c, _ := s.Create("alice", "h", "", "")
-	_ = s.Approve(c.ID, "admin")
-	s.LogAction("alice", ActionApproved, "h", c.UserCode, "")
-	s.RecordOIDCAuth("alice")
+	c, _ := s.Create(context.Background(), "alice", "h", "", "")
+	_ = s.Approve(context.Background(), c.ID, "admin")
+	s.LogAction(context.Background(), "alice", ActionApproved, "h", c.UserCode, "")
+	s.RecordOIDCAuth(context.Background(), "alice")
 
-	beforeRev := s.RevokeTokensBefore("alice")
-	s.RemoveUser("alice")
-	afterRev := s.RevokeTokensBefore("alice")
+	beforeRev := s.RevokeTokensBefore(context.Background(), "alice")
+	s.RemoveUser(context.Background(), "alice")
+	afterRev := s.RevokeTokensBefore(context.Background(), "alice")
 	if !afterRev.After(beforeRev) {
 		t.Errorf("RevokeTokensBefore: not bumped (before=%v after=%v)", beforeRev, afterRev)
 	}
 
-	if got := s.LastOIDCAuth("alice"); !got.IsZero() {
+	if got := s.LastOIDCAuth(context.Background(), "alice"); !got.IsZero() {
 		t.Errorf("LastOIDCAuth after RemoveUser: got %v, want zero", got)
 	}
-	if hist := s.ActionHistory("alice", 100); len(hist) != 0 {
+	if hist := s.ActionHistory(context.Background(), "alice", 100); len(hist) != 0 {
 		t.Errorf("ActionHistory after RemoveUser: got %d, want 0", len(hist))
 	}
-	if pend := s.PendingChallenges("alice"); len(pend) != 0 {
+	if pend := s.PendingChallenges(context.Background(), "alice"); len(pend) != 0 {
 		t.Errorf("PendingChallenges after RemoveUser: got %d, want 0", len(pend))
 	}
-	if s.WithinGracePeriod("alice", "h") {
+	if s.WithinGracePeriod(context.Background(), "alice", "h") {
 		t.Error("WithinGracePeriod after RemoveUser: want false")
 	}
 }
@@ -456,15 +457,15 @@ func TestSQLStore_GraceHMAC(t *testing.T) {
 	s := newTestSQLStore(t)
 	s.SetGraceHMACKey([]byte("secret-test-key"))
 
-	s.CreateGraceSession("alice", "h", 10*time.Minute)
-	if !s.WithinGracePeriod("alice", "h") {
+	s.CreateGraceSession(context.Background(), "alice", "h", 10*time.Minute)
+	if !s.WithinGracePeriod(context.Background(), "alice", "h") {
 		t.Error("WithinGracePeriod after Create with HMAC: want true")
 	}
 	// Tamper with the HMAC: the row should be dropped on next read.
 	if _, err := s.exec(t.Context(), `UPDATE grace_sessions SET hmac_hex = 'deadbeef' WHERE username = 'alice' AND hostname = 'h'`); err != nil {
 		t.Fatalf("tamper: %v", err)
 	}
-	if s.WithinGracePeriod("alice", "h") {
+	if s.WithinGracePeriod(context.Background(), "alice", "h") {
 		t.Error("WithinGracePeriod after tamper: want false")
 	}
 	// Verify the tampered row was lazy-deleted on read so the next call
@@ -482,24 +483,24 @@ func TestSQLStore_GraceHMAC(t *testing.T) {
 
 	// And re-creating a fresh session on top of the wiped row works
 	// (proves we can recover from a tamper detection without manual cleanup).
-	s.CreateGraceSession("alice", "h", 10*time.Minute)
-	if !s.WithinGracePeriod("alice", "h") {
+	s.CreateGraceSession(context.Background(), "alice", "h", 10*time.Minute)
+	if !s.WithinGracePeriod(context.Background(), "alice", "h") {
 		t.Error("WithinGracePeriod after recreate: want true")
 	}
 }
 
 func TestSQLStore_SetRequestedGrace(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, err := s.Create("alice", "h", "", "")
+	c, err := s.Create(context.Background(), "alice", "h", "", "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if got, _ := s.Get(c.ID); got.RequestedGrace != 0 {
+	if got, _ := s.Get(context.Background(), c.ID); got.RequestedGrace != 0 {
 		t.Errorf("RequestedGrace initial: got %v, want 0", got.RequestedGrace)
 	}
 
-	s.SetRequestedGrace(c.ID, 45*time.Minute)
-	got, ok := s.Get(c.ID)
+	s.SetRequestedGrace(context.Background(), c.ID, 45*time.Minute)
+	got, ok := s.Get(context.Background(), c.ID)
 	if !ok {
 		t.Fatal("Get: not found")
 	}
@@ -510,16 +511,16 @@ func TestSQLStore_SetRequestedGrace(t *testing.T) {
 
 func TestSQLStore_SetBreakglassOverride(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, err := s.Create("alice", "h", "", "")
+	c, err := s.Create(context.Background(), "alice", "h", "", "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if got, _ := s.Get(c.ID); got.BreakglassOverride {
+	if got, _ := s.Get(context.Background(), c.ID); got.BreakglassOverride {
 		t.Error("BreakglassOverride initial: got true, want false")
 	}
 
-	s.SetBreakglassOverride(c.ID)
-	got, _ := s.Get(c.ID)
+	s.SetBreakglassOverride(context.Background(), c.ID)
+	got, _ := s.Get(context.Background(), c.ID)
 	if !got.BreakglassOverride {
 		t.Error("BreakglassOverride after set: got false, want true")
 	}
@@ -527,13 +528,13 @@ func TestSQLStore_SetBreakglassOverride(t *testing.T) {
 
 func TestSQLStore_SetChallengePolicy(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, err := s.Create("alice", "h", "", "")
+	c, err := s.Create(context.Background(), "alice", "h", "", "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	s.SetChallengePolicy(c.ID, "two-admin", 2, true, true)
-	got, _ := s.Get(c.ID)
+	s.SetChallengePolicy(context.Background(), c.ID, "two-admin", 2, true, true)
+	got, _ := s.Get(context.Background(), c.ID)
 	if got.PolicyName != "two-admin" {
 		t.Errorf("PolicyName: got %q, want two-admin", got.PolicyName)
 	}
@@ -549,8 +550,8 @@ func TestSQLStore_SetChallengePolicy(t *testing.T) {
 
 	// Re-apply with false booleans — verifies boolToInt(false)=0 round-trips
 	// and the UPDATE genuinely overwrites rather than only OR-ing flags.
-	s.SetChallengePolicy(c.ID, "solo", 1, false, false)
-	got, _ = s.Get(c.ID)
+	s.SetChallengePolicy(context.Background(), c.ID, "solo", 1, false, false)
+	got, _ = s.Get(context.Background(), c.ID)
 	if got.PolicyName != "solo" || got.RequiredApprovals != 1 {
 		t.Errorf("policy re-apply: got name=%q approvals=%d", got.PolicyName, got.RequiredApprovals)
 	}
@@ -566,7 +567,7 @@ func TestSQLStore_SetChallengePolicy(t *testing.T) {
 // an ordered one). Catches regressions in the RMW transaction body.
 func TestSQLStore_ConcurrentApprove(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, err := s.Create("alice", "h", "", "")
+	c, err := s.Create(context.Background(), "alice", "h", "", "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -578,7 +579,7 @@ func TestSQLStore_ConcurrentApprove(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func() {
 			start.Wait()
-			results <- s.Approve(c.ID, "approver")
+			results <- s.Approve(context.Background(), c.ID, "approver")
 		}()
 	}
 	start.Done()
@@ -609,7 +610,7 @@ func TestSQLStore_ConcurrentApprove(t *testing.T) {
 // concurrent contention.
 func TestSQLStore_ConcurrentOneTap(t *testing.T) {
 	s := newTestSQLStore(t)
-	c, err := s.Create("alice", "h", "", "")
+	c, err := s.Create(context.Background(), "alice", "h", "", "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -621,7 +622,7 @@ func TestSQLStore_ConcurrentOneTap(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func() {
 			start.Wait()
-			results <- s.ConsumeAndApprove(c.ID, "approver")
+			results <- s.ConsumeAndApprove(context.Background(), c.ID, "approver")
 		}()
 	}
 	start.Done()
@@ -657,7 +658,7 @@ func TestSQLStore_ReapExpiredChallenges(t *testing.T) {
 		mu.Unlock()
 	}
 
-	c, err := s.Create("alice", "h", "", "")
+	c, err := s.Create(context.Background(), "alice", "h", "", "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

@@ -83,11 +83,11 @@ func (s *SQLStore) readGrace(ctx context.Context, username, hostname string) tim
 
 // CreateGraceSession upserts a grace session for (username, hostname) with the
 // given duration measured from now. Used for manual elevation flows.
-func (s *SQLStore) CreateGraceSession(username, hostname string, duration time.Duration) {
+func (s *SQLStore) CreateGraceSession(ctx context.Context, username, hostname string, duration time.Duration) {
 	if duration <= 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := s.upsertGrace(ctx, s.db, username, hostname, time.Now().Add(duration)); err != nil {
 		logErr("CreateGraceSession", err)
@@ -97,20 +97,20 @@ func (s *SQLStore) CreateGraceSession(username, hostname string, duration time.D
 	s.refreshGraceMetric(ctx)
 }
 
-func (s *SQLStore) WithinGracePeriod(username, hostname string) bool {
+func (s *SQLStore) WithinGracePeriod(ctx context.Context, username, hostname string) bool {
 	if s.gracePeriod <= 0 {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	return !s.readGrace(ctx, username, hostname).IsZero()
 }
 
-func (s *SQLStore) GraceRemaining(username, hostname string) time.Duration {
+func (s *SQLStore) GraceRemaining(ctx context.Context, username, hostname string) time.Duration {
 	if s.gracePeriod <= 0 {
 		return 0
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	expiry := s.readGrace(ctx, username, hostname)
 	if expiry.IsZero() {
@@ -123,20 +123,20 @@ func (s *SQLStore) GraceRemaining(username, hostname string) time.Duration {
 	return remaining
 }
 
-func (s *SQLStore) ActiveSessions(username string) []GraceSession {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) ActiveSessions(ctx context.Context, username string) []GraceSession {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.readGraceSessions(ctx, "WHERE username = ? AND expiry_unix > ?", username, nowUnix())
 }
 
-func (s *SQLStore) AllActiveSessions() []GraceSession {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) AllActiveSessions(ctx context.Context) []GraceSession {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.readGraceSessions(ctx, "WHERE expiry_unix > ?", nowUnix())
 }
 
-func (s *SQLStore) ActiveSessionsForHost(hostname string) []GraceSession {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) ActiveSessionsForHost(ctx context.Context, hostname string) []GraceSession {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.readGraceSessions(ctx, "WHERE hostname = ? AND expiry_unix > ?", hostname, nowUnix())
 }
@@ -191,11 +191,11 @@ func (s *SQLStore) readGraceSessions(ctx context.Context, where string, args ...
 	return out
 }
 
-func (s *SQLStore) ExtendGraceSession(username, hostname string) (time.Duration, error) {
+func (s *SQLStore) ExtendGraceSession(ctx context.Context, username, hostname string) (time.Duration, error) {
 	if s.gracePeriod <= 0 {
 		return 0, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	tx, err := s.beginTxRMW(ctx)
 	if err != nil {
@@ -235,11 +235,11 @@ func (s *SQLStore) ExtendGraceSession(username, hostname string) (time.Duration,
 	return s.gracePeriod, nil
 }
 
-func (s *SQLStore) ForceExtendGraceSession(username, hostname string) time.Duration {
+func (s *SQLStore) ForceExtendGraceSession(ctx context.Context, username, hostname string) time.Duration {
 	if s.gracePeriod <= 0 {
 		return 0
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	res, err := s.exec(ctx, `UPDATE grace_sessions SET expiry_unix = ?, hmac_hex = ?
 	    WHERE username = ? AND hostname = ?`,
@@ -258,14 +258,14 @@ func (s *SQLStore) ForceExtendGraceSession(username, hostname string) time.Durat
 	return s.gracePeriod
 }
 
-func (s *SQLStore) ExtendGraceSessionFor(username, hostname string, dur time.Duration) time.Duration {
+func (s *SQLStore) ExtendGraceSessionFor(ctx context.Context, username, hostname string, dur time.Duration) time.Duration {
 	if s.gracePeriod <= 0 {
 		return 0
 	}
 	if dur > s.gracePeriod {
 		dur = s.gracePeriod
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	newExpiry := time.Now().Add(dur)
 	res, err := s.exec(ctx, `UPDATE grace_sessions SET expiry_unix = ?, hmac_hex = ?
@@ -288,8 +288,8 @@ func (s *SQLStore) ExtendGraceSessionFor(username, hostname string, dur time.Dur
 // RevokeSession removes the (username, hostname) grace row and bumps
 // revoke_tokens_before for the user so any cached token signed before now
 // is rejected on the next poll.
-func (s *SQLStore) RevokeSession(username, hostname string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) RevokeSession(ctx context.Context, username, hostname string) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

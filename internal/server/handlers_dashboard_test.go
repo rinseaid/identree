@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -595,7 +596,7 @@ func TestHandleDashboard_WithSession_ShowsContent(t *testing.T) {
 	s.removedUsers = make(map[string]time.Time)
 
 	// Add a history entry so the dashboard has data to render.
-	s.store.LogAction("alice", "approved", "web01", "ABC-123", "admin")
+	s.store.LogAction(context.Background(), "alice", "approved", "web01", "ABC-123", "admin")
 
 	ts := time.Now().Unix()
 	cookieVal := makeCookie(secret, "alice", "admin", ts)
@@ -911,7 +912,7 @@ func TestHandleHistoryExport_CSV_WithSession(t *testing.T) {
 func TestBuildPendingViews_Empty(t *testing.T) {
 	s := newDashboardFullServer(t, "test-secret")
 
-	views := s.buildPendingViews("alice", "en")
+	views := s.buildPendingViews(context.Background(), "alice", "en")
 	if len(views) != 0 {
 		t.Errorf("expected 0 views, got %d", len(views))
 	}
@@ -922,12 +923,12 @@ func TestBuildPendingViews_WithChallenge(t *testing.T) {
 	s := newDashboardFullServer(t, secret)
 
 	// Create a challenge.
-	c, err := s.store.Create("alice", "web01", "", "")
+	c, err := s.store.Create(context.Background(), "alice", "web01", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	views := s.buildPendingViews("alice", "en")
+	views := s.buildPendingViews(context.Background(), "alice", "en")
 	if len(views) != 1 {
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}
@@ -942,7 +943,7 @@ func TestBuildPendingViews_WithChallenge(t *testing.T) {
 func TestBuildAllPendingViews_Empty(t *testing.T) {
 	s := newDashboardFullServer(t, "test-secret")
 
-	views := s.buildAllPendingViews("admin", "en")
+	views := s.buildAllPendingViews(context.Background(), "admin", "en")
 	if len(views) != 0 {
 		t.Errorf("expected 0 views, got %d", len(views))
 	}
@@ -953,17 +954,17 @@ func TestPendingViewsFor_AdminVsUser(t *testing.T) {
 	s := newDashboardFullServer(t, secret)
 
 	// Create challenges for different users.
-	s.store.Create("alice", "web01", "", "")
-	s.store.Create("bob", "db01", "", "")
+	s.store.Create(context.Background(), "alice", "web01", "", "")
+	s.store.Create(context.Background(), "bob", "db01", "", "")
 
 	// Admin should see all.
-	adminViews := s.pendingViewsFor("admin", "en", true)
+	adminViews := s.pendingViewsFor(context.Background(), "admin", "en", true)
 	if len(adminViews) != 2 {
 		t.Errorf("admin expected 2 views, got %d", len(adminViews))
 	}
 
 	// Regular user should only see their own.
-	aliceViews := s.pendingViewsFor("alice", "en", false)
+	aliceViews := s.pendingViewsFor(context.Background(), "alice", "en", false)
 	if len(aliceViews) != 1 {
 		t.Errorf("alice expected 1 view, got %d", len(aliceViews))
 	}

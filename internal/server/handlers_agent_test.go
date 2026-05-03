@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"bytes"
 	"encoding/json"
 	"net/http"
@@ -47,7 +48,7 @@ func TestHandleAgentHeartbeat_Success(t *testing.T) {
 		t.Fatalf("expected 204, got %d; body %s", w.Code, w.Body.String())
 	}
 
-	agents := s.store.ListAgents()
+	agents := s.store.ListAgents(context.Background())
 	if len(agents) != 1 || agents[0].Hostname != "host1" {
 		t.Fatalf("ListAgents: got %+v", agents)
 	}
@@ -73,7 +74,7 @@ func TestHandleAgentHeartbeat_Unauthorized(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
-	if got := s.store.ListAgents(); len(got) != 0 {
+	if got := s.store.ListAgents(context.Background()); len(got) != 0 {
 		t.Errorf("agents recorded after unauthorized heartbeat: %+v", got)
 	}
 }
@@ -172,7 +173,7 @@ func TestHandleAgentHeartbeat_PerHostSecret(t *testing.T) {
 		t.Fatalf("global-secret fallback: expected 204, got %d", w4.Code)
 	}
 
-	agents := s.store.ListAgents()
+	agents := s.store.ListAgents(context.Background())
 	if len(agents) != 2 {
 		t.Errorf("expected 2 agents (node-1 + node-2), got %d", len(agents))
 	}

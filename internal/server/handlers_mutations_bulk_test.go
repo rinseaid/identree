@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,7 +18,7 @@ func TestHandleExtendSession_Success(t *testing.T) {
 	const secret = "s"
 	s := newMutationTestServer(t, secret)
 	s.cfg.GracePeriod = 10 * time.Minute
-	s.store.CreateGraceSession("alice", "web01", 2*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", 2*time.Minute)
 
 	form := url.Values{"hostname": {"web01"}}
 	r := buildFormRequest(secret, "alice", "user", "/api/sessions/extend", form)
@@ -84,7 +85,7 @@ func TestHandleExtendSession_WithDuration(t *testing.T) {
 	const secret = "s"
 	s := newMutationTestServer(t, secret)
 	s.cfg.GracePeriod = 10 * time.Minute
-	s.store.CreateGraceSession("alice", "web01", time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", time.Minute)
 
 	form := url.Values{"hostname": {"web01"}, "duration": {"300"}}
 	r := buildFormRequest(secret, "alice", "user", "/api/sessions/extend", form)
@@ -116,8 +117,8 @@ func TestHandleExtendAll_ExtendsActive(t *testing.T) {
 	const secret = "s"
 	s := newMutationTestServer(t, secret)
 	s.cfg.GracePeriod = 10 * time.Minute
-	s.store.CreateGraceSession("alice", "web01", time.Minute)
-	s.store.CreateGraceSession("alice", "web02", time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web02", time.Minute)
 
 	r := buildFormRequest(secret, "alice", "user", "/api/sessions/extend-all", url.Values{})
 	w := httptest.NewRecorder()
@@ -133,8 +134,8 @@ func TestHandleExtendAll_ExtendsActive(t *testing.T) {
 func TestHandleRevokeAll_User(t *testing.T) {
 	const secret = "s"
 	s := newMutationTestServer(t, secret)
-	s.store.CreateGraceSession("alice", "web01", 10*time.Minute)
-	s.store.CreateGraceSession("alice", "web02", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web02", 10*time.Minute)
 
 	r := buildFormRequest(secret, "alice", "user", "/api/sessions/revoke-all", url.Values{})
 	w := httptest.NewRecorder()
@@ -144,7 +145,7 @@ func TestHandleRevokeAll_User(t *testing.T) {
 		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
 	}
 	// Both alice sessions should be revoked.
-	if sessions := s.store.ActiveSessions("alice"); len(sessions) != 0 {
+	if sessions := s.store.ActiveSessions(context.Background(), "alice"); len(sessions) != 0 {
 		t.Errorf("expected 0 active sessions, got %d", len(sessions))
 	}
 }
@@ -152,8 +153,8 @@ func TestHandleRevokeAll_User(t *testing.T) {
 func TestHandleRevokeAll_AdminGlobal(t *testing.T) {
 	const secret = "s"
 	s := newMutationTestServer(t, secret)
-	s.store.CreateGraceSession("alice", "web01", 10*time.Minute)
-	s.store.CreateGraceSession("bob", "web02", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "bob", "web02", 10*time.Minute)
 
 	r := buildFormRequest(secret, "admin", "admin", "/api/sessions/revoke-all", url.Values{})
 	w := httptest.NewRecorder()
@@ -162,7 +163,7 @@ func TestHandleRevokeAll_AdminGlobal(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Errorf("expected 303, got %d", w.Code)
 	}
-	if s := s.store.AllActiveSessions(); len(s) != 0 {
+	if s := s.store.AllActiveSessions(context.Background()); len(s) != 0 {
 		t.Errorf("expected 0 active sessions across users, got %d", len(s))
 	}
 }
@@ -170,8 +171,8 @@ func TestHandleRevokeAll_AdminGlobal(t *testing.T) {
 func TestHandleRevokeAll_AdminSpecificUser(t *testing.T) {
 	const secret = "s"
 	s := newMutationTestServer(t, secret)
-	s.store.CreateGraceSession("alice", "web01", 10*time.Minute)
-	s.store.CreateGraceSession("bob", "web02", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "bob", "web02", 10*time.Minute)
 
 	form := url.Values{"session_username": {"alice"}}
 	r := buildFormRequest(secret, "admin", "admin", "/api/sessions/revoke-all", form)
@@ -181,10 +182,10 @@ func TestHandleRevokeAll_AdminSpecificUser(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Errorf("expected 303, got %d", w.Code)
 	}
-	if len(s.store.ActiveSessions("alice")) != 0 {
+	if len(s.store.ActiveSessions(context.Background(), "alice")) != 0 {
 		t.Errorf("alice should have no sessions")
 	}
-	if len(s.store.ActiveSessions("bob")) == 0 {
+	if len(s.store.ActiveSessions(context.Background(), "bob")) == 0 {
 		t.Errorf("bob should still have sessions")
 	}
 }
@@ -242,7 +243,7 @@ func TestHandleBulkApproveAll_ApprovesAll(t *testing.T) {
 		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
 	}
 	for _, id := range []string{c1.ID, c2.ID} {
-		got, ok := s.store.Get(id)
+		got, ok := s.store.Get(context.Background(), id)
 		if !ok {
 			t.Fatalf("challenge %s not found", id)
 		}
@@ -293,7 +294,7 @@ func TestHandleRejectAll_RejectsAllWithReason(t *testing.T) {
 		t.Errorf("expected 303, got %d", w.Code)
 	}
 	for _, id := range []string{c1.ID, c2.ID} {
-		got, ok := s.store.Get(id)
+		got, ok := s.store.Get(context.Background(), id)
 		if !ok {
 			t.Fatalf("challenge %s not found", id)
 		}
@@ -327,7 +328,7 @@ func newOneTapServer(t *testing.T, secret, approver string) *Server {
 	s.cfg.OneTapMaxAge = 1 * time.Hour
 	s.cfg.ChallengeTTL = 5 * time.Minute
 	s.cfg.ExternalURL = "https://pam.example.com"
-	s.store.RecordOIDCAuth(approver)
+	s.store.RecordOIDCAuth(context.Background(), approver)
 	return s
 }
 
@@ -371,7 +372,7 @@ func TestHandleOneTap_GETRendersConfirmation(t *testing.T) {
 		t.Errorf("confirmation page missing expected content; body head: %s", body[:head])
 	}
 	// Must not approve on GET.
-	got, _ := s.store.Get(c.ID)
+	got, _ := s.store.Get(context.Background(), c.ID)
 	if got.Status != challpkg.StatusPending {
 		t.Errorf("GET must not change status; got %q, want pending", got.Status)
 	}
@@ -391,7 +392,7 @@ func TestHandleOneTap_POSTApproves(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 success page, got %d; body: %s", w.Code, w.Body.String())
 	}
-	got, _ := s.store.Get(c.ID)
+	got, _ := s.store.Get(context.Background(), c.ID)
 	if got.Status != challpkg.StatusApproved {
 		t.Errorf("status after POST: got %q, want approved", got.Status)
 	}
@@ -430,7 +431,7 @@ func TestHandleOneTap_TamperedHMAC(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Errorf("tampered HMAC: got %d, want 403; body: %s", w.Code, w.Body.String())
 	}
-	got, _ := s.store.Get(c.ID)
+	got, _ := s.store.Get(context.Background(), c.ID)
 	if got.Status != challpkg.StatusPending {
 		t.Errorf("challenge must remain pending after tampered-HMAC reject; got %q", got.Status)
 	}
@@ -479,7 +480,7 @@ func TestHandleOneTap_CrossHostReplay(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Errorf("cross-host replay: got %d, want 403", w.Code)
 	}
-	gotB, _ := s.store.Get(cB.ID)
+	gotB, _ := s.store.Get(context.Background(), cB.ID)
 	if gotB.Status != challpkg.StatusPending {
 		t.Errorf("host-b challenge must remain pending after replay reject; got %q", gotB.Status)
 	}
@@ -520,7 +521,7 @@ func TestHandleOneTap_StaleOIDCRedirects(t *testing.T) {
 		t.Error("stale OIDC: pam_onetap resume cookie not set")
 	}
 	// Critical: the challenge must still be pending — the token must not be burned.
-	got, _ := s.store.Get(c.ID)
+	got, _ := s.store.Get(context.Background(), c.ID)
 	if got.Status != challpkg.StatusPending {
 		t.Errorf("stale OIDC redirect must not consume token; status=%q", got.Status)
 	}
@@ -534,8 +535,8 @@ func TestHandleOneTap_AdminRequiredRejected(t *testing.T) {
 	s := newOneTapServer(t, secret, "alice")
 
 	c := createPendingChallenge(t, s, "alice", "web01")
-	s.store.SetChallengePolicy(c.ID, "admin-only", 1, true, false)
-	reloaded, _ := s.store.Get(c.ID)
+	s.store.SetChallengePolicy(context.Background(), c.ID, "admin-only", 1, true, false)
+	reloaded, _ := s.store.Get(context.Background(), c.ID)
 	token := s.computeOneTapToken(reloaded.ID, "alice", "web01", reloaded.ExpiresAt)
 
 	r := onetapGetRequest(secret, "alice", token)
@@ -545,7 +546,7 @@ func TestHandleOneTap_AdminRequiredRejected(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Errorf("admin-required one-tap: got %d, want 403", w.Code)
 	}
-	got, _ := s.store.Get(c.ID)
+	got, _ := s.store.Get(context.Background(), c.ID)
 	if got.Status != challpkg.StatusPending {
 		t.Errorf("admin-required challenge must remain pending; got %q", got.Status)
 	}
@@ -596,7 +597,7 @@ func TestHandleElevate_AdminCanElevateOtherUser(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("admin elevate: got %d, want 303; body: %s", w.Code, w.Body.String())
 	}
-	sessions := s.store.ActiveSessions("bob")
+	sessions := s.store.ActiveSessions(context.Background(), "bob")
 	if len(sessions) != 1 || sessions[0].Hostname != "web01" {
 		t.Fatalf("grace session for bob/web01 not created; got %+v", sessions)
 	}
@@ -624,7 +625,7 @@ func TestHandleElevate_NonAdminCannotElevateOther(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Errorf("non-admin elevate other: got %d, want 403", w.Code)
 	}
-	if len(s.store.ActiveSessions("bob")) != 0 {
+	if len(s.store.ActiveSessions(context.Background(), "bob")) != 0 {
 		t.Error("non-admin elevate other must not create session")
 	}
 }
@@ -647,7 +648,7 @@ func TestHandleElevate_NonAdminNoRegistryRejected(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Errorf("non-admin no-registry: got %d, want 403; body: %s", w.Code, w.Body.String())
 	}
-	if len(s.store.ActiveSessions("alice")) != 0 {
+	if len(s.store.ActiveSessions(context.Background(), "alice")) != 0 {
 		t.Error("non-admin no-registry must not create grace session")
 	}
 }
@@ -673,7 +674,7 @@ func TestHandleElevate_UnauthorizedForHost(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Errorf("unauthorized for host: got %d, want 403", w.Code)
 	}
-	if len(s.store.ActiveSessions("alice")) != 0 {
+	if len(s.store.ActiveSessions(context.Background(), "alice")) != 0 {
 		t.Error("unauthorized elevate must not create session")
 	}
 }
@@ -716,7 +717,7 @@ func TestHandleElevate_DurationClamped(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.handleElevate(w, r)
 
-		sessions := s.store.ActiveSessions("alice")
+		sessions := s.store.ActiveSessions(context.Background(), "alice")
 		if len(sessions) != 1 {
 			t.Fatalf("want 1 session, got %d", len(sessions))
 		}
@@ -741,7 +742,7 @@ func TestHandleElevate_DurationClamped(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.handleElevate(w, r)
 
-		sessions := s.store.ActiveSessions("alice")
+		sessions := s.store.ActiveSessions(context.Background(), "alice")
 		if len(sessions) != 1 {
 			t.Fatalf("want 1 session, got %d", len(sessions))
 		}
@@ -771,7 +772,7 @@ func TestHandleRotateHost_AdminSuccess(t *testing.T) {
 		t.Fatalf("AddHost: %v", err)
 	}
 
-	before := s.store.HostRotateBefore("web01")
+	before := s.store.HostRotateBefore(context.Background(), "web01")
 	if !before.IsZero() {
 		t.Fatalf("precondition: HostRotateBefore(web01) should be zero, got %v", before)
 	}
@@ -784,7 +785,7 @@ func TestHandleRotateHost_AdminSuccess(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("admin rotate: got %d, want 303; body: %s", w.Code, w.Body.String())
 	}
-	if got := s.store.HostRotateBefore("web01"); got.IsZero() {
+	if got := s.store.HostRotateBefore(context.Background(), "web01"); got.IsZero() {
 		t.Error("HostRotateBefore(web01) not set after rotate")
 	}
 }
@@ -801,7 +802,7 @@ func TestHandleRotateHost_NonAdminRejected(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Errorf("non-admin rotate: got %d, want 403", w.Code)
 	}
-	if got := s.store.HostRotateBefore("web01"); !got.IsZero() {
+	if got := s.store.HostRotateBefore(context.Background(), "web01"); !got.IsZero() {
 		t.Error("non-admin rotate must not set HostRotateBefore")
 	}
 }
@@ -831,7 +832,7 @@ func TestHandleRotateHost_InvalidHostname(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("invalid hostname: got %d, want 400", w.Code)
 	}
-	if got := s.store.HostRotateBefore("not a hostname"); !got.IsZero() {
+	if got := s.store.HostRotateBefore(context.Background(), "not a hostname"); !got.IsZero() {
 		t.Error("invalid hostname must not set HostRotateBefore")
 	}
 }
@@ -866,7 +867,7 @@ func TestHandleRotateAllHosts_AdminRotatesAll(t *testing.T) {
 		t.Fatalf("admin rotate-all: got %d, want 303; body: %s", w.Code, w.Body.String())
 	}
 	for _, h := range []string{"web01", "web02", "db01"} {
-		if got := s.store.HostRotateBefore(h); got.IsZero() {
+		if got := s.store.HostRotateBefore(context.Background(), h); got.IsZero() {
 			t.Errorf("HostRotateBefore(%s) not set", h)
 		}
 	}
@@ -886,7 +887,7 @@ func TestHandleRotateAllHosts_NonAdminRejected(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Errorf("non-admin rotate-all: got %d, want 403", w.Code)
 	}
-	if got := s.store.HostRotateBefore("web01"); !got.IsZero() {
+	if got := s.store.HostRotateBefore(context.Background(), "web01"); !got.IsZero() {
 		t.Error("non-admin rotate-all must not set HostRotateBefore")
 	}
 }

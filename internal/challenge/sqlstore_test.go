@@ -1,6 +1,7 @@
 package challenge
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -90,7 +91,7 @@ func truncateAllTables(t testing.TB, db *sql.DB) {
 
 func TestSQLStore_HealthCheck(t *testing.T) {
 	s := newTestSQLStore(t)
-	if err := s.HealthCheck(); err != nil {
+	if err := s.HealthCheck(context.Background()); err != nil {
 		t.Fatalf("HealthCheck: %v", err)
 	}
 	want := "sqlite"
@@ -105,11 +106,11 @@ func TestSQLStore_HealthCheck(t *testing.T) {
 func TestSQLStore_ActionLog(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	s.LogAction("alice", ActionApproved, "host1", "ABC123", "")
-	s.LogActionWithReason("alice", ActionRevoked, "host1", "ABC123", "admin", "no longer needed")
-	s.LogActionAt("bob", ActionApproved, "host2", "DEF456", "alice", time.Now().Add(-time.Hour))
+	s.LogAction(context.Background(), "alice", ActionApproved, "host1", "ABC123", "")
+	s.LogActionWithReason(context.Background(), "alice", ActionRevoked, "host1", "ABC123", "admin", "no longer needed")
+	s.LogActionAt(context.Background(), "bob", ActionApproved, "host2", "DEF456", "alice", time.Now().Add(-time.Hour))
 
-	hist := s.ActionHistory("alice", 10)
+	hist := s.ActionHistory(context.Background(), "alice", 10)
 	if len(hist) != 2 {
 		t.Fatalf("ActionHistory(alice): got %d entries, want 2", len(hist))
 	}
@@ -124,12 +125,12 @@ func TestSQLStore_ActionLog(t *testing.T) {
 		t.Errorf("hist[0].Actor: got %q, want %q", hist[0].Actor, "admin")
 	}
 
-	all := s.AllActionHistory()
+	all := s.AllActionHistory(context.Background(), 10000)
 	if len(all) != 3 {
 		t.Errorf("AllActionHistory: got %d entries, want 3", len(all))
 	}
 
-	withUsers := s.AllActionHistoryWithUsers()
+	withUsers := s.AllActionHistoryWithUsers(context.Background(), 10000, 0)
 	if len(withUsers) != 3 {
 		t.Errorf("AllActionHistoryWithUsers: got %d entries, want 3", len(withUsers))
 	}
@@ -145,23 +146,23 @@ func TestSQLStore_ActionLog(t *testing.T) {
 func TestSQLStore_OIDCAuth(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	if got := s.LastOIDCAuth("alice"); !got.IsZero() {
+	if got := s.LastOIDCAuth(context.Background(), "alice"); !got.IsZero() {
 		t.Errorf("LastOIDCAuth(alice) before record: got %v, want zero", got)
 	}
 
 	before := time.Now().Add(-time.Second)
-	s.RecordOIDCAuth("alice")
+	s.RecordOIDCAuth(context.Background(), "alice")
 	after := time.Now().Add(time.Second)
 
-	got := s.LastOIDCAuth("alice")
+	got := s.LastOIDCAuth(context.Background(), "alice")
 	if got.Before(before) || got.After(after) {
 		t.Errorf("LastOIDCAuth(alice): got %v, want between %v and %v", got, before, after)
 	}
 
 	// Updating should overwrite.
 	time.Sleep(1100 * time.Millisecond)
-	s.RecordOIDCAuth("alice")
-	got2 := s.LastOIDCAuth("alice")
+	s.RecordOIDCAuth(context.Background(), "alice")
+	got2 := s.LastOIDCAuth(context.Background(), "alice")
 	if !got2.After(got) {
 		t.Errorf("LastOIDCAuth(alice) after re-record: got %v, want > %v", got2, got)
 	}
@@ -171,10 +172,10 @@ func TestSQLStore_RevokedNonces(t *testing.T) {
 	s := newTestSQLStore(t)
 
 	now := time.Now().Truncate(time.Second)
-	s.PersistRevokedNonce("nonce-a", now)
-	s.PersistRevokedNonce("nonce-b", now.Add(-time.Hour))
+	s.PersistRevokedNonce(context.Background(), "nonce-a", now)
+	s.PersistRevokedNonce(context.Background(), "nonce-b", now.Add(-time.Hour))
 
-	loaded := s.LoadRevokedNonces()
+	loaded := s.LoadRevokedNonces(context.Background())
 	if len(loaded) != 2 {
 		t.Fatalf("LoadRevokedNonces: got %d, want 2", len(loaded))
 	}
@@ -187,9 +188,9 @@ func TestSQLStore_RevokedAdminSessions(t *testing.T) {
 	s := newTestSQLStore(t)
 
 	now := time.Now().Truncate(time.Second)
-	s.PersistRevokedAdminSession("alice", now)
+	s.PersistRevokedAdminSession(context.Background(), "alice", now)
 
-	loaded := s.LoadRevokedAdminSessions()
+	loaded := s.LoadRevokedAdminSessions(context.Background())
 	if len(loaded) != 1 {
 		t.Fatalf("LoadRevokedAdminSessions: got %d, want 1", len(loaded))
 	}
@@ -201,10 +202,10 @@ func TestSQLStore_RevokedAdminSessions(t *testing.T) {
 func TestSQLStore_Escrow(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	s.RecordEscrow("host1", "item-id-1", "vault-id-1")
-	s.RecordEscrow("host2", "", "")
+	s.RecordEscrow(context.Background(), "host1", "item-id-1", "vault-id-1")
+	s.RecordEscrow(context.Background(), "host2", "", "")
 
-	hosts := s.EscrowedHosts()
+	hosts := s.EscrowedHosts(context.Background())
 	if len(hosts) != 2 {
 		t.Fatalf("EscrowedHosts: got %d, want 2", len(hosts))
 	}
@@ -215,12 +216,12 @@ func TestSQLStore_Escrow(t *testing.T) {
 		t.Error("host1.Timestamp: got zero, want non-zero")
 	}
 
-	s.StoreEscrowCiphertext("host1", "ciphertext-blob")
-	ct, ok := s.GetEscrowCiphertext("host1")
+	s.StoreEscrowCiphertext(context.Background(), "host1", "ciphertext-blob")
+	ct, ok := s.GetEscrowCiphertext(context.Background(), "host1")
 	if !ok || ct != "ciphertext-blob" {
 		t.Errorf("GetEscrowCiphertext(host1): got (%q, %v), want (ciphertext-blob, true)", ct, ok)
 	}
-	if _, ok := s.GetEscrowCiphertext("nope"); ok {
+	if _, ok := s.GetEscrowCiphertext(context.Background(), "nope"); ok {
 		t.Error("GetEscrowCiphertext(nope): got true, want false")
 	}
 }
@@ -228,20 +229,20 @@ func TestSQLStore_Escrow(t *testing.T) {
 func TestSQLStore_HostRotateBefore(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	if got := s.HostRotateBefore("host1"); !got.IsZero() {
+	if got := s.HostRotateBefore(context.Background(), "host1"); !got.IsZero() {
 		t.Errorf("HostRotateBefore before set: got %v, want zero", got)
 	}
 
-	s.SetHostRotateBefore("host1")
-	if got := s.HostRotateBefore("host1"); got.IsZero() {
+	s.SetHostRotateBefore(context.Background(), "host1")
+	if got := s.HostRotateBefore(context.Background(), "host1"); got.IsZero() {
 		t.Error("HostRotateBefore after set: got zero, want non-zero")
 	}
 
-	s.SetAllHostsRotateBefore([]string{"hostA", "hostB", "hostC"})
-	if got := s.HostRotateBefore("hostA"); got.IsZero() {
+	s.SetAllHostsRotateBefore(context.Background(), []string{"hostA", "hostB", "hostC"})
+	if got := s.HostRotateBefore(context.Background(), "hostA"); got.IsZero() {
 		t.Error("hostA rotate-before after SetAll: got zero")
 	}
-	if got := s.HostRotateBefore("hostC"); got.IsZero() {
+	if got := s.HostRotateBefore(context.Background(), "hostC"); got.IsZero() {
 		t.Error("hostC rotate-before after SetAll: got zero")
 	}
 }
@@ -249,16 +250,16 @@ func TestSQLStore_HostRotateBefore(t *testing.T) {
 func TestSQLStore_EscrowTokenReplay(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	if seen := s.CheckAndRecordEscrowToken("token1"); seen {
+	if seen := s.CheckAndRecordEscrowToken(context.Background(), "token1"); seen {
 		t.Error("CheckAndRecordEscrowToken first call: got true, want false")
 	}
-	if seen := s.CheckAndRecordEscrowToken("token1"); !seen {
+	if seen := s.CheckAndRecordEscrowToken(context.Background(), "token1"); !seen {
 		t.Error("CheckAndRecordEscrowToken second call: got false, want true")
 	}
-	if seen := s.CheckAndRecordEscrowToken("token2"); seen {
+	if seen := s.CheckAndRecordEscrowToken(context.Background(), "token2"); seen {
 		t.Error("CheckAndRecordEscrowToken token2: got true, want false")
 	}
-	if got := s.UsedEscrowTokenCount(); got != 2 {
+	if got := s.UsedEscrowTokenCount(context.Background()); got != 2 {
 		t.Errorf("UsedEscrowTokenCount: got %d, want 2", got)
 	}
 }
@@ -266,7 +267,7 @@ func TestSQLStore_EscrowTokenReplay(t *testing.T) {
 func TestSQLStore_SessionNonces(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	if _, ok := s.GetSessionNonce("missing"); ok {
+	if _, ok := s.GetSessionNonce(context.Background(), "missing"); ok {
 		t.Error("GetSessionNonce(missing): got true, want false")
 	}
 
@@ -275,11 +276,11 @@ func TestSQLStore_SessionNonces(t *testing.T) {
 		CodeVerifier: "verifier-xyz",
 		ClientIP:     "1.2.3.4",
 	}
-	if err := s.StoreSessionNonce("nonce-1", data, 5*time.Minute); err != nil {
+	if err := s.StoreSessionNonce(context.Background(), "nonce-1", data, 5*time.Minute); err != nil {
 		t.Fatalf("StoreSessionNonce: %v", err)
 	}
 
-	got, ok := s.GetSessionNonce("nonce-1")
+	got, ok := s.GetSessionNonce(context.Background(), "nonce-1")
 	if !ok {
 		t.Fatal("GetSessionNonce after store: got false, want true")
 	}
@@ -287,17 +288,17 @@ func TestSQLStore_SessionNonces(t *testing.T) {
 		t.Errorf("GetSessionNonce: got %+v", got)
 	}
 
-	s.DeleteSessionNonce("nonce-1")
-	if _, ok := s.GetSessionNonce("nonce-1"); ok {
+	s.DeleteSessionNonce(context.Background(), "nonce-1")
+	if _, ok := s.GetSessionNonce(context.Background(), "nonce-1"); ok {
 		t.Error("GetSessionNonce after delete: got true, want false")
 	}
 
 	// TTL expiry.
-	if err := s.StoreSessionNonce("nonce-2", data, 1*time.Millisecond); err != nil {
+	if err := s.StoreSessionNonce(context.Background(), "nonce-2", data, 1*time.Millisecond); err != nil {
 		t.Fatalf("StoreSessionNonce: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	if _, ok := s.GetSessionNonce("nonce-2"); ok {
+	if _, ok := s.GetSessionNonce(context.Background(), "nonce-2"); ok {
 		t.Error("GetSessionNonce after expiry: got true, want false")
 	}
 }
@@ -305,26 +306,26 @@ func TestSQLStore_SessionNonces(t *testing.T) {
 func TestSQLStore_KnownHostsAndUsers(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	s.LogAction("alice", ActionApproved, "host1", "C1", "")
-	s.LogAction("alice", ActionApproved, "host2", "C2", "")
-	s.LogAction("bob", ActionApproved, "host1", "C3", "")
+	s.LogAction(context.Background(), "alice", ActionApproved, "host1", "C1", "")
+	s.LogAction(context.Background(), "alice", ActionApproved, "host2", "C2", "")
+	s.LogAction(context.Background(), "bob", ActionApproved, "host1", "C3", "")
 
-	hosts := s.KnownHosts("alice")
+	hosts := s.KnownHosts(context.Background(), "alice")
 	if len(hosts) != 2 {
 		t.Errorf("KnownHosts(alice): got %v, want 2 entries", hosts)
 	}
 
-	all := s.AllKnownHosts()
+	all := s.AllKnownHosts(context.Background())
 	if len(all) != 2 {
 		t.Errorf("AllKnownHosts: got %v, want 2 entries", all)
 	}
 
-	users := s.UsersWithHostActivity("host1")
+	users := s.UsersWithHostActivity(context.Background(), "host1")
 	if len(users) != 2 {
 		t.Errorf("UsersWithHostActivity(host1): got %v, want 2 entries", users)
 	}
 
-	allUsers := s.AllUsers()
+	allUsers := s.AllUsers(context.Background())
 	if len(allUsers) != 2 {
 		t.Errorf("AllUsers: got %v, want 2 entries", allUsers)
 	}
@@ -334,7 +335,7 @@ func TestSQLStore_SaveStateClearsDirty(t *testing.T) {
 	s := newTestSQLStore(t)
 
 	// A write marks the store dirty.
-	s.LogAction("alice", ActionApproved, "h", "C1", "")
+	s.LogAction(context.Background(), "alice", ActionApproved, "h", "C1", "")
 	if !s.dirty.Load() {
 		t.Fatal("expected dirty=true after write")
 	}
@@ -406,8 +407,8 @@ func TestSQLStore_WithSQLGraceHMACKey(t *testing.T) {
 	}
 
 	// End-to-end: write with the key present, then read back successfully.
-	s.CreateGraceSession("alice", "h", 10*time.Minute)
-	if !s.WithinGracePeriod("alice", "h") {
+	s.CreateGraceSession(context.Background(), "alice", "h", 10*time.Minute)
+	if !s.WithinGracePeriod(context.Background(), "alice", "h") {
 		t.Error("WithinGracePeriod after Create with keyed store: want true")
 	}
 
@@ -427,7 +428,7 @@ func TestSQLStore_WithSQLGraceHMACKey(t *testing.T) {
 func TestSQLStore_RevokeTokensBefore(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	if got := s.RevokeTokensBefore("alice"); !got.IsZero() {
+	if got := s.RevokeTokensBefore(context.Background(), "alice"); !got.IsZero() {
 		t.Errorf("RevokeTokensBefore before set: got %v, want zero", got)
 	}
 	// Direct insert (RevokeTokensBefore setter lives on the read-modify-write
@@ -438,7 +439,7 @@ func TestSQLStore_RevokeTokensBefore(t *testing.T) {
 	if _, err := s.exec(t.Context(), `INSERT INTO revoke_tokens_before (username, revoked_at) VALUES (?, ?)`, "alice", now); err != nil {
 		t.Fatalf("manual insert: %v", err)
 	}
-	got := s.RevokeTokensBefore("alice")
+	got := s.RevokeTokensBefore(context.Background(), "alice")
 	if got.Unix() != now {
 		t.Errorf("RevokeTokensBefore: got %v, want %v", got.Unix(), now)
 	}

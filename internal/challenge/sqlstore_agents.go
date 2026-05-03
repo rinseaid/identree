@@ -7,11 +7,11 @@ import (
 
 // RecordHeartbeat upserts the agents row for h.Hostname, bumping
 // last_seen to now and preserving first_seen if the row already exists.
-func (s *SQLStore) RecordHeartbeat(h AgentHeartbeat) {
+func (s *SQLStore) RecordHeartbeat(ctx context.Context, h AgentHeartbeat) {
 	if h.Hostname == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	now := nowUnix()
 	_, err := s.exec(ctx,
@@ -28,8 +28,8 @@ func (s *SQLStore) RecordHeartbeat(h AgentHeartbeat) {
 
 // ListAgents returns every recorded agent ordered by last_seen DESC so
 // the dashboard renders the most-recently-active host first.
-func (s *SQLStore) ListAgents() []AgentStatus {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) ListAgents(ctx context.Context) []AgentStatus {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
 		`SELECT hostname, version, os_info, ip, first_seen, last_seen

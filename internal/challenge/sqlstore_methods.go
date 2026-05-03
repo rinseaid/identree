@@ -16,8 +16,8 @@ import (
 
 // ── Token revocation ────────────────────────────────────────────────────────
 
-func (s *SQLStore) RevokeTokensBefore(username string) time.Time {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) RevokeTokensBefore(ctx context.Context, username string) time.Time {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var u int64
 	err := s.queryRow(ctx, `SELECT revoked_at FROM revoke_tokens_before WHERE username = ?`, username).Scan(&u)
@@ -33,8 +33,8 @@ func (s *SQLStore) RevokeTokensBefore(username string) time.Time {
 
 // ── OIDC auth tracking ──────────────────────────────────────────────────────
 
-func (s *SQLStore) RecordOIDCAuth(username string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) RecordOIDCAuth(ctx context.Context, username string) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := s.exec(ctx,
 		`INSERT INTO last_oidc_auth (username, at_unix) VALUES (?, ?)
@@ -43,8 +43,8 @@ func (s *SQLStore) RecordOIDCAuth(username string) {
 	logErr("RecordOIDCAuth", err)
 }
 
-func (s *SQLStore) LastOIDCAuth(username string) time.Time {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) LastOIDCAuth(ctx context.Context, username string) time.Time {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var u int64
 	err := s.queryRow(ctx, `SELECT at_unix FROM last_oidc_auth WHERE username = ?`, username).Scan(&u)
@@ -60,19 +60,19 @@ func (s *SQLStore) LastOIDCAuth(username string) time.Time {
 
 // ── Action log ──────────────────────────────────────────────────────────────
 
-func (s *SQLStore) LogAction(username, action, hostname, code, actor string) {
-	s.LogActionAt(username, action, hostname, code, actor, time.Now())
+func (s *SQLStore) LogAction(ctx context.Context, username, action, hostname, code, actor string) {
+	s.LogActionAt(ctx, username, action, hostname, code, actor, time.Now())
 }
 
-func (s *SQLStore) LogActionWithReason(username, action, hostname, code, actor, reason string) {
-	s.logActionAt(username, action, hostname, code, actor, reason, time.Now())
+func (s *SQLStore) LogActionWithReason(ctx context.Context, username, action, hostname, code, actor, reason string) {
+	s.logActionAt(ctx, username, action, hostname, code, actor, reason, time.Now())
 }
 
-func (s *SQLStore) LogActionAt(username, action, hostname, code, actor string, at time.Time) {
-	s.logActionAt(username, action, hostname, code, actor, "", at)
+func (s *SQLStore) LogActionAt(ctx context.Context, username, action, hostname, code, actor string, at time.Time) {
+	s.logActionAt(ctx, username, action, hostname, code, actor, "", at)
 }
 
-func (s *SQLStore) logActionAt(username, action, hostname, code, actor, reason string, at time.Time) {
+func (s *SQLStore) logActionAt(ctx context.Context, username, action, hostname, code, actor, reason string, at time.Time) {
 	if at.IsZero() {
 		at = time.Now()
 	}
@@ -82,7 +82,7 @@ func (s *SQLStore) logActionAt(username, action, hostname, code, actor, reason s
 	if actor == username {
 		storedActor = ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := s.exec(ctx,
 		`INSERT INTO action_log (username, action, hostname, code, actor, reason, ts_unix)
@@ -91,11 +91,11 @@ func (s *SQLStore) logActionAt(username, action, hostname, code, actor, reason s
 	logErr("LogAction", err)
 }
 
-func (s *SQLStore) ActionHistory(username string, limit int) []ActionLogEntry {
+func (s *SQLStore) ActionHistory(ctx context.Context, username string, limit int) []ActionLogEntry {
 	if limit <= 0 {
 		limit = 50
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
 		`SELECT ts_unix, action, hostname, code, actor, reason
@@ -127,13 +127,17 @@ func (s *SQLStore) ActionHistory(username string, limit int) []ActionLogEntry {
 	return out
 }
 
-func (s *SQLStore) AllActionHistory() []ActionLogEntry {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) AllActionHistory(ctx context.Context, limit int) []ActionLogEntry {
+	if limit <= 0 {
+		limit = 10000
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
 		`SELECT ts_unix, action, hostname, code, actor, reason
 		 FROM action_log
-		 ORDER BY ts_unix DESC, id DESC`)
+		 ORDER BY ts_unix DESC, id DESC
+		 LIMIT ?`, limit)
 	if err != nil {
 		logErr("AllActionHistory", err)
 		return nil
@@ -157,13 +161,17 @@ func (s *SQLStore) AllActionHistory() []ActionLogEntry {
 	return out
 }
 
-func (s *SQLStore) AllActionHistoryWithUsers() []ActionLogEntryWithUser {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) AllActionHistoryWithUsers(ctx context.Context, limit, offset int) []ActionLogEntryWithUser {
+	if limit <= 0 {
+		limit = 10000
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
 		`SELECT username, ts_unix, action, hostname, code, actor, reason
 		 FROM action_log
-		 ORDER BY ts_unix DESC, id DESC`)
+		 ORDER BY ts_unix DESC, id DESC
+		 LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		logErr("AllActionHistoryWithUsers", err)
 		return nil
@@ -189,8 +197,8 @@ func (s *SQLStore) AllActionHistoryWithUsers() []ActionLogEntryWithUser {
 
 // ── Hosts ───────────────────────────────────────────────────────────────────
 
-func (s *SQLStore) KnownHosts(username string) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) KnownHosts(ctx context.Context, username string) []string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// Exclude rows whose action is ActionRemovedHost to match the legacy contract.
 	rows, err := s.query(ctx,
@@ -220,8 +228,8 @@ func (s *SQLStore) KnownHosts(username string) []string {
 	return out
 }
 
-func (s *SQLStore) AllKnownHosts() []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) AllKnownHosts(ctx context.Context) []string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
 		`SELECT DISTINCT hostname FROM action_log
@@ -251,8 +259,8 @@ func (s *SQLStore) AllKnownHosts() []string {
 	return out
 }
 
-func (s *SQLStore) UsersWithHostActivity(hostname string) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) UsersWithHostActivity(ctx context.Context, hostname string) []string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
 		`SELECT DISTINCT username FROM action_log
@@ -283,8 +291,8 @@ func (s *SQLStore) UsersWithHostActivity(hostname string) []string {
 
 // ── Escrow ──────────────────────────────────────────────────────────────────
 
-func (s *SQLStore) RecordEscrow(hostname, itemID, vaultID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) RecordEscrow(ctx context.Context, hostname, itemID, vaultID string) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := s.exec(ctx,
 		`INSERT INTO escrowed_hosts (hostname, ts_unix, item_id, vault_id)
@@ -297,8 +305,8 @@ func (s *SQLStore) RecordEscrow(hostname, itemID, vaultID string) {
 	logErr("RecordEscrow", err)
 }
 
-func (s *SQLStore) StoreEscrowCiphertext(hostname, ciphertext string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) StoreEscrowCiphertext(ctx context.Context, hostname, ciphertext string) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := s.exec(ctx,
 		`INSERT INTO escrow_ciphertexts (hostname, ciphertext)
@@ -308,8 +316,8 @@ func (s *SQLStore) StoreEscrowCiphertext(hostname, ciphertext string) {
 	logErr("StoreEscrowCiphertext", err)
 }
 
-func (s *SQLStore) GetEscrowCiphertext(hostname string) (string, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) GetEscrowCiphertext(ctx context.Context, hostname string) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var ct string
 	err := s.queryRow(ctx, `SELECT ciphertext FROM escrow_ciphertexts WHERE hostname = ?`, hostname).Scan(&ct)
@@ -323,8 +331,8 @@ func (s *SQLStore) GetEscrowCiphertext(hostname string) (string, bool) {
 	return ct, true
 }
 
-func (s *SQLStore) EscrowedHosts() map[string]EscrowRecord {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) EscrowedHosts(ctx context.Context) map[string]EscrowRecord {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx, `SELECT hostname, ts_unix, item_id, vault_id FROM escrowed_hosts`)
 	if err != nil {
@@ -353,8 +361,8 @@ func (s *SQLStore) EscrowedHosts() map[string]EscrowRecord {
 
 // ── Host rotation ───────────────────────────────────────────────────────────
 
-func (s *SQLStore) SetHostRotateBefore(hostname string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) SetHostRotateBefore(ctx context.Context, hostname string) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := s.exec(ctx,
 		`INSERT INTO rotate_breakglass_before (hostname, rotated_at)
@@ -364,8 +372,8 @@ func (s *SQLStore) SetHostRotateBefore(hostname string) {
 	logErr("SetHostRotateBefore", err)
 }
 
-func (s *SQLStore) HostRotateBefore(hostname string) time.Time {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) HostRotateBefore(ctx context.Context, hostname string) time.Time {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var u int64
 	err := s.queryRow(ctx, `SELECT rotated_at FROM rotate_breakglass_before WHERE hostname = ?`, hostname).Scan(&u)
@@ -379,11 +387,11 @@ func (s *SQLStore) HostRotateBefore(hostname string) time.Time {
 	return unixToTime(u)
 }
 
-func (s *SQLStore) SetAllHostsRotateBefore(hostnames []string) {
+func (s *SQLStore) SetAllHostsRotateBefore(ctx context.Context, hostnames []string) {
 	if len(hostnames) == 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -416,8 +424,8 @@ func (s *SQLStore) SetAllHostsRotateBefore(hostnames []string) {
 
 // ── Users ───────────────────────────────────────────────────────────────────
 
-func (s *SQLStore) AllUsers() []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) AllUsers(ctx context.Context) []string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx,
 		`SELECT DISTINCT username FROM action_log WHERE username <> ''
@@ -447,8 +455,8 @@ func (s *SQLStore) AllUsers() []string {
 
 // ── Session persistence ─────────────────────────────────────────────────────
 
-func (s *SQLStore) PersistRevokedNonce(nonce string, at time.Time) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) PersistRevokedNonce(ctx context.Context, nonce string, at time.Time) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := s.exec(ctx,
 		`INSERT INTO revoked_nonces (nonce, revoked_at) VALUES (?, ?)
@@ -457,8 +465,8 @@ func (s *SQLStore) PersistRevokedNonce(nonce string, at time.Time) {
 	logErr("PersistRevokedNonce", err)
 }
 
-func (s *SQLStore) PersistRevokedAdminSession(username string, at time.Time) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) PersistRevokedAdminSession(ctx context.Context, username string, at time.Time) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := s.exec(ctx,
 		`INSERT INTO revoked_admin_sessions (username, revoked_at) VALUES (?, ?)
@@ -467,8 +475,8 @@ func (s *SQLStore) PersistRevokedAdminSession(username string, at time.Time) {
 	logErr("PersistRevokedAdminSession", err)
 }
 
-func (s *SQLStore) LoadRevokedNonces() map[string]time.Time {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) LoadRevokedNonces(ctx context.Context) map[string]time.Time {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx, `SELECT nonce, revoked_at FROM revoked_nonces`)
 	if err != nil {
@@ -491,8 +499,8 @@ func (s *SQLStore) LoadRevokedNonces() map[string]time.Time {
 	return out
 }
 
-func (s *SQLStore) LoadRevokedAdminSessions() map[string]time.Time {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *SQLStore) LoadRevokedAdminSessions(ctx context.Context) map[string]time.Time {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	rows, err := s.query(ctx, `SELECT username, revoked_at FROM revoked_admin_sessions`)
 	if err != nil {
@@ -517,8 +525,8 @@ func (s *SQLStore) LoadRevokedAdminSessions() map[string]time.Time {
 
 // ── Escrow token replay ─────────────────────────────────────────────────────
 
-func (s *SQLStore) CheckAndRecordEscrowToken(tokenKey string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) CheckAndRecordEscrowToken(ctx context.Context, tokenKey string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	res, err := s.exec(ctx,
 		`INSERT INTO used_escrow_tokens (token_key, first_seen) VALUES (?, ?)
@@ -534,8 +542,8 @@ func (s *SQLStore) CheckAndRecordEscrowToken(tokenKey string) bool {
 	return n == 0
 }
 
-func (s *SQLStore) UsedEscrowTokenCount() int {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) UsedEscrowTokenCount(ctx context.Context) int {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var n int
 	err := s.queryRow(ctx, `SELECT COUNT(*) FROM used_escrow_tokens`).Scan(&n)
@@ -548,8 +556,8 @@ func (s *SQLStore) UsedEscrowTokenCount() int {
 
 // ── Session nonces (OIDC login state) ───────────────────────────────────────
 
-func (s *SQLStore) StoreSessionNonce(nonce string, data SessionNonceData, ttl time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) StoreSessionNonce(ctx context.Context, nonce string, data SessionNonceData, ttl time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	expiresAt := time.Now().Add(ttl).Unix()
 	if ttl <= 0 {
@@ -567,8 +575,8 @@ func (s *SQLStore) StoreSessionNonce(nonce string, data SessionNonceData, ttl ti
 	return err
 }
 
-func (s *SQLStore) GetSessionNonce(nonce string) (SessionNonceData, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) GetSessionNonce(ctx context.Context, nonce string) (SessionNonceData, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var (
 		issuedAt  int64
@@ -594,8 +602,8 @@ func (s *SQLStore) GetSessionNonce(nonce string) (SessionNonceData, bool) {
 	return data, true
 }
 
-func (s *SQLStore) DeleteSessionNonce(nonce string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func (s *SQLStore) DeleteSessionNonce(ctx context.Context, nonce string) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := s.exec(ctx, `DELETE FROM session_nonces WHERE nonce = ?`, nonce)
 	logErr("DeleteSessionNonce", err)

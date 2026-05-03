@@ -1,6 +1,7 @@
 package challenge
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -8,15 +9,15 @@ import (
 func TestSQLStore_AgentHeartbeat(t *testing.T) {
 	s := newTestSQLStore(t)
 
-	if got := s.ListAgents(); len(got) != 0 {
+	if got := s.ListAgents(context.Background()); len(got) != 0 {
 		t.Errorf("ListAgents on fresh store: got %d entries, want 0", len(got))
 	}
 
-	s.RecordHeartbeat(AgentHeartbeat{
+	s.RecordHeartbeat(context.Background(), AgentHeartbeat{
 		Hostname: "host1", Version: "1.2.3", OSInfo: "ubuntu 24.04", IP: "10.0.0.1",
 	})
 
-	agents := s.ListAgents()
+	agents := s.ListAgents(context.Background())
 	if len(agents) != 1 {
 		t.Fatalf("ListAgents: got %d, want 1", len(agents))
 	}
@@ -33,9 +34,9 @@ func TestSQLStore_AgentHeartbeat(t *testing.T) {
 
 	// Second heartbeat updates last_seen but keeps first_seen.
 	time.Sleep(1100 * time.Millisecond)
-	s.RecordHeartbeat(AgentHeartbeat{Hostname: "host1", Version: "1.2.4"})
+	s.RecordHeartbeat(context.Background(), AgentHeartbeat{Hostname: "host1", Version: "1.2.4"})
 
-	agents = s.ListAgents()
+	agents = s.ListAgents(context.Background())
 	if len(agents) != 1 {
 		t.Fatalf("ListAgents after re-heartbeat: got %d, want 1", len(agents))
 	}
@@ -53,8 +54,8 @@ func TestSQLStore_AgentHeartbeat(t *testing.T) {
 	// strictly later Unix-second timestamp; otherwise the ORDER BY ties
 	// and SQLite vs Postgres can return them in different orders.
 	time.Sleep(1100 * time.Millisecond)
-	s.RecordHeartbeat(AgentHeartbeat{Hostname: "host2"})
-	agents = s.ListAgents()
+	s.RecordHeartbeat(context.Background(), AgentHeartbeat{Hostname: "host2"})
+	agents = s.ListAgents(context.Background())
 	if len(agents) != 2 {
 		t.Fatalf("ListAgents: got %d, want 2", len(agents))
 	}
@@ -63,20 +64,20 @@ func TestSQLStore_AgentHeartbeat(t *testing.T) {
 	}
 
 	// Hostname empty is a no-op.
-	s.RecordHeartbeat(AgentHeartbeat{})
-	if got := s.ListAgents(); len(got) != 2 {
+	s.RecordHeartbeat(context.Background(), AgentHeartbeat{})
+	if got := s.ListAgents(context.Background()); len(got) != 2 {
 		t.Errorf("ListAgents after empty heartbeat: got %d, want 2", len(got))
 	}
 }
 
 func TestSQLStore_RemoveHostClearsAgent(t *testing.T) {
 	s := newTestSQLStore(t)
-	s.RecordHeartbeat(AgentHeartbeat{Hostname: "vanish"})
-	if got := s.ListAgents(); len(got) != 1 {
+	s.RecordHeartbeat(context.Background(), AgentHeartbeat{Hostname: "vanish"})
+	if got := s.ListAgents(context.Background()); len(got) != 1 {
 		t.Fatalf("precondition: ListAgents = %d, want 1", len(got))
 	}
-	s.RemoveHost("vanish")
-	if got := s.ListAgents(); len(got) != 0 {
+	s.RemoveHost(context.Background(), "vanish")
+	if got := s.ListAgents(context.Background()); len(got) != 0 {
 		t.Errorf("ListAgents after RemoveHost: got %d, want 0", len(got))
 	}
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -364,14 +365,25 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		shellQuote(s.cfg.SharedSecret), shellQuote(s.cfg.SharedSecret))
 	installScript = append([]byte(secretExport), installScript...)
 
+	s.deployWg.Add(1)
 	go func() {
+		defer s.deployWg.Done()
 		defer func() { <-deploySemaphore }()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("deploy goroutine panic", "job", jobID, "panic", r)
 			}
 		}()
-		s.runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, installScript)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			select {
+			case <-s.stopCh:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		s.runDeployJob(ctx, job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, installScript)
 		// zero the signer (best-effort, GC will handle the rest)
 		signer = nil
 		// Schedule job cleanup after TTL to prevent unbounded map growth.
@@ -549,9 +561,9 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	adminUser := s.getSessionUser(r) // already validated by verifyJSONAdminAuth above
-	s.store.RemoveHost(req.Hostname)
+	s.store.RemoveHost(r.Context(), req.Hostname)
 	_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
-	s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
+	s.store.LogAction(r.Context(), adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
 	slog.Info("HOST_REMOVED", "admin", adminUser, "host", req.Hostname, "client_ip", clientIP(r))
 
 	s.dispatchNotification(notify.WebhookData{
@@ -672,19 +684,30 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 	s.deployJobs[jobID] = job
 	s.deployMu.Unlock()
 
+	s.deployWg.Add(1)
 	go func() {
+		defer s.deployWg.Done()
 		defer func() { <-deploySemaphore }()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("deploy goroutine panic", "job", jobID, "panic", r)
 			}
 		}()
-		s.runDeployJob(job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, uninstallScript)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			select {
+			case <-s.stopCh:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		s.runDeployJob(ctx, job, req.Hostname, req.Port, req.SSHUser, signer, remoteCmd, uninstallScript)
 		_, _, jobFailed := job.snapshot()
 		if !jobFailed {
-			s.store.RemoveHost(req.Hostname)
+			s.store.RemoveHost(context.Background(), req.Hostname)
 			_ = s.hostRegistry.RemoveHost(req.Hostname) // ignore "not registered" error
-			s.store.LogAction(adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
+			s.store.LogAction(context.Background(), adminUser, challpkg.ActionRemovedHost, req.Hostname, "", "")
 		}
 		// Schedule job cleanup after TTL to prevent unbounded map growth.
 		go func() {
@@ -706,7 +729,8 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 }
 
 // runDeployJob connects via SSH, pipes installScript to stdin of cmd, and streams output to job.
-func (s *Server) runDeployJob(job *deployJob, hostname string, port int, sshUser string, signer gossh.Signer, cmd string, installScript []byte) {
+// The provided ctx is cancelled when the server is shutting down; active sessions are terminated.
+func (s *Server) runDeployJob(ctx context.Context, job *deployJob, hostname string, port int, sshUser string, signer gossh.Signer, cmd string, installScript []byte) {
 	addr := fmt.Sprintf("%s:%d", hostname, port)
 	job.appendLine(fmt.Sprintf("Connecting to %s as %s …", addr, sshUser))
 
@@ -797,7 +821,7 @@ func (s *Server) runDeployJob(job *deployJob, hostname string, port int, sshUser
 				}
 			}
 			job.mu.Unlock()
-			s.store.LogAction(job.initiator, challpkg.ActionDeployed, logHost, "", "")
+			s.store.LogAction(context.Background(), job.initiator, challpkg.ActionDeployed, logHost, "", "")
 			s.dispatchNotification(notify.WebhookData{
 				Event:      "deployed",
 				Username:   job.initiator,
@@ -810,6 +834,11 @@ func (s *Server) runDeployJob(job *deployJob, hostname string, port int, sshUser
 		sess.Signal(gossh.SIGKILL)
 		pw.Close()
 		job.appendLine("ERROR: timed out after " + deployTimeout.String())
+		job.finish(true)
+	case <-ctx.Done():
+		sess.Signal(gossh.SIGKILL)
+		pw.Close()
+		job.appendLine("ERROR: deployment cancelled: server shutting down")
 		job.finish(true)
 	}
 }

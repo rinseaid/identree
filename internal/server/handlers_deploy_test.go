@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -492,7 +493,7 @@ func TestHandleRemoveHost_Success(t *testing.T) {
 
 	// Seed the store with action history referencing the host so there is
 	// observable state to remove.
-	s.store.LogAction("alice", challpkg.ActionDeployed, "web01.example.com", "", "deployadmin")
+	s.store.LogAction(context.Background(), "alice", challpkg.ActionDeployed, "web01.example.com", "", "deployadmin")
 
 	r := buildDeployAdminReq(t, secret, "/api/hosts/remove-host", map[string]any{"hostname": "web01.example.com"})
 	w := httptest.NewRecorder()
@@ -507,7 +508,7 @@ func TestHandleRemoveHost_Success(t *testing.T) {
 
 	// Verify a remove action was logged — observable side effect of success.
 	found := false
-	for _, entry := range s.store.AllActionHistory() {
+	for _, entry := range s.store.AllActionHistory(context.Background(), 10000) {
 		if entry.Action == challpkg.ActionRemovedHost && entry.Hostname == "web01.example.com" {
 			found = true
 			break

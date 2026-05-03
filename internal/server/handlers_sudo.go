@@ -118,7 +118,7 @@ func (s *Server) handleAdminSudoRules(w http.ResponseWriter, r *http.Request) {
 		"Languages":  supportedLanguages,
 		"IsAdmin":    true,
 		"SudoRules":  s.sudoRules.Rules(),
-		"Pending":              s.buildAllPendingViews(username, lang),
+		"Pending":              s.buildAllPendingViews(r.Context(), username, lang),
 		"JustificationChoices": func() []string { c, _ := s.justificationTemplateData(); return c }(),
 		"RequireJustification": func() bool { _, r := s.justificationTemplateData(); return r }(),
 		"CSRFToken":  csrfToken,
@@ -179,7 +179,7 @@ func (s *Server) handleSudoRuleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
+	s.store.LogAction(r.Context(), adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "sudo_rule_modified",
 		Username:   adminUser,
@@ -240,7 +240,7 @@ func (s *Server) handleSudoRuleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
+	s.store.LogAction(r.Context(), adminUser, challpkg.ActionSudoRuleModified, rule.Group, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "sudo_rule_modified",
 		Username:   adminUser,
@@ -289,7 +289,7 @@ func (s *Server) handleSudoRuleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.LogAction(adminUser, challpkg.ActionSudoRuleModified, group, "", adminUser)
+	s.store.LogAction(r.Context(), adminUser, challpkg.ActionSudoRuleModified, group, "", adminUser)
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "sudo_rule_modified",
 		Username:   adminUser,

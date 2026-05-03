@@ -124,6 +124,7 @@ type Server struct {
 	// Auto-deploy
 	deployJobs map[string]*deployJob
 	deployMu   sync.Mutex
+	deployWg   sync.WaitGroup // tracks active deploy goroutines; Stop() waits on this
 	deployRL   *deployRateLimiter
 	loginRL    *loginRateLimiter
 	approveRL  *loginRateLimiter  // per-IP limit on /approve/{code}
@@ -631,7 +632,7 @@ func (s *Server) updateAdminRevocations(newAdminUsernames map[string]bool) {
 	for username := range s.prevAdminUsernames {
 		if !newAdminUsernames[username] {
 			s.revokedAdminSessions.Store(username, now)
-			s.store.PersistRevokedAdminSession(username, now)
+			s.store.PersistRevokedAdminSession(context.Background(), username, now)
 			s.publishClusterMessage(clusterMessage{Type: "revoke_admin", Username: username})
 			slog.Info("admin role revoked for user removed from admin groups", "user", username)
 		}
@@ -899,10 +900,12 @@ func (s *Server) buildDisabledMap() map[string]bool {
 }
 
 // Stop cleanly shuts down background resources.
-// Shutdown order: drain SSE clients (clean close) -> close broadcaster -> stop store -> close audit.
+// Shutdown order: close stopCh -> drain SSE clients -> wait for deploy goroutines
+// -> close broadcaster -> stop store -> close audit.
 func (s *Server) Stop() {
 	close(s.stopCh)
 	s.drainSSEClients()
+	s.deployWg.Wait()
 	if s.sseBroadcaster != nil {
 		s.sseBroadcaster.Close()
 	}
@@ -958,7 +961,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if rv := recover(); rv != nil {
 			buf := make([]byte, 64<<10)
 			n := runtime.Stack(buf, false)
-			slog.Error("panic in handler", "remote", remoteAddr(r), "method", r.Method, "path", r.URL.Path, "value", rv, "stack", string(buf[:n]))
+			slog.Error("panic in handler", "request_id", RequestID(r.Context()), "remote", remoteAddr(r), "method", r.Method, "path", r.URL.Path, "value", rv, "stack", string(buf[:n]))
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 	}()
@@ -974,6 +977,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		target := "https://" + externalHost + r.URL.RequestURI()
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 		return
+	}
+
+	// Generate a request correlation ID for all paths except /healthz.
+	var reqID string
+	if r.URL.Path != "/healthz" {
+		var err error
+		reqID, err = randutil.Hex(8)
+		if err != nil {
+			slog.Error("request ID generation failed", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), ctxKeyRequestID, reqID))
+		w.Header().Set("X-Request-ID", reqID)
 	}
 
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -1012,6 +1029,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type ctxKeyType string
 
 const ctxKeyCSPNonce ctxKeyType = "csp-nonce"
+
+// ctxKey is the context key type for request-scoped values (e.g. request ID).
+type ctxKey int
+
+const ctxKeyRequestID ctxKey = iota
+
+// RequestID extracts the correlation ID from the request context.
+// Returns "" if no ID was set (e.g. health check requests).
+func RequestID(ctx context.Context) string {
+	if id, ok := ctx.Value(ctxKeyRequestID).(string); ok {
+		return id
+	}
+	return ""
+}
 
 // cspNonce retrieves the per-request CSP nonce from the context.
 func cspNonce(r *http.Request) string {

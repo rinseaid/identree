@@ -427,7 +427,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cfgMu.RUnlock()
 
-	challenge, err := s.store.Create(req.Username, req.Hostname, rotateBefore, req.Reason)
+	challenge, err := s.store.Create(r.Context(), req.Username, req.Hostname, rotateBefore, req.Reason)
 	if err != nil {
 		// Rate limit errors are returned by the store when too many challenges exist
 		if errors.Is(err, challpkg.ErrTooManyChallenges) || errors.Is(err, challpkg.ErrTooManyPerUser) {
@@ -451,7 +451,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	// Persist policy fields so subsequent Approve/AddApproval calls can read
 	// them from the SQL row (the *Challenge returned from Create is now a
 	// detached snapshot rather than a live pointer to in-memory state).
-	s.store.SetChallengePolicy(challenge.ID, policyResult.PolicyName, policyResult.MinApprovals, policyResult.RequireAdmin, policyResult.BreakglassBypass)
+	s.store.SetChallengePolicy(r.Context(), challenge.ID, policyResult.PolicyName, policyResult.MinApprovals, policyResult.RequireAdmin, policyResult.BreakglassBypass)
 
 	challengesCreated.Inc()
 	challpkg.ActiveChallenges.Inc()
@@ -470,7 +470,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	// AutoApproveIfWithinGracePeriod performs the grace-period check and approval
 	// atomically under a single write lock, eliminating the TOCTOU race between
 	// a separate WithinGracePeriod check and AutoApprove call.
-	if policyResult.GraceEligible && policyResult.TimeWindowOK && s.store.AutoApproveIfWithinGracePeriod(req.Username, req.Hostname, challenge.ID) {
+	if policyResult.GraceEligible && policyResult.TimeWindowOK && s.store.AutoApproveIfWithinGracePeriod(r.Context(), req.Username, req.Hostname, challenge.ID) {
 		challengesAutoApproved.Inc()
 		challpkg.ActiveChallenges.Dec()
 		challengeDuration.Observe(0)
@@ -479,7 +479,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		if hostname == "" {
 			hostname = "(unknown)"
 		}
-		s.store.LogActionWithReason(req.Username, challpkg.ActionAutoApproved, hostname, challenge.UserCode, "", challenge.Reason)
+		s.store.LogActionWithReason(r.Context(), req.Username, challpkg.ActionAutoApproved, hostname, challenge.UserCode, "", challenge.Reason)
 		s.dispatchNotification(notify.WebhookData{
 			Event:      "auto_approved",
 			Username:   req.Username,
@@ -498,7 +498,7 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 			"user_code":       challenge.UserCode,
 			"expires_in":      int(challengeTTL.Seconds()),
 			"status":          "approved",
-			"grace_remaining": int(s.store.GraceRemaining(req.Username, req.Hostname).Seconds()),
+			"grace_remaining": int(s.store.GraceRemaining(r.Context(), req.Username, req.Hostname).Seconds()),
 		}
 		if s.cfg.SharedSecret != "" {
 			resp["approval_token"] = s.computeStatusHMAC(challenge.ID, req.Username, "approved", challenge.BreakglassRotateBefore, challenge.RevokeTokensBefore)
@@ -595,7 +595,7 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 		reqHostname = certHost
 	}
 
-	challenge, ok := s.store.Get(id)
+	challenge, ok := s.store.Get(r.Context(), id)
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusGone)
@@ -655,7 +655,7 @@ func (s *Server) handlePollChallenge(w http.ResponseWriter, r *http.Request) {
 			}
 			// Include grace period remaining so the client can show the
 			// effective re-auth window (max of token expiry and grace period).
-			if gr := s.store.GraceRemaining(challenge.Username, challenge.Hostname); gr > 0 {
+			if gr := s.store.GraceRemaining(r.Context(), challenge.Username, challenge.Hostname); gr > 0 {
 				resp["grace_remaining"] = int(gr.Seconds())
 			}
 		case challpkg.StatusDenied:
@@ -717,11 +717,11 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	remaining := s.store.GraceRemaining(username, hostname)
+	remaining := s.store.GraceRemaining(r.Context(), username, hostname)
 	resp := map[string]interface{}{
 		"grace_remaining": int(remaining.Seconds()),
 	}
-	if t := s.store.RevokeTokensBefore(username); !t.IsZero() {
+	if t := s.store.RevokeTokensBefore(r.Context(), username); !t.IsZero() {
 		resp["revoke_tokens_before"] = t.Format(time.RFC3339)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -929,11 +929,11 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		// The challenge store persists used tokens across restarts to prevent replay
 		// during the validity window even after a server restart.
 		tokenKey := req.Hostname + ":" + tsHeader
-		if s.store.UsedEscrowTokenCount() >= maxUsedEscrowTokens {
+		if s.store.UsedEscrowTokenCount(r.Context()) >= maxUsedEscrowTokens {
 			apiError(w, http.StatusTooManyRequests, "escrow rate limit exceeded")
 			return
 		}
-		if s.store.CheckAndRecordEscrowToken(tokenKey) {
+		if s.store.CheckAndRecordEscrowToken(r.Context(), tokenKey) {
 			slog.Warn("REPLAY escrow token already used", "host", req.Hostname, "remote_addr", remoteAddr(r))
 			apiError(w, http.StatusGone, "escrow token already used")
 			return
@@ -1041,12 +1041,12 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	s.store.RecordEscrow(req.Hostname, itemID, vaultID)
+	s.store.RecordEscrow(r.Context(), req.Hostname, itemID, vaultID)
 	// Log the escrow as a "rotated_breakglass" action visible in the history page.
 	// Since escrow is a machine-level operation (no user session), log it for all
 	// users who have activity on this host so it appears in their history.
-	for _, user := range s.store.UsersWithHostActivity(req.Hostname) {
-		s.store.LogAction(user, challpkg.ActionRotatedBreakglass, req.Hostname, "", "")
+	for _, user := range s.store.UsersWithHostActivity(r.Context(), req.Hostname) {
+		s.store.LogAction(r.Context(), user, challpkg.ActionRotatedBreakglass, req.Hostname, "", "")
 	}
 	slog.Info("BREAKGLASS password escrowed", "host", req.Hostname)
 	// H9: prominent audit log for breakglass token issuance capturing all
@@ -1106,7 +1106,7 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Confirm this host has an escrow record.
-	escrowed := s.store.EscrowedHosts()
+	escrowed := s.store.EscrowedHosts(r.Context())
 	record, ok := escrowed[hostname]
 	if !ok {
 		apiError(w, http.StatusNotFound, "no escrow record for host")
@@ -1142,11 +1142,11 @@ func (s *Server) handleBreakglassReveal(w http.ResponseWriter, r *http.Request) 
 
 	// Log the reveal for every user with activity on this host so it is
 	// visible in their history, with the admin as actor.
-	for _, user := range s.store.UsersWithHostActivity(hostname) {
-		s.store.LogAction(user, challpkg.ActionRevealedBreakglass, hostname, "", actor)
+	for _, user := range s.store.UsersWithHostActivity(r.Context(), hostname) {
+		s.store.LogAction(r.Context(), user, challpkg.ActionRevealedBreakglass, hostname, "", actor)
 	}
 	// Also log against the actor themselves so it always appears in their history.
-	s.store.LogAction(actor, challpkg.ActionRevealedBreakglass, hostname, "", actor)
+	s.store.LogAction(r.Context(), actor, challpkg.ActionRevealedBreakglass, hostname, "", actor)
 	slog.Warn("BREAKGLASS password revealed", "host", hostname, "admin", actor, "remote_addr", remoteAddr(r))
 
 	s.dispatchNotification(notify.WebhookData{
@@ -1228,11 +1228,11 @@ func (s *Server) handleBreakglassReport(w http.ResponseWriter, r *http.Request) 
 		"remote_addr", ip)
 
 	// Log the action for all users with activity on this host.
-	for _, user := range s.store.UsersWithHostActivity(req.Hostname) {
-		s.store.LogAction(user, challpkg.ActionBreakglassUsed, req.Hostname, "", req.Username)
+	for _, user := range s.store.UsersWithHostActivity(r.Context(), req.Hostname) {
+		s.store.LogAction(r.Context(), user, challpkg.ActionBreakglassUsed, req.Hostname, "", req.Username)
 	}
 	// Also log against the user who performed break-glass authentication.
-	s.store.LogAction(req.Username, challpkg.ActionBreakglassUsed, req.Hostname, "", req.Username)
+	s.store.LogAction(r.Context(), req.Username, challpkg.ActionBreakglassUsed, req.Hostname, "", req.Username)
 
 	// Emit audit event and dispatch notifications to all configured channels.
 	s.dispatchNotification(notify.WebhookData{

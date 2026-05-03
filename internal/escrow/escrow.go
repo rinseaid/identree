@@ -58,8 +58,8 @@ type Backend interface {
 // EscrowStorer is the subset of challenge.ChallengeStore needed by the local backend.
 // Using an interface avoids an import cycle between the escrow and challenge packages.
 type EscrowStorer interface {
-	StoreEscrowCiphertext(hostname, ciphertext string)
-	GetEscrowCiphertext(hostname string) (string, bool)
+	StoreEscrowCiphertext(ctx context.Context, hostname, ciphertext string)
+	GetEscrowCiphertext(ctx context.Context, hostname string) (string, bool)
 }
 
 // DeriveEscrowKey derives a 32-byte AES key from rawKey using HKDF-SHA256.
@@ -97,7 +97,7 @@ type localEscrowBackend struct {
 	storer EscrowStorer
 }
 
-func (b *localEscrowBackend) Store(_ context.Context, hostname, password, _ string) (string, string, error) {
+func (b *localEscrowBackend) Store(ctx context.Context, hostname, password, _ string) (string, string, error) {
 	// Work with a local copy so clearing after use does not destroy b.key.
 	keyCopy := make([]byte, len(b.key))
 	copy(keyCopy, b.key)
@@ -118,16 +118,16 @@ func (b *localEscrowBackend) Store(_ context.Context, hostname, password, _ stri
 	// hostname is passed as Additional Authenticated Data (AAD) so that a
 	// ciphertext sealed for one host cannot be replayed against another.
 	blob := gcm.Seal(nonce, nonce, []byte(password), []byte(hostname))
-	b.storer.StoreEscrowCiphertext(hostname, base64.StdEncoding.EncodeToString(blob))
+	b.storer.StoreEscrowCiphertext(ctx, hostname, base64.StdEncoding.EncodeToString(blob))
 	return "", "", nil
 }
 
-func (b *localEscrowBackend) Retrieve(_ context.Context, hostname, _, _ string) (string, error) {
+func (b *localEscrowBackend) Retrieve(ctx context.Context, hostname, _, _ string) (string, error) {
 	// Work with a local copy so clearing after use does not destroy b.key.
 	keyCopy := make([]byte, len(b.key))
 	copy(keyCopy, b.key)
 	defer clear(keyCopy)
-	encoded, ok := b.storer.GetEscrowCiphertext(hostname)
+	encoded, ok := b.storer.GetEscrowCiphertext(ctx, hostname)
 	if !ok {
 		return "", fmt.Errorf("local escrow: no ciphertext stored for %q", hostname)
 	}

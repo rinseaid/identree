@@ -71,7 +71,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the challenge exists and belongs to this user (or user is admin)
-	challenge, ok := s.store.Get(challengeID)
+	challenge, ok := s.store.Get(r.Context(), challengeID)
 	if !ok || challenge.Status != challpkg.StatusPending {
 		revokeErrorPage(w, r, http.StatusNotFound, "challenge_not_found", "challenge_expired_or_resolved")
 		return
@@ -101,7 +101,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		// Enforce step-up authentication: the approver must have authenticated
 		// via OIDC within the duration specified by the policy.
 		if policyResult.RequireFreshOIDC > 0 {
-			lastAuth := s.store.LastOIDCAuth(username)
+			lastAuth := s.store.LastOIDCAuth(r.Context(), username)
 			if lastAuth.IsZero() || time.Since(lastAuth) > policyResult.RequireFreshOIDC {
 				slog.Warn("APPROVAL_REJECTED stale OIDC auth", "approver", username, "host", challenge.Hostname, "policy", challenge.PolicyName, "require_fresh", policyResult.RequireFreshOIDC)
 				revokeErrorPage(w, r, http.StatusForbidden, "not_authorized", "oidc_reauth_required")
@@ -131,7 +131,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	// Multi-approval: if the challenge requires more than 1 approval, use AddApproval
 	// instead of the single-shot Approve method.
 	if challenge.RequiredApprovals > 1 {
-		fullyApproved, err := s.store.AddApproval(challengeID, username, challenge.RequiredApprovals)
+		fullyApproved, err := s.store.AddApproval(r.Context(), challengeID, username, challenge.RequiredApprovals)
 		if err != nil {
 			if errors.Is(err, challpkg.ErrDuplicateApprover) {
 				revokeErrorPage(w, r, http.StatusConflict, "already_approved_by_you", "already_approved_by_you")
@@ -156,7 +156,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 		// Fall through to the existing post-approval logic (grace session, notification, etc.)
 	} else {
 		// Single-approval path
-		if err := s.store.Approve(challengeID, username); err != nil {
+		if err := s.store.Approve(r.Context(), challengeID, username); err != nil {
 			if errors.Is(err, challpkg.ErrDiskWriteFailed) {
 				apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
 				return
@@ -186,7 +186,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	if logReason == "" {
 		logReason = challenge.Reason
 	}
-	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, username, logReason)
+	s.store.LogActionWithReason(r.Context(), challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, username, logReason)
 	s.sseBroadcaster.Broadcast(challenge.Username, "challenge_resolved")
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "challenge_approved",
@@ -202,7 +202,7 @@ func (s *Server) handleBulkApprove(w http.ResponseWriter, r *http.Request) {
 	// Redirect back to the dashboard with flash cookie.
 	// When the approval came from the single-challenge inline bar (from=inline),
 	// add a highlight hint so the sessions table can pulse the new row.
-	expiry := time.Now().Add(s.store.GraceRemaining(challenge.Username, challenge.Hostname))
+	expiry := time.Now().Add(s.store.GraceRemaining(r.Context(), challenge.Username, challenge.Hostname))
 	flash := fmt.Sprintf("approved:%s:%s:%d", hostname, challenge.Username, expiry.Unix())
 	if r.FormValue("from") == "inline" {
 		flash += fmt.Sprintf(",highlight:%s:%s", challenge.Username, hostname)
@@ -238,7 +238,7 @@ func (s *Server) handleBreakglassOverride(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ch, ok := s.store.Get(challengeID)
+	ch, ok := s.store.Get(r.Context(), challengeID)
 	if !ok || ch.Status != challpkg.StatusPending {
 		revokeErrorPage(w, r, http.StatusNotFound, "challenge_not_found", "challenge_expired_or_resolved")
 		return
@@ -251,10 +251,10 @@ func (s *Server) handleBreakglassOverride(w http.ResponseWriter, r *http.Request
 	}
 
 	// Mark as break-glass override before approval for audit trail.
-	s.store.SetBreakglassOverride(challengeID)
+	s.store.SetBreakglassOverride(r.Context(), challengeID)
 
 	// Force-approve: bypass time window, multi-approval, step-up auth.
-	if err := s.store.Approve(challengeID, username); err != nil {
+	if err := s.store.Approve(r.Context(), challengeID, username); err != nil {
 		if errors.Is(err, challpkg.ErrDiskWriteFailed) {
 			apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
 			return
@@ -278,7 +278,7 @@ func (s *Server) handleBreakglassOverride(w http.ResponseWriter, r *http.Request
 	slog.Warn("BREAK_GLASS_OVERRIDE", "admin", username, "user", ch.Username, "host", hostname, "challenge", challengeID[:8], "policy", ch.PolicyName, "remote_addr", remoteAddr(r))
 
 	// Log the override action.
-	s.store.LogAction(ch.Username, challpkg.ActionBreakglassOverride, hostname, ch.UserCode, username)
+	s.store.LogAction(r.Context(), ch.Username, challpkg.ActionBreakglassOverride, hostname, ch.UserCode, username)
 	s.sseBroadcaster.Broadcast(ch.Username, "challenge_resolved")
 
 	// Dispatch audit event with distinct event type.
@@ -344,7 +344,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	// so a stale-OIDC redirect doesn't permanently burn the single-use token).
 	// Must be loaded before HMAC verification so challenge.Username can be included
 	// in the MAC computation.
-	challenge, ok := s.store.Get(challengeID)
+	challenge, ok := s.store.Get(r.Context(), challengeID)
 	if !ok || challenge.Status != challpkg.StatusPending {
 		revokeErrorPage(w, r, http.StatusNotFound, "challenge_not_found", "challenge_expired_or_resolved")
 		return
@@ -379,7 +379,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	if sessionUser := s.getSessionUser(r); sessionUser != "" && sessionUser != challenge.Username {
 		freshnessUser = sessionUser
 	}
-	lastAuth := s.store.LastOIDCAuth(freshnessUser)
+	lastAuth := s.store.LastOIDCAuth(r.Context(), freshnessUser)
 	oidcFresh := !lastAuth.IsZero() && time.Since(lastAuth) < s.cfg.OneTapMaxAge
 	if !oidcFresh {
 		secure := strings.HasPrefix(s.cfg.ExternalURL, "https://")
@@ -568,11 +568,11 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	// fully approving. The one-tap token is still consumed to prevent replay.
 	if challenge.RequiredApprovals > 1 {
 		// Consume the one-tap token first to prevent replay.
-		if err := s.store.ConsumeOneTap(challengeID); err != nil {
+		if err := s.store.ConsumeOneTap(r.Context(), challengeID); err != nil {
 			revokeErrorPage(w, r, http.StatusConflict, "challenge_expired_or_resolved", "challenge_expired_or_resolved")
 			return
 		}
-		fullyApproved, err := s.store.AddApproval(challengeID, approver, challenge.RequiredApprovals)
+		fullyApproved, err := s.store.AddApproval(r.Context(), challengeID, approver, challenge.RequiredApprovals)
 		if err != nil {
 			if errors.Is(err, challpkg.ErrDuplicateApprover) {
 				revokeErrorPage(w, r, http.StatusConflict, "already_approved_by_you", "already_approved_by_you")
@@ -595,7 +595,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 		// OIDC is fresh — atomically consume the single-use token and approve the challenge
 		// under a single lock to eliminate the TOCTOU window where another goroutine could
 		// approve the same challenge between ConsumeOneTap and Approve.
-		if err := s.store.ConsumeAndApprove(challengeID, approver); err != nil {
+		if err := s.store.ConsumeAndApprove(r.Context(), challengeID, approver); err != nil {
 			if errors.Is(err, challpkg.ErrDiskWriteFailed) {
 				apiError(w, http.StatusServiceUnavailable, "approval persisted in memory but disk write failed, please retry")
 				return
@@ -612,7 +612,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	if onetapLogReason == "" {
 		onetapLogReason = challenge.Reason
 	}
-	s.store.LogActionWithReason(challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, approver, onetapLogReason)
+	s.store.LogActionWithReason(r.Context(), challenge.Username, challpkg.ActionApproved, hostname, challenge.UserCode, approver, onetapLogReason)
 	s.sseBroadcaster.Broadcast(challenge.Username, "challenge_resolved")
 	slog.Info("ONETAP_APPROVED", "user", challenge.Username, "approver", approver, "host", hostname, "challenge", challengeID[:8], "remote_addr", remoteAddr(r))
 
@@ -696,11 +696,11 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 			"remote_addr", remoteAddr(r))
 	}
 
-	s.store.RevokeSession(sessionOwner, hostname)
+	s.store.RevokeSession(r.Context(), sessionOwner, hostname)
 	slog.Info("SESSION_REVOKED", "user", sessionOwner, "host", hostname, "remote_addr", remoteAddr(r))
 
 	// Log the action
-	s.store.LogAction(sessionOwner, challpkg.ActionRevoked, displayHostname, "", actor)
+	s.store.LogAction(r.Context(), sessionOwner, challpkg.ActionRevoked, displayHostname, "", actor)
 	s.sseBroadcaster.Broadcast(sessionOwner, "session_changed")
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "session_revoked",
@@ -731,7 +731,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Approve all pending challenges for this user
-	pending := s.store.PendingChallenges(username)
+	pending := s.store.PendingChallenges(r.Context(), username)
 	isAdmin := s.getSessionRole(r) == "admin"
 	// Build the disabled-user set once per request (O(1) per challenge instead of O(n)).
 	disabledMap := s.buildDisabledMap()
@@ -766,7 +766,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 			if alreadyApproved {
 				continue
 			}
-			fullyApproved, err := s.store.AddApproval(c.ID, username, c.RequiredApprovals)
+			fullyApproved, err := s.store.AddApproval(r.Context(), c.ID, username, c.RequiredApprovals)
 			if err != nil {
 				continue // skip on error (duplicate, expired, etc.)
 			}
@@ -778,7 +778,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			// Fall through to full approval logging below.
-		} else if err := s.store.Approve(c.ID, username); err != nil {
+		} else if err := s.store.Approve(r.Context(), c.ID, username); err != nil {
 			continue
 		}
 
@@ -789,7 +789,7 @@ func (s *Server) handleBulkApproveAll(w http.ResponseWriter, r *http.Request) {
 		if hostname == "" {
 			hostname = "(unknown)"
 		}
-		s.store.LogActionWithReason(username, challpkg.ActionApproved, hostname, c.UserCode, username, c.Reason)
+		s.store.LogActionWithReason(r.Context(), username, challpkg.ActionApproved, hostname, c.UserCode, username, c.Reason)
 		count++
 		slog.Info("BULK_APPROVE_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "remote_addr", remoteAddr(r))
 		s.dispatchNotification(notify.WebhookData{
@@ -831,14 +831,14 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 	if s.getSessionRole(r) == "admin" {
 		if su := r.FormValue("session_username"); su != "" && validUsername.MatchString(su) {
 			targetUser = su
-			sessions = s.store.ActiveSessions(targetUser)
+			sessions = s.store.ActiveSessions(r.Context(), targetUser)
 		} else {
 			// Admin revoke-all without specific user: revoke all active sessions across all users
-			sessions = s.store.AllActiveSessions()
+			sessions = s.store.AllActiveSessions(r.Context())
 			targetUser = ""
 		}
 	} else {
-		sessions = s.store.ActiveSessions(targetUser)
+		sessions = s.store.ActiveSessions(r.Context(), targetUser)
 	}
 
 	// Revoke all collected sessions
@@ -853,8 +853,8 @@ func (s *Server) handleRevokeAll(w http.ResponseWriter, r *http.Request) {
 		if hostname == "(unknown)" {
 			hostname = ""
 		}
-		s.store.RevokeSession(sessUser, hostname)
-		s.store.LogAction(sessUser, challpkg.ActionRevoked, sess.Hostname, "", username)
+		s.store.RevokeSession(r.Context(), sessUser, hostname)
+		s.store.LogAction(r.Context(), sessUser, challpkg.ActionRevoked, sess.Hostname, "", username)
 		slog.Info("BULK_REVOKE_ALL", "user", sessUser, "host", sess.Hostname, "remote_addr", remoteAddr(r))
 		count++
 		if !notified[sessUser] {
@@ -920,11 +920,11 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 			if durSec > 604800 { // 7 days max, more than any reasonable grace period
 				durSec = 604800
 			}
-			remaining = s.store.ExtendGraceSessionFor(username, hostname, time.Duration(durSec)*time.Second)
+			remaining = s.store.ExtendGraceSessionFor(r.Context(), username, hostname, time.Duration(durSec)*time.Second)
 		}
 	}
 	if remaining == 0 {
-		remaining = s.store.ForceExtendGraceSession(username, hostname)
+		remaining = s.store.ForceExtendGraceSession(r.Context(), username, hostname)
 	}
 	if remaining == 0 {
 		revokeErrorPage(w, r, http.StatusNotFound, "challenge_not_found", "challenge_expired_or_resolved")
@@ -935,7 +935,7 @@ func (s *Server) handleExtendSession(w http.ResponseWriter, r *http.Request) {
 	if displayHostname == "" {
 		displayHostname = "(unknown)"
 	}
-	s.store.LogAction(username, challpkg.ActionExtended, displayHostname, "", actor)
+	s.store.LogAction(r.Context(), username, challpkg.ActionExtended, displayHostname, "", actor)
 	slog.Info("EXTENDED", "user", username, "host", displayHostname, "remaining", remaining, "remote_addr", remoteAddr(r))
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "session_extended",
@@ -970,15 +970,15 @@ func (s *Server) handleExtendAll(w http.ResponseWriter, r *http.Request) {
 			targetUser = su
 		}
 	}
-	sessions := s.store.ActiveSessions(targetUser)
+	sessions := s.store.ActiveSessions(r.Context(), targetUser)
 	count := 0
 	for _, sess := range sessions {
 		hostname := sess.Hostname
 		if hostname == "(unknown)" {
 			hostname = ""
 		}
-		if s.store.ForceExtendGraceSession(targetUser, hostname) > 0 {
-			s.store.LogAction(targetUser, challpkg.ActionExtended, sess.Hostname, "", username)
+		if s.store.ForceExtendGraceSession(r.Context(), targetUser, hostname) > 0 {
+			s.store.LogAction(r.Context(), targetUser, challpkg.ActionExtended, sess.Hostname, "", username)
 			count++
 		}
 	}
@@ -1018,7 +1018,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the challenge exists and belongs to this user (or user is admin)
-	challenge, ok := s.store.Get(challengeID)
+	challenge, ok := s.store.Get(r.Context(), challengeID)
 	if !ok || challenge.Status != challpkg.StatusPending {
 		revokeErrorPage(w, r, http.StatusNotFound, "challenge_not_found", "challenge_expired_or_resolved")
 		return
@@ -1037,7 +1037,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Deny the challenge
-	if err := s.store.Deny(challengeID, denyReason); err != nil {
+	if err := s.store.Deny(r.Context(), challengeID, denyReason); err != nil {
 		revokeErrorPage(w, r, http.StatusInternalServerError, "rejection_failed", "rejection_failed_message")
 		return
 	}
@@ -1055,7 +1055,7 @@ func (s *Server) handleRejectChallenge(w http.ResponseWriter, r *http.Request) {
 		logReason = denyReason
 	}
 	slog.Info("REJECTED", "user", challenge.Username, "host", hostname, "challenge", challengeID[:8], "reason", denyReason, "remote_addr", remoteAddr(r))
-	s.store.LogActionWithReason(challenge.Username, challpkg.ActionRejected, hostname, challenge.UserCode, username, logReason)
+	s.store.LogActionWithReason(r.Context(), challenge.Username, challpkg.ActionRejected, hostname, challenge.UserCode, username, logReason)
 	s.sseBroadcaster.Broadcast(challenge.Username, "challenge_resolved")
 	s.dispatchNotification(notify.WebhookData{
 		Event:      "challenge_rejected",
@@ -1094,10 +1094,10 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Reject all pending challenges for this user
-	pending := s.store.PendingChallenges(username)
+	pending := s.store.PendingChallenges(r.Context(), username)
 	count := 0
 	for _, c := range pending {
-		if err := s.store.Deny(c.ID, denyReason); err == nil {
+		if err := s.store.Deny(r.Context(), c.ID, denyReason); err == nil {
 			challengesDenied.WithLabelValues("user_rejected").Inc()
 			challpkg.ActiveChallenges.Dec()
 			challengeDuration.Observe(time.Since(c.CreatedAt).Seconds())
@@ -1109,7 +1109,7 @@ func (s *Server) handleRejectAll(w http.ResponseWriter, r *http.Request) {
 			if denyReason != "" {
 				logReason = denyReason
 			}
-			s.store.LogActionWithReason(username, challpkg.ActionRejected, hostname, c.UserCode, username, logReason)
+			s.store.LogActionWithReason(r.Context(), username, challpkg.ActionRejected, hostname, c.UserCode, username, logReason)
 			count++
 			slog.Info("BULK_REJECT_ALL", "user", c.Username, "host", c.Hostname, "challenge", c.ID[:8], "reason", denyReason, "remote_addr", remoteAddr(r))
 			s.dispatchNotification(notify.WebhookData{
@@ -1216,8 +1216,8 @@ func (s *Server) handleElevate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.CreateGraceSession(targetUser, hostname, duration)
-	s.store.LogAction(targetUser, challpkg.ActionElevated, hostname, "", username)
+	s.store.CreateGraceSession(r.Context(), targetUser, hostname, duration)
+	s.store.LogAction(r.Context(), targetUser, challpkg.ActionElevated, hostname, "", username)
 	slog.Info("ELEVATED", "user", targetUser, "host", hostname, "duration", duration, "by", username, "remote_addr", remoteAddr(r))
 	s.sseBroadcaster.Broadcast(targetUser, "session_changed")
 	s.dispatchNotification(notify.WebhookData{
@@ -1262,8 +1262,8 @@ func (s *Server) handleRotateHost(w http.ResponseWriter, r *http.Request) {
 		revokeErrorPage(w, r, http.StatusBadRequest, "invalid_request", "invalid_format")
 		return
 	}
-	s.store.SetHostRotateBefore(hostname)
-	s.store.LogAction(username, challpkg.ActionRotationRequested, hostname, "", username)
+	s.store.SetHostRotateBefore(r.Context(), hostname)
+	s.store.LogAction(r.Context(), username, challpkg.ActionRotationRequested, hostname, "", username)
 	slog.Info("ROTATE_BREAKGLASS", "user", username, "host", hostname, "remote_addr", remoteAddr(r))
 	s.sseBroadcaster.Broadcast(username, "host_changed")
 	s.dispatchNotification(notify.WebhookData{
@@ -1294,7 +1294,7 @@ func (s *Server) handleRotateAllHosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Get all known hosts for this user
-	hosts := s.store.KnownHosts(username)
+	hosts := s.store.KnownHosts(r.Context(), username)
 	if s.hostRegistry.IsEnabled() {
 		for _, rh := range s.hostRegistry.HostsForUser(username) {
 			found := false
@@ -1309,9 +1309,9 @@ func (s *Server) handleRotateAllHosts(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.store.SetAllHostsRotateBefore(hosts)
+	s.store.SetAllHostsRotateBefore(r.Context(), hosts)
 	for _, h := range hosts {
-		s.store.LogAction(username, challpkg.ActionRotationRequested, h, "", username)
+		s.store.LogAction(r.Context(), username, challpkg.ActionRotationRequested, h, "", username)
 	}
 	slog.Info("ROTATE_ALL_BREAKGLASS", "user", username, "count", len(hosts), "remote_addr", remoteAddr(r))
 	s.sseBroadcaster.Broadcast(username, "host_changed")

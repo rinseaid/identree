@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"bytes"
 	"crypto/subtle"
 	"encoding/csv"
@@ -87,15 +88,15 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 					s.revokedNoncesMu.Lock()
 					s.revokedNonces[nonce] = now
 					s.revokedNoncesMu.Unlock()
-					s.store.PersistRevokedNonce(nonce, now)
+					s.store.PersistRevokedNonce(r.Context(), nonce, now)
 					s.publishClusterMessage(clusterMessage{Type: "revoke_nonce", Nonce: nonce})
 				}
 			}
 
 			// Revoke all active grace sessions for this user so sudo access
 			// ends immediately on signout (Fix 2).
-			for _, sess := range s.store.ActiveSessions(username) {
-				s.store.RevokeSession(sess.Username, sess.Hostname)
+			for _, sess := range s.store.ActiveSessions(r.Context(), username) {
+				s.store.RevokeSession(r.Context(), sess.Username, sess.Hostname)
 			}
 		}
 	}
@@ -153,7 +154,7 @@ func (s *Server) handleDevSeedHistory(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	for _, e := range entries {
 		at := now.Add(-time.Duration(e.MinutesAgo) * time.Minute)
-		s.store.LogActionAt(e.Username, e.Action, e.Hostname, "", e.Actor, at)
+		s.store.LogActionAt(r.Context(), e.Username, e.Action, e.Hostname, "", e.Actor, at)
 	}
 	w.WriteHeader(http.StatusCreated)
 }
@@ -186,7 +187,7 @@ func (s *Server) handleDevSeedSession(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.RLock()
 	gracePeriod := s.cfg.GracePeriod
 	s.cfgMu.RUnlock()
-	s.store.CreateGraceSession(req.Username, req.Hostname, gracePeriod)
+	s.store.CreateGraceSession(r.Context(), req.Username, req.Hostname, gracePeriod)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -210,9 +211,9 @@ type pendingView struct {
 
 // buildPendingViews fetches pending challenges for username and converts them
 // to template-ready views, sorted by expiry (most urgent first).
-func (s *Server) buildPendingViews(username, lang string) []pendingView {
+func (s *Server) buildPendingViews(ctx context.Context, username, lang string) []pendingView {
 	t := T(lang)
-	pending := s.store.PendingChallenges(username)
+	pending := s.store.PendingChallenges(ctx, username)
 	sort.Slice(pending, func(i, j int) bool {
 		return pending[i].ExpiresAt.Before(pending[j].ExpiresAt)
 	})
@@ -254,9 +255,9 @@ func (s *Server) buildPendingViews(username, lang string) []pendingView {
 // by the admin overlay present on all admin pages. Each call site is in a
 // separate request handler, so this is computed once per request — no
 // intra-handler caching is needed.
-func (s *Server) buildAllPendingViews(viewerUsername, lang string) []pendingView {
+func (s *Server) buildAllPendingViews(ctx context.Context, viewerUsername, lang string) []pendingView {
 	t := T(lang)
-	pending := s.store.AllPendingChallenges()
+	pending := s.store.AllPendingChallenges(ctx)
 	sort.Slice(pending, func(i, j int) bool {
 		return pending[i].ExpiresAt.Before(pending[j].ExpiresAt)
 	})
@@ -293,11 +294,11 @@ func (s *Server) buildAllPendingViews(viewerUsername, lang string) []pendingView
 }
 
 // pendingViewsFor returns all pending views for admins, or only the user's own for regular users.
-func (s *Server) pendingViewsFor(username, lang string, isAdmin bool) []pendingView {
+func (s *Server) pendingViewsFor(ctx context.Context, username, lang string, isAdmin bool) []pendingView {
 	if isAdmin {
-		return s.buildAllPendingViews(username, lang)
+		return s.buildAllPendingViews(ctx, username, lang)
 	}
-	return s.buildPendingViews(username, lang)
+	return s.buildPendingViews(ctx, username, lang)
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -407,7 +408,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	isAdmin := role == "admin"
 
 	var allHistoryWithUsers []challpkg.ActionLogEntryWithUser
-	for _, e := range s.store.ActionHistory(username, 6) {
+	for _, e := range s.store.ActionHistory(r.Context(), username, 6) {
 		allHistoryWithUsers = append(allHistoryWithUsers, challpkg.ActionLogEntryWithUser{
 			Username:  username,
 			Actor:     e.Actor,
@@ -433,7 +434,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	csrfTs := strconv.FormatInt(now.Unix(), 10)
 	csrfToken := computeCSRFToken(s.hmacBase(), username, csrfTs)
 
-	pendingViews := s.pendingViewsFor(username, lang, isAdmin)
+	pendingViews := s.pendingViewsFor(r.Context(), username, lang, isAdmin)
 
 	// Fetch Pocket ID permissions for this user to build host-access view
 	var userPerms map[string][]pocketid.GroupInfo
@@ -447,7 +448,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build the host list: known hosts + any explicitly listed in Pocket ID claims
-	knownHosts := s.store.KnownHosts(username)
+	knownHosts := s.store.KnownHosts(r.Context(), username)
 	hostSet := make(map[string]bool)
 	for _, h := range knownHosts {
 		hostSet[h] = true
@@ -501,7 +502,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		remainingSec int
 	}
 	activeMap := make(map[string]activeInfo)
-	for _, sess := range s.store.ActiveSessions(username) {
+	for _, sess := range s.store.ActiveSessions(r.Context(), username) {
 		rem := time.Until(sess.ExpiresAt)
 		activeMap[sess.Hostname] = activeInfo{formatDuration(t, rem), int(rem.Seconds())}
 	}
@@ -590,7 +591,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		if filterHost != "" && !validHostname.MatchString(filterHost) {
 			filterHost = ""
 		}
-		for _, sess := range s.store.AllActiveSessions() {
+		for _, sess := range s.store.AllActiveSessions(r.Context()) {
 			if filterUser != "" && sess.Username != filterUser {
 				continue
 			}
@@ -735,7 +736,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 	// Build AllUsers list for admin dropdown.
 	var allUsers []string
 	if isAdmin {
-		allUsers = s.store.AllUsers()
+		allUsers = s.store.AllUsers(r.Context())
 		if s.pocketIDClient != nil {
 			if perms, err := s.pocketIDClient.GetUserPermissions(); err == nil {
 				userSet := make(map[string]bool, len(allUsers))
@@ -778,9 +779,9 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		if s.hostRegistry.IsEnabled() {
 			return s.hostRegistry.RegisteredHosts()
 		}
-		return s.store.AllKnownHosts()
+		return s.store.AllKnownHosts(r.Context())
 	}
-	knownHosts := s.store.KnownHosts(targetUser)
+	knownHosts := s.store.KnownHosts(r.Context(), targetUser)
 	hostSet := make(map[string]bool)
 	for _, h := range knownHosts {
 		hostSet[h] = true
@@ -812,7 +813,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 
 	// Active sessions for targetUser.
 	activeMap := make(map[string]string)
-	for _, sess := range s.store.ActiveSessions(targetUser) {
+	for _, sess := range s.store.ActiveSessions(r.Context(), targetUser) {
 		activeMap[sess.Hostname] = formatDuration(t, time.Until(sess.ExpiresAt))
 	}
 
@@ -866,7 +867,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 			remainingSec int
 		}
 		uActiveMap := make(map[string]uSessionInfo)
-		for _, sess := range s.store.ActiveSessions(u) {
+		for _, sess := range s.store.ActiveSessions(r.Context(), u) {
 			rem := time.Until(sess.ExpiresAt)
 			uActiveMap[sess.Hostname] = uSessionInfo{formatDuration(t, rem), int(rem.Seconds())}
 		}
@@ -933,7 +934,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 	var allUserGroups []userAccessGroup
 	if isAdmin {
 		for _, u := range allUsers {
-			uHosts := s.store.KnownHosts(u)
+			uHosts := s.store.KnownHosts(r.Context(), u)
 			uHostSet := make(map[string]bool)
 			for _, h := range uHosts {
 				uHostSet[h] = true
@@ -1023,7 +1024,7 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request) {
 		"DefaultPageSize": defaultPageSize,
 		"Durations":       elevateDurations,
 		"FilterUser":           accessFilterUser,
-		"Pending":              s.pendingViewsFor(username, lang, isAdmin),
+		"Pending":              s.pendingViewsFor(r.Context(), username, lang, isAdmin),
 		"JustificationChoices": accessJustChoices,
 		"RequireJustification": accessRequireJust,
 	}); err != nil {
@@ -1067,7 +1068,7 @@ func (s *Server) handleApprovalPage(w http.ResponseWriter, r *http.Request) {
 	// Return identical 404 for ALL non-pending states (not found, already
 	// approved/denied, expired) to prevent pre-auth enumeration of valid
 	// challenge codes.
-	challenge, ok := s.store.GetByCode(code)
+	challenge, ok := s.store.GetByCode(r.Context(), code)
 	if !ok || challenge.Status != challpkg.StatusPending {
 		lang := detectLanguage(r)
 		var buf bytes.Buffer
@@ -1261,9 +1262,9 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	// Admins see all users' history; others see only their own.
 	var allHistory []challpkg.ActionLogEntryWithUser
 	if isAdmin {
-		allHistory = s.store.AllActionHistoryWithUsers()
+		allHistory = s.store.AllActionHistoryWithUsers(r.Context(), 10000, 0)
 	} else {
-		for _, e := range s.store.ActionHistory(username, 10000) {
+		for _, e := range s.store.ActionHistory(r.Context(), username, 10000) {
 			if e.Action == "rotated_breakglass" {
 				continue // server-level event; not shown to non-admins
 			}
@@ -1652,7 +1653,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		"DefaultPageSize": defaultPageSize,
 		"CSRFToken":            historyCSRFToken,
 		"CSRFTs":               historyCSRFTs,
-		"Pending":              s.pendingViewsFor(username, lang, isAdmin),
+		"Pending":              s.pendingViewsFor(r.Context(), username, lang, isAdmin),
 		"JustificationChoices": histJustChoices,
 		"RequireJustification": histRequireJust,
 	}); err != nil {
@@ -1689,7 +1690,7 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 
 	if apiKeyAccess {
 		// Return all-users history with username field included.
-		allHistory := s.store.AllActionHistoryWithUsers()
+		allHistory := s.store.AllActionHistoryWithUsers(r.Context(), 10000, 0)
 		switch format {
 		case "csv":
 			w.Header().Set("Content-Type", "text/csv")
@@ -1722,7 +1723,7 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Session-based access: export the authenticated user's own history.
-	history := s.store.ActionHistory(username, 10000)
+	history := s.store.ActionHistory(r.Context(), username, 10000)
 	switch format {
 	case "csv":
 		w.Header().Set("Content-Type", "text/csv")

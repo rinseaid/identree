@@ -222,12 +222,12 @@ func runServer() {
 
 	// Restore revoked nonces and admin-session revocations from the persisted store.
 	// This prevents signed-out session cookies from becoming valid again after a restart.
-	for nonce, revokedAt := range srv.store.LoadRevokedNonces() {
+	for nonce, revokedAt := range srv.store.LoadRevokedNonces(context.Background()) {
 		srv.revokedNoncesMu.Lock()
 		srv.revokedNonces[nonce] = revokedAt
 		srv.revokedNoncesMu.Unlock()
 	}
-	for username, revokedAt := range srv.store.LoadRevokedAdminSessions() {
+	for username, revokedAt := range srv.store.LoadRevokedAdminSessions(context.Background()) {
 		srv.revokedAdminSessions.Store(username, revokedAt)
 	}
 
