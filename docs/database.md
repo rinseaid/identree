@@ -61,9 +61,19 @@ plain `INSERT/UPDATE/DELETE/SELECT` is enough.
 
 ## Schema
 
-The schema is applied at startup with `CREATE TABLE IF NOT EXISTS`. There
-is no migration framework yet; future releases will introduce a versioned
-migrator. The current tables:
+Schema changes are tracked by a versioned migration framework. On each
+startup, identree checks the `schema_migrations` table and applies any
+pending migrations in order. Each migration runs inside a transaction;
+if it fails, the transaction rolls back and the server refuses to start.
+Postgres deployments use an advisory lock to prevent concurrent replicas
+from racing on migrations.
+
+Existing databases from before the migration framework was introduced
+upgrade automatically: migration 1 (the baseline) uses
+`CREATE TABLE IF NOT EXISTS` for all its statements, so it records
+itself as applied without modifying anything.
+
+The current tables:
 
 - `challenges`: every sudo elevation request and its lifecycle
 - `action_log`: append-only audit trail shown in `/admin/history`
@@ -194,14 +204,23 @@ Standard `pg_dump` / `pg_restore` against the identree database. Take
 the dump while the server is running; identree never holds long
 transactions, so concurrent dumps don't block live traffic.
 
-## Migration from earlier identree versions
+## Schema migrations
 
-There is no in-place migration. v1 is the first SQL-backed release; the
-old JSON state file (`/config/sessions.json`) and Redis backend are
-gone. If you're coming from a pre-release with a populated state file,
-the cleanest path is to start fresh. Challenges and short-lived grace
-sessions don't need to carry over, and the action log is reconstructed
-naturally as new approvals flow.
+Schema changes are applied automatically on startup. You can check the
+current version by querying the database directly:
 
-If preserving history matters, drop a feature request. A one-shot
-import command can be added.
+```sql
+SELECT version, description, applied_at FROM schema_migrations ORDER BY version;
+```
+
+Migrations are forward-only. There is no rollback mechanism; if a
+migration fails, fix the underlying issue and restart. The server will
+retry the failed migration on the next startup.
+
+## Upgrading from pre-SQL versions
+
+The first SQL-backed release replaced the old JSON state file
+(`/config/sessions.json`) and Redis backend. If you are coming from a
+pre-release with a populated state file, start fresh. Challenges and
+short-lived grace sessions do not need to carry over, and the action
+log is reconstructed naturally as new approvals flow.

@@ -201,8 +201,8 @@ func NewSQLStore(db *sql.DB, dialect Dialect, ttl, gracePeriod time.Duration, op
 	for _, opt := range opts {
 		opt(s)
 	}
-	if err := s.applySchema(context.Background()); err != nil {
-		return nil, fmt.Errorf("apply schema: %w", err)
+	if err := s.migrate(context.Background()); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	s.startReap()
 	return s, nil
@@ -215,19 +215,6 @@ func WithSQLGraceHMACKey(key []byte) func(*SQLStore) {
 	return func(s *SQLStore) {
 		s.graceHMACKey = key
 	}
-}
-
-// applySchema runs the dialect-appropriate schema with CREATE TABLE IF
-// NOT EXISTS. This is greenfield — no migration framework yet.
-func (s *SQLStore) applySchema(ctx context.Context) error {
-	schema := sqliteSchema
-	if s.dialect == DialectPostgres {
-		schema = postgresSchema
-	}
-	if _, err := s.db.ExecContext(ctx, schema); err != nil {
-		return err
-	}
-	return nil
 }
 
 // ── Dialect / placeholder helpers ───────────────────────────────────────────

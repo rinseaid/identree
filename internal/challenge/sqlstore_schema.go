@@ -7,9 +7,8 @@ package challenge
 // INTEGER Unix seconds (or 0 sentinel) to avoid datetime-type portability
 // issues across dialects and to keep range index lookups fast.
 //
-// The schema is applied with CREATE TABLE IF NOT EXISTS at startup. No
-// migration framework is in place yet; v1 is greenfield and we add a real
-// migrator the first time the schema needs to evolve.
+// These constants are referenced by migration 1 in sqlstore_migrate.go.
+// Future schema changes go in new migrations, not here.
 
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS challenges (
