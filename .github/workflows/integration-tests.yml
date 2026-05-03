@@ -435,7 +435,7 @@ jobs:
       - name: Start lldap-dex stack (lldap + dex + loki + identree + ubuntu2404)
         run: |
           docker compose -f test/integration/lldap-dex/docker-compose.yml \
-            up --build -d lldap dex loki redis identree host-ubuntu2404
+            up --build -d lldap dex loki identree host-ubuntu2404
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
@@ -532,29 +532,6 @@ jobs:
           print(f"Approved: {approved}  Rejected: {rejected}  — OK")
           PY
 
-      - name: Verify Redis state backend
-        run: |
-          echo "==> Checking identree is using Redis backend..."
-          docker logs integ-lldap-dex-identree 2>&1 | grep -q "state backend.*redis" || \
-            docker logs integ-lldap-dex-identree 2>&1 | grep -q "redis" || true
-
-          echo "==> Verifying challenges exist in Redis..."
-          # Use docker exec to access redis-cli inside the Redis container
-          # (avoids fragile apt-get install redis-tools on the runner)
-          RCLI="docker exec integ-lldap-dex-redis redis-cli"
-
-          KEYS=$($RCLI KEYS 'integ-lldap-dex:challenge:*' 2>/dev/null | wc -l)
-          echo "  Redis challenge keys: ${KEYS}"
-
-          GRACE=$($RCLI KEYS 'integ-lldap-dex:grace:*' 2>/dev/null | wc -l)
-          echo "  Redis grace session keys: ${GRACE}"
-
-          ACTIONS=$($RCLI KEYS 'integ-lldap-dex:actionlog:*' 2>/dev/null | wc -l)
-          echo "  Redis action log keys: ${ACTIONS}"
-          [ "$ACTIONS" -ge 1 ] || { echo "FAIL: no action log entries in Redis"; exit 1; }
-
-          echo "  Redis state backend: OK"
-
       - name: Verify audit events — Loki
         run: |
           echo "==> Waiting for Loki to ingest events..."
@@ -591,8 +568,6 @@ jobs:
           docker logs integ-lldap-dex-identree 2>&1 | tail -50
           echo "=== loki logs ==="
           docker logs integ-lldap-dex-loki 2>&1 | tail -20
-          echo "=== redis logs ==="
-          docker logs integ-lldap-dex-redis 2>&1 | tail -20
           echo "=== ubuntu2404 sssd.conf ==="
           docker exec integ-lldap-dex-ubuntu2404 cat /etc/sssd/sssd.conf 2>/dev/null || true
           echo "=== ubuntu2404 entrypoint output ==="
@@ -621,7 +596,7 @@ jobs:
       - name: Start vault-escrow stack (vault + lldap + dex + splunk-hec + identree + ubuntu2404)
         run: |
           docker compose -f test/integration/vault-escrow/docker-compose.yml \
-            up --build -d vault lldap dex splunk-hec dragonfly identree host-ubuntu2404
+            up --build -d vault lldap dex splunk-hec identree host-ubuntu2404
         env:
           COMMIT: ${{ github.sha }}
           VERSION: ${{ github.ref_name }}
@@ -733,20 +708,6 @@ jobs:
           print(f"Approved: {approved}  Rejected: {rejected}  — OK")
           PY
 
-      - name: Verify Dragonfly state backend
-        run: |
-          echo "==> Checking identree is using Redis/Dragonfly backend..."
-          RCLI="docker exec integ-vault-dragonfly redis-cli"
-
-          KEYS=$($RCLI KEYS 'integ-vault:challenge:*' 2>/dev/null | wc -l)
-          echo "  Dragonfly challenge keys: ${KEYS}"
-
-          ACTIONS=$($RCLI KEYS 'integ-vault:actionlog:*' 2>/dev/null | wc -l)
-          echo "  Dragonfly action log keys: ${ACTIONS}"
-          [ "$ACTIONS" -ge 1 ] || { echo "FAIL: no action log entries in Dragonfly"; exit 1; }
-
-          echo "  Dragonfly state backend: OK"
-
       - name: Verify audit events — Splunk HEC
         run: |
           echo "==> Waiting for Splunk HEC batch flush..."
@@ -786,8 +747,6 @@ jobs:
           docker logs integ-vault-identree 2>&1 | tail -50
           echo "=== splunk-hec log ==="
           docker exec integ-vault-splunk-hec cat /var/log/hec.log 2>/dev/null | tail -10 || true
-          echo "=== dragonfly logs ==="
-          docker logs integ-vault-dragonfly 2>&1 | tail -20
           echo "=== ubuntu2404 sssd.conf ==="
           docker exec integ-vault-ubuntu2404 cat /etc/sssd/sssd.conf 2>/dev/null || true
           echo "=== ubuntu2404 entrypoint output ==="

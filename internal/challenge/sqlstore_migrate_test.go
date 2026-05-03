@@ -88,6 +88,11 @@ func TestMigrate_SkipsApplied(t *testing.T) {
 		t.Fatalf("ensureMigrationsTable: %v", err)
 	}
 
+	// Clean slate for this test (Postgres shares a single DB across tests).
+	if _, err := db.ExecContext(context.Background(), "DELETE FROM schema_migrations"); err != nil {
+		t.Fatalf("cleanup schema_migrations: %v", err)
+	}
+
 	// Pre-insert version 1 as already applied.
 	if _, err := db.ExecContext(context.Background(),
 		s.q("INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)"),

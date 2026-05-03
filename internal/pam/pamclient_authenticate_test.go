@@ -1017,23 +1017,22 @@ func TestAuthenticate_BreakglassFallback_ServerRecoversDuringRetry(t *testing.T)
 		t.Skip("breakglass retry loop takes ~5s")
 	}
 
-	// Server starts unreachable then recovers. The retry loop should detect
-	// recovery and continue with the normal challenge flow (goto challengeOK).
 	const secret = "test-secret-32-bytes-long-xxxxxxxxx"
 	challengeID := strings.Repeat("a", 32)
 	approvalToken := computeVerifyToken(secret, challengeID, "alice", "approved", "", "")
 
-	// Start unreachable: first createChallenge call uses the closed server.
-	closedSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	closedURL := closedSrv.URL
-	closedClient := closedSrv.Client()
-	closedSrv.Close()
-
-	// Running server that will handle the retry call.
-	liveSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Single server: returns 503 for the first request (triggers unreachable
+	// path), then serves normally on subsequent requests. This avoids
+	// concurrent field mutation on the PAMClient.
+	var calls atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if n <= 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/challenge":
-			// Auto-approve on create so we don't need polling.
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"challenge_id":     challengeID,
@@ -1047,7 +1046,7 @@ func TestAuthenticate_BreakglassFallback_ServerRecoversDuringRetry(t *testing.T)
 			http.NotFound(w, r)
 		}
 	}))
-	defer liveSrv.Close()
+	defer srv.Close()
 
 	hashDir := t.TempDir()
 	hashFile := filepath.Join(hashDir, "breakglass.hash")
@@ -1056,7 +1055,7 @@ func TestAuthenticate_BreakglassFallback_ServerRecoversDuringRetry(t *testing.T)
 	withFakeTTYPam(t, "bg-pw")
 
 	cfg := &config.ClientConfig{
-		ServerURL:         closedURL, // initially points at dead server
+		ServerURL:         srv.URL,
 		SharedSecret:      secret,
 		PollInterval:      10 * time.Millisecond,
 		Timeout:           30 * time.Second,
@@ -1067,21 +1066,12 @@ func TestAuthenticate_BreakglassFallback_ServerRecoversDuringRetry(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewPAMClient: %v", err)
 	}
-	p.client = closedClient
+	p.client = srv.Client()
 
 	buf := &bytes.Buffer{}
 	prev := MessageWriter
 	MessageWriter = buf
 	t.Cleanup(func() { MessageWriter = prev })
-
-	// After the first createChallenge fails, the retry loop sleeps 5s then
-	// retries. We swap the server URL before the retry fires by using a
-	// goroutine that switches cfg.ServerURL after a short delay.
-	go func() {
-		time.Sleep(2 * time.Second) // before the first retry wakes up (5s)
-		p.cfg.ServerURL = liveSrv.URL
-		p.client = liveSrv.Client()
-	}()
 
 	err = p.Authenticate("alice")
 	if err != nil {

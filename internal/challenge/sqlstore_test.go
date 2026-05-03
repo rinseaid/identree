@@ -69,7 +69,6 @@ func backendForTest(t testing.TB) (driver, dsn string) {
 // allTestTables enumerates every table the schema creates. Used for
 // per-test cleanup on the shared Postgres database.
 var allTestTables = []string{
-	"schema_migrations",
 	"challenges", "action_log", "grace_sessions",
 	"revoked_nonces", "revoked_admin_sessions", "revoke_tokens_before",
 	"rotate_breakglass_before", "last_oidc_auth",
