@@ -966,6 +966,13 @@ func validateConfigValues(values map[string]string, cfg *config.ServerConfig) er
 			return fmt.Errorf("IDENTREE_EXTERNAL_URL is required and must not be blank")
 		}
 	}
+	if v := values["IDENTREE_ESCROW_PATH"]; v != "" {
+		for _, seg := range strings.Split(v, "/") {
+			if seg == ".." || seg == "." {
+				return fmt.Errorf("IDENTREE_ESCROW_PATH must not contain path traversal sequences (.. or .)")
+			}
+		}
+	}
 	if v := values["IDENTREE_LDAP_DEFAULT_HOME"]; v != "" {
 		stripped := strings.ReplaceAll(v, "%%", "")
 		if strings.Count(stripped, "%s") > 1 {

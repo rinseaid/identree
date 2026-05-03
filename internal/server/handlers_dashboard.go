@@ -1218,8 +1218,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	// Timezone handling: set cookie if tz param provided, then read from cookie
 	tzName := "UTC"
 	if tzParam := r.URL.Query().Get("tz"); tzParam != "" {
-		if loc, err := time.LoadLocation(tzParam); err == nil {
-			_ = loc
+		if _, err := time.LoadLocation(tzParam); err == nil {
 			tzName = tzParam
 			http.SetCookie(w, &http.Cookie{
 				Name:     "pam_tz",
@@ -1231,8 +1230,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	} else if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
-		if loc, err := time.LoadLocation(c.Value); err == nil {
-			_ = loc
+		if _, err := time.LoadLocation(c.Value); err == nil {
 			tzName = c.Value
 		}
 	}

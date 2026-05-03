@@ -66,18 +66,6 @@ services:
       retries: 10
       start_period: 5s
 
-  dragonfly:
-    image: docker.dragonflydb.io/dragonflydb/dragonfly
-    container_name: integ-vault-dragonfly
-    ports:
-      - "127.0.0.1:6382:6379"
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -h localhost ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-
   # Audit sink: Splunk HEC mock — Python HTTP server that captures POST bodies.
   splunk-hec:
     image: python:3.12-slim
@@ -119,8 +107,6 @@ services:
         condition: service_healthy
       vault:
         condition: service_healthy
-      dragonfly:
-        condition: service_healthy
     environment:
       IDENTREE_OIDC_ISSUER_URL: "http://dex:5556/dex"
       IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:5563/dex"
@@ -136,10 +122,6 @@ services:
       IDENTREE_GRACE_PERIOD: "24h"
       IDENTREE_TOML_CONFIG_FILE: "/data/config.toml"
       IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
-      # State backend: Redis (Dragonfly)
-      IDENTREE_STATE_BACKEND: "redis"
-      IDENTREE_REDIS_URL: "redis://dragonfly:6379/0"
-      IDENTREE_REDIS_KEY_PREFIX: "integ-vault:"
       # Vault KV v2 escrow — dev mode, direct token auth
       IDENTREE_ESCROW_BACKEND: "vault"
       IDENTREE_ESCROW_URL: "http://vault:8200"

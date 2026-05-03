@@ -16,6 +16,7 @@ import (
 	"time"
 
 	challpkg "github.com/rinseaid/identree/internal/challenge"
+	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
 )
 
@@ -352,7 +353,7 @@ func (s *Server) handleOneTap(w http.ResponseWriter, r *http.Request) {
 	// Verify HMAC — include challenge username and hostname to bind the token to a
 	// specific user on a specific host, preventing cross-host token replay.
 	// Use the same derived key as computeOneTapToken so the contexts match.
-	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "onetap"))
+	mac := hmac.New(sha256.New, config.DeriveKey(s.hmacBase(), "onetap"))
 	mac.Write([]byte("onetap:" + challengeID + ":" + challenge.Username + ":" + expiresStr + ":" + challenge.Hostname))
 	expectedHMAC := hex.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(expectedHMAC), []byte(providedHMAC)) != 1 {

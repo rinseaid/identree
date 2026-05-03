@@ -663,7 +663,7 @@ func TestLoadClientConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "client.conf")
 	content := `IDENTREE_SERVER_URL=http://localhost:8090
-IDENTREE_SHARED_SECRET=my-shared-secret
+IDENTREE_SHARED_SECRET=test-client-secret-at-least-32-chars-long
 IDENTREE_POLL_INTERVAL=5s
 IDENTREE_TIMEOUT=60s
 IDENTREE_BREAKGLASS_ENABLED=true
@@ -676,7 +676,7 @@ IDENTREE_BREAKGLASS_PASSWORD_TYPE=passphrase
 	// LoadClientConfig reads from DefaultClientConfigPath which we can't easily override,
 	// so we set env vars which take precedence.
 	setEnvForTest(t, "IDENTREE_SERVER_URL", "http://localhost:8090")
-	setEnvForTest(t, "IDENTREE_SHARED_SECRET", "my-shared-secret")
+	setEnvForTest(t, "IDENTREE_SHARED_SECRET", "test-client-secret-at-least-32-chars-long")
 	setEnvForTest(t, "IDENTREE_POLL_INTERVAL", "5s")
 	setEnvForTest(t, "IDENTREE_TIMEOUT", "60s")
 	setEnvForTest(t, "IDENTREE_BREAKGLASS_ENABLED", "true")
@@ -691,7 +691,7 @@ IDENTREE_BREAKGLASS_PASSWORD_TYPE=passphrase
 	if cfg.ServerURL != "http://localhost:8090" {
 		t.Errorf("ServerURL = %q", cfg.ServerURL)
 	}
-	if cfg.SharedSecret != "my-shared-secret" {
+	if cfg.SharedSecret != "test-client-secret-at-least-32-chars-long" {
 		t.Errorf("SharedSecret = %q", cfg.SharedSecret)
 	}
 	if cfg.PollInterval != 5*time.Second {

@@ -83,16 +83,23 @@ In PocketID:
 
 ### Step 3: Configure identree
 
-Edit `docker-compose.yml` and fill in:
+Generate secrets first:
+
+```sh
+openssl rand -hex 32   # → use as IDENTREE_SHARED_SECRET
+openssl rand -hex 32   # → use as IDENTREE_ESCROW_ENCRYPTION_KEY
+```
+
+Then edit `docker-compose.yml` and fill in:
 
 ```yaml
 IDENTREE_OIDC_CLIENT_ID: "your-client-id"
 IDENTREE_OIDC_CLIENT_SECRET: "your-client-secret"
 IDENTREE_POCKETID_API_KEY: "your-api-key"
 IDENTREE_EXTERNAL_URL: "https://identree.example.com"
-IDENTREE_SHARED_SECRET: "$(openssl rand -hex 32)"
+IDENTREE_SHARED_SECRET: "<paste first secret>"
 IDENTREE_LDAP_BASE_DN: "dc=example,dc=com"
-IDENTREE_ESCROW_ENCRYPTION_KEY: "$(openssl rand -hex 32)"
+IDENTREE_ESCROW_ENCRYPTION_KEY: "<paste second secret>"
 ```
 
 Also update `APP_URL` in the pocketid section and `IDENTREE_OIDC_ISSUER_PUBLIC_URL` to match.

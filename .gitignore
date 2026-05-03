@@ -2,4 +2,7 @@
 *.env
 .env
 *.test
+*.db
+*.key
+*.pem
 dist/

@@ -46,17 +46,6 @@ services:
       retries: 10
       start_period: 10s
 
-  redis:
-    image: valkey/valkey:8
-    container_name: integ-lldap-dex-redis
-    ports:
-      - "127.0.0.1:6381:6379"
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
   # Audit sink: Grafana Loki
   loki:
     image: grafana/loki:3.0.0
@@ -83,8 +72,6 @@ services:
     depends_on:
       dex:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
       IDENTREE_OIDC_ISSUER_URL: "http://dex:5556/dex"
       IDENTREE_OIDC_ISSUER_PUBLIC_URL: "http://localhost:5561/dex"
@@ -102,10 +89,6 @@ services:
       IDENTREE_ESCROW_BACKEND: "local"
       IDENTREE_ESCROW_ENCRYPTION_KEY: "d37fc5f3f6gfe6gfef75dbfe0a42afff8e4191826e7ff339292895d24ffe3f52"
       IDENTREE_SESSION_STATE_FILE: "/data/sessions.json"
-      # State backend: Redis (Valkey)
-      IDENTREE_STATE_BACKEND: "redis"
-      IDENTREE_REDIS_URL: "redis://redis:6379/0"
-      IDENTREE_REDIS_KEY_PREFIX: "integ-lldap-dex:"
       # Audit: Loki push
       IDENTREE_AUDIT_LOKI_URL: "http://loki:3100"
     volumes:

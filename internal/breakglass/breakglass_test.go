@@ -585,8 +585,8 @@ func TestComputeEscrowToken_DifferentInputs(t *testing.T) {
 }
 
 func TestDeriveKey_DifferentPurposes(t *testing.T) {
-	key1 := deriveKey("shared-secret", "escrow")
-	key2 := deriveKey("shared-secret", "other-purpose")
+	key1 := config.DeriveKey("shared-secret", "escrow")
+	key2 := config.DeriveKey("shared-secret", "other-purpose")
 
 	if string(key1) == string(key2) {
 		t.Error("different purposes produced the same derived key")
@@ -597,8 +597,8 @@ func TestDeriveKey_DifferentPurposes(t *testing.T) {
 }
 
 func TestDeriveKey_Deterministic(t *testing.T) {
-	key1 := deriveKey("secret", "purpose")
-	key2 := deriveKey("secret", "purpose")
+	key1 := config.DeriveKey("secret", "purpose")
+	key2 := config.DeriveKey("secret", "purpose")
 	if string(key1) != string(key2) {
 		t.Error("same inputs produced different derived keys")
 	}

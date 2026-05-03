@@ -184,7 +184,7 @@ See [breakglass.md](breakglass.md) for full details and per-backend examples.
 
 | Variable | Default | Description |
 |---|---|---|
-| `IDENTREE_SESSION_STATE_FILE` | `/config/sessions.json` | Active sessions (persists across restarts) |
+| `IDENTREE_SESSION_STATE_FILE` | `/config/sessions.json` | Legacy session state file (sessions are now stored in the database; this file is only used for migration on first startup) |
 | `IDENTREE_HOST_REGISTRY_FILE` | `/config/hosts.json` | Registered host registry |
 | `IDENTREE_DEFAULT_PAGE_SIZE` | `15` | Default entries per page in the history view |
 

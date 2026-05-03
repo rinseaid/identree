@@ -10,23 +10,13 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-
-	"github.com/rinseaid/identree/internal/policy"
 	"strings"
 	"time"
 
 	"github.com/rinseaid/identree/internal/config"
+	"github.com/rinseaid/identree/internal/policy"
 	"github.com/rinseaid/identree/internal/randutil"
 )
-
-// deriveKey creates a purpose-specific HMAC-SHA256 subkey from sharedSecret.
-// Using separate subkeys per purpose prevents an HMAC generated for one context
-// (e.g. session signing) from being valid in another (e.g. CSRF protection).
-func deriveKey(sharedSecret, purpose string) []byte {
-	h := hmac.New(sha256.New, []byte(sharedSecret))
-	h.Write([]byte(purpose))
-	return h.Sum(nil)
-}
 
 // redactDSN strips passwords from a database DSN before logging. Postgres URLs
 // embed credentials as scheme://user:password@host/db; we keep everything but
@@ -64,7 +54,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, username, role string) 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "session"))
+	mac := hmac.New(sha256.New, config.DeriveKey(s.hmacBase(), "session"))
 	mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	value := username + ":" + role + ":" + ts + ":" + nonce + ":" + sig
@@ -123,7 +113,7 @@ func (s *Server) parseSessionCookie(r *http.Request) (data sessionData, valid bo
 	if age := time.Since(time.Unix(tsInt, 0)); age < 0 || age > sessionCookieTTL {
 		return sessionData{}, false
 	}
-	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "session"))
+	mac := hmac.New(sha256.New, config.DeriveKey(s.hmacBase(), "session"))
 	mac.Write([]byte("session:" + username + ":" + role + ":" + ts + ":" + nonce))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) != 1 {
@@ -296,7 +286,7 @@ func computeCSRFToken(sharedSecret, username, timestamp string) string {
 	if sharedSecret == "" {
 		return ""
 	}
-	mac := hmac.New(sha256.New, deriveKey(sharedSecret, "csrf"))
+	mac := hmac.New(sha256.New, config.DeriveKey(sharedSecret, "csrf"))
 	mac.Write([]byte("csrf:" + username + ":" + timestamp))
 	return hex.EncodeToString(mac.Sum(nil))
 }

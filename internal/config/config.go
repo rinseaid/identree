@@ -280,16 +280,16 @@ type ServerConfig struct {
 // The ldapSecret parameter should be ServerConfig.LDAPSecret (which falls back
 // to SharedSecret via config loading when IDENTREE_LDAP_SECRET is not set).
 func DeriveLDAPBindPassword(ldapSecret, hostname string) string {
-	subkey := deriveSubkey(ldapSecret, "ldap-bind")
+	subkey := DeriveKey(ldapSecret, "ldap-bind")
 	h := hmac.New(sha256.New, subkey)
 	h.Write([]byte(hostname))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// deriveSubkey creates a purpose-specific HMAC-SHA256 subkey.
-// Mirrors server.deriveKey but lives in config so both the server
-// (provision endpoint) and ldap (bind handler) packages can use it.
-func deriveSubkey(sharedSecret, purpose string) []byte {
+// DeriveKey creates a purpose-specific HMAC-SHA256 subkey from sharedSecret.
+// Using separate subkeys per purpose prevents an HMAC generated for one context
+// (e.g. session signing) from being valid in another (e.g. CSRF protection).
+func DeriveKey(sharedSecret, purpose string) []byte {
 	h := hmac.New(sha256.New, []byte(sharedSecret))
 	h.Write([]byte(purpose))
 	return h.Sum(nil)
@@ -1010,6 +1010,9 @@ func LoadClientConfig(allowNoServer bool) (*ClientConfig, error) {
 	}
 	if cfg.ServerURL != "" && !strings.HasPrefix(cfg.ServerURL, "http://") && !strings.HasPrefix(cfg.ServerURL, "https://") {
 		return nil, fmt.Errorf("IDENTREE_SERVER_URL must start with http:// or https://")
+	}
+	if cfg.SharedSecret != "" && len(cfg.SharedSecret) < 32 {
+		return nil, fmt.Errorf("IDENTREE_SHARED_SECRET must be at least 32 characters")
 	}
 
 	// Clamp PollInterval: 0 or negative would cause a tight loop.

@@ -5,7 +5,7 @@ info:
     identree bridges PAM sudo challenges to an OIDC identity provider, serves
     an admin dashboard, exposes an LDAP directory, and manages break-glass
     password escrow. This specification covers all HTTP API endpoints.
-  version: 0.1.0
+  version: 0.2.1
   license:
     name: MIT
 

@@ -736,7 +736,7 @@ func (s *Server) handleGraceStatus(w http.ResponseWriter, r *http.Request) {
 // changes between creation and poll. Empty optional fields are omitted for
 // backward compatibility.
 func (s *Server) computeStatusHMAC(challengeID, username, status, rotateBefore, revokeTokensBefore string) string {
-	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "approval_status"))
+	mac := hmac.New(sha256.New, config.DeriveKey(s.hmacBase(), "approval_status"))
 	fmt.Fprintf(mac, "%d:%s%d:%s%d:%s", len(challengeID), challengeID, len(status), status, len(username), username)
 	// Include rotate_breakglass_before in the HMAC so a MITM cannot inject
 	// a rotation signal without invalidating the token.
@@ -760,7 +760,7 @@ func (s *Server) computeOneTapToken(challengeID, username, hostname string, expi
 		return ""
 	}
 	expires := strconv.FormatInt(expiresAt.Unix(), 10)
-	mac := hmac.New(sha256.New, deriveKey(s.hmacBase(), "onetap"))
+	mac := hmac.New(sha256.New, config.DeriveKey(s.hmacBase(), "onetap"))
 	mac.Write([]byte("onetap:" + challengeID + ":" + username + ":" + expires + ":" + hostname))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	return challengeID + "." + expires + "." + sig

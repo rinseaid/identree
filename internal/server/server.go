@@ -342,7 +342,7 @@ func NewServer(cfg *config.ServerConfig, store *sudorules.Store) (*Server, error
 	}
 	var sqlOpts []func(*challenge.SQLStore)
 	if cfg.SessionSecret != "" {
-		sqlOpts = append(sqlOpts, challenge.WithSQLGraceHMACKey(deriveKey(cfg.SessionSecret, "grace-session")))
+		sqlOpts = append(sqlOpts, challenge.WithSQLGraceHMACKey(config.DeriveKey(cfg.SessionSecret, "grace-session")))
 	}
 	sqlStore, err := challenge.NewSQLStore(db, dialect, cfg.ChallengeTTL, cfg.GracePeriod, sqlOpts...)
 	if err != nil {
