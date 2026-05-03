@@ -3,6 +3,7 @@ package audit
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -124,22 +125,48 @@ func (s *SplunkHECSink) flush() {
 		slog.Warn("AUDIT splunk_hec: dropped events in batch", "dropped", dropped, "total", len(batch))
 	}
 
-	req, err := http.NewRequest(http.MethodPost, s.url, &body)
-	if err != nil {
-		slog.Error("AUDIT splunk_hec: build request", "err", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Splunk "+s.token)
+	payload := body.Bytes()
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		slog.Error("AUDIT splunk_hec: POST failed", "err", err, "events", len(batch))
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * 500 * time.Millisecond
+			slog.Warn("AUDIT splunk_hec: retrying", "attempt", attempt+1, "backoff", backoff, "events", len(batch))
+			time.Sleep(backoff)
+		}
+
+		req, err := http.NewRequest(http.MethodPost, s.url, bytes.NewReader(payload))
+		if err != nil {
+			slog.Error("AUDIT splunk_hec: build request", "err", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Splunk "+s.token)
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("POST failed: %w", err)
+			continue // network error, retry
+		}
+
+		if resp.StatusCode < 400 {
+			resp.Body.Close()
+			return // success
+		}
+
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		resp.Body.Close()
+
+		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+			continue // transient error, retry
+		}
+
+		// 4xx (except 429): permanent error, do not retry
+		slog.Error("AUDIT splunk_hec: permanent HTTP error", "status", resp.StatusCode, "body", string(respBody), "events", len(batch))
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		slog.Error("AUDIT splunk_hec: HTTP error", "status", resp.StatusCode, "body", string(respBody), "events", len(batch))
+	if lastErr != nil {
+		slog.Error("AUDIT splunk_hec: all retries exhausted", "err", lastErr, "events", len(batch))
 	}
 }

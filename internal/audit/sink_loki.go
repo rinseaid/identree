@@ -150,24 +150,48 @@ func (s *LokiSink) flush() {
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost, s.url+"/loki/api/v1/push", bytes.NewReader(body))
-	if err != nil {
-		slog.Error("AUDIT loki: build request", "err", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if s.token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.token)
-	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * 500 * time.Millisecond
+			slog.Warn("AUDIT loki: retrying", "attempt", attempt+1, "backoff", backoff, "events", len(batch))
+			time.Sleep(backoff)
+		}
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		slog.Error("AUDIT loki: POST failed", "err", err, "events", len(batch))
+		req, err := http.NewRequest(http.MethodPost, s.url+"/loki/api/v1/push", bytes.NewReader(body))
+		if err != nil {
+			slog.Error("AUDIT loki: build request", "err", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if s.token != "" {
+			req.Header.Set("Authorization", "Bearer "+s.token)
+		}
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("POST failed: %w", err)
+			continue // network error, retry
+		}
+
+		if resp.StatusCode < 400 {
+			resp.Body.Close()
+			return // success
+		}
+
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		resp.Body.Close()
+
+		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+			continue // transient error, retry
+		}
+
+		// 4xx (except 429): permanent error, do not retry
+		slog.Error("AUDIT loki: permanent HTTP error", "status", resp.StatusCode, "body", string(respBody), "events", len(batch))
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		slog.Error("AUDIT loki: HTTP error", "status", resp.StatusCode, "body", string(respBody), "events", len(batch))
+	if lastErr != nil {
+		slog.Error("AUDIT loki: all retries exhausted", "err", lastErr, "events", len(batch))
 	}
 }
