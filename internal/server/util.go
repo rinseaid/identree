@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -62,6 +64,23 @@ func truncateOutput(s string) string {
 		return s[:truncLen] + "...(truncated)"
 	}
 	return s
+}
+
+func flashTimezone(r *http.Request) *time.Location {
+	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
+		if loc, err := time.LoadLocation(c.Value); err == nil {
+			return loc
+		}
+	}
+	return time.UTC
+}
+
+func formatFlashTime(unixStr string, loc *time.Location) string {
+	unix, err := strconv.ParseInt(unixStr, 10, 64)
+	if err != nil {
+		return ""
+	}
+	return time.Unix(unix, 0).In(loc).Format("Jan 2, 3:04 PM")
 }
 
 // verifyWebhookSignature validates HMAC-SHA256 webhook signatures from PocketID.

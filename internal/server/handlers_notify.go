@@ -25,6 +25,12 @@ var channelNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 func (s *Server) notifyCfgForSave() *notify.NotificationConfig {
 	s.notifyCfgMu.RLock()
 	defer s.notifyCfgMu.RUnlock()
+	return s.notifyCfgSnapshotLocked()
+}
+
+// notifyCfgSnapshotLocked returns a deep copy with secrets stripped.
+// Caller must hold notifyCfgMu (read or write).
+func (s *Server) notifyCfgSnapshotLocked() *notify.NotificationConfig {
 	channels := make([]notify.Channel, len(s.notifyCfg.Channels))
 	for i, ch := range s.notifyCfg.Channels {
 		channels[i] = notify.Channel{
@@ -32,7 +38,6 @@ func (s *Server) notifyCfgForSave() *notify.NotificationConfig {
 			Backend: ch.Backend,
 			URL:     ch.URL,
 			Timeout: ch.Timeout,
-			// Token and Command intentionally omitted — env-only secrets.
 		}
 	}
 	routes := make([]notify.Route, len(s.notifyCfg.Routes))
@@ -331,9 +336,8 @@ func (s *Server) handleNotifyChannelAdd(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	s.notifyCfg.Channels = append(s.notifyCfg.Channels, ch)
+	saveCfg := s.notifyCfgSnapshotLocked()
 	s.notifyCfgMu.Unlock()
-
-	saveCfg := s.notifyCfgForSave()
 	if err := s.notifyStore.Save(saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
@@ -387,14 +391,16 @@ func (s *Server) handleNotifyChannelDelete(w http.ResponseWriter, r *http.Reques
 			break
 		}
 	}
+	var saveCfg *notify.NotificationConfig
+	if found {
+		saveCfg = s.notifyCfgSnapshotLocked()
+	}
 	s.notifyCfgMu.Unlock()
 
 	if !found {
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
 	}
-
-	saveCfg := s.notifyCfgForSave()
 	if err := s.notifyStore.Save(saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
@@ -455,9 +461,8 @@ func (s *Server) handleNotifyRouteAdd(w http.ResponseWriter, r *http.Request) {
 
 	s.notifyCfgMu.Lock()
 	s.notifyCfg.Routes = append(s.notifyCfg.Routes, route)
+	saveCfg := s.notifyCfgSnapshotLocked()
 	s.notifyCfgMu.Unlock()
-
-	saveCfg := s.notifyCfgForSave()
 	if err := s.notifyStore.Save(saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
@@ -506,9 +511,8 @@ func (s *Server) handleNotifyRouteDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.notifyCfg.Routes = append(s.notifyCfg.Routes[:idx], s.notifyCfg.Routes[idx+1:]...)
+	saveCfg := s.notifyCfgSnapshotLocked()
 	s.notifyCfgMu.Unlock()
-
-	saveCfg := s.notifyCfgForSave()
 	if err := s.notifyStore.Save(saveCfg); err != nil {
 		slog.Error("failed to save notification config", "err", err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)

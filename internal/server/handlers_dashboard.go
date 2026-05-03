@@ -318,21 +318,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	lang := detectLanguage(r)
 	t := T(lang)
 
-	// Resolve timezone for flash time formatting
-	flashTZ := "UTC"
-	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
-		if _, err2 := time.LoadLocation(c.Value); err2 == nil {
-			flashTZ = c.Value
-		}
-	}
-	flashLoc, _ := time.LoadLocation(flashTZ)
-	formatFlashTime := func(unixStr string) string {
-		unix, err := strconv.ParseInt(unixStr, 10, 64)
-		if err != nil {
-			return ""
-		}
-		return time.Unix(unix, 0).In(flashLoc).Format("Jan 2, 3:04 PM")
-	}
+	flashLoc := flashTimezone(r)
 
 	// Read and clear flash BEFORE auth check so login page can show flash messages.
 	var flashes []string
@@ -346,7 +332,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			switch parts[0] {
 			case "approved":
 				if len(parts) == 4 {
-					flashes = append(flashes, t("approved_sudo_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3]))
+					flashes = append(flashes, t("approved_sudo_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3], flashLoc))
 				} else {
 					flashes = append(flashes, t("approved_sudo_on")+" "+parts[1])
 				}
@@ -366,20 +352,20 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				flashes = append(flashes, fmt.Sprintf(t("rejected_n_requests"), atoi(parts[1])))
 			case "elevated":
 				if len(parts) == 4 {
-					flashes = append(flashes, t("elevated_session_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3]))
+					flashes = append(flashes, t("elevated_session_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3], flashLoc))
 				} else {
 					flashes = append(flashes, t("elevated_session_on")+" "+parts[1])
 				}
 			case "extended":
 				if len(parts) == 4 {
-					flashes = append(flashes, t("extended_session_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3]))
+					flashes = append(flashes, t("extended_session_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3], flashLoc))
 				} else {
 					flashes = append(flashes, t("extended_session_on")+" "+parts[1])
 				}
 			case "extended_all":
 				msg := fmt.Sprintf(t("extended_n_sessions"), atoi(parts[1]))
 				if len(parts) >= 3 {
-					msg += " " + t("until") + " " + formatFlashTime(parts[2])
+					msg += " " + t("until") + " " + formatFlashTime(parts[2], flashLoc)
 				}
 				flashes = append(flashes, msg)
 			case "partial_approve":
@@ -1277,7 +1263,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 	if isAdmin {
 		allHistory = s.store.AllActionHistoryWithUsers()
 	} else {
-		for _, e := range s.store.ActionHistory(username, 0) {
+		for _, e := range s.store.ActionHistory(username, 10000) {
 			if e.Action == "rotated_breakglass" {
 				continue // server-level event; not shown to non-admins
 			}
@@ -1736,7 +1722,7 @@ func (s *Server) handleHistoryExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Session-based access: export the authenticated user's own history.
-	history := s.store.ActionHistory(username, 0)
+	history := s.store.ActionHistory(username, 10000)
 	switch format {
 	case "csv":
 		w.Header().Set("Content-Type", "text/csv")

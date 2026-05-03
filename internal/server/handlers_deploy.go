@@ -436,7 +436,9 @@ func (s *Server) handleDeployStream(w http.ResponseWriter, r *http.Request) {
 	// Clear the server-level WriteTimeout for this streaming connection so
 	// long-running deploys are not killed at 60s. Mirrors handleSSEEvents.
 	rc := http.NewResponseController(w)
-	_ = rc.SetWriteDeadline(time.Time{})
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		slog.Warn("deploy stream: failed to clear write deadline", "err", err)
+	}
 
 	// Bridge context cancellation to the Cond so Wait() unblocks when the
 	// client disconnects. The goroutine exits when the context is done or

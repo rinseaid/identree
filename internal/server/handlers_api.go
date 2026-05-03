@@ -895,7 +895,7 @@ func (s *Server) handleBreakglassEscrow(w http.ResponseWriter, r *http.Request) 
 		}
 	} else if s.cfg.EscrowSecret != "" {
 		// No host registry: use HMAC escrow token tied to the specific hostname and timestamp.
-		// Validate the timestamp is within ±5 minutes to prevent replay attacks.
+		// Validate the timestamp is within ±1 minute to prevent replay attacks.
 		tsHeader := r.Header.Get("X-Escrow-Ts")
 		if tsHeader == "" {
 			slog.Warn("AUTH_FAILURE missing escrow timestamp", "host", req.Hostname, "remote_addr", remoteAddr(r))
@@ -1213,6 +1213,10 @@ func (s *Server) handleBreakglassReport(w http.ResponseWriter, r *http.Request) 
 	}
 	if !validHostname.MatchString(req.Hostname) {
 		apiError(w, http.StatusBadRequest, "invalid hostname format")
+		return
+	}
+	if !validUsername.MatchString(req.Username) {
+		apiError(w, http.StatusBadRequest, "invalid username format")
 		return
 	}
 

@@ -833,27 +833,27 @@ func configSecretStatus(cfg *config.ServerConfig) map[string]bool {
 
 // isPrivateIP returns true if the given IP is loopback, link-local, private,
 // or multicast (RFC 1918 / RFC 4193 / RFC 3927 / RFC 1122 / IPv6 loopback).
+var privateNets = []net.IPNet{
+	{IP: net.ParseIP("0.0.0.0").To4(), Mask: net.CIDRMask(8, 32)},
+	{IP: net.ParseIP("10.0.0.0").To4(), Mask: net.CIDRMask(8, 32)},
+	{IP: net.ParseIP("100.64.0.0").To4(), Mask: net.CIDRMask(10, 32)},
+	{IP: net.ParseIP("172.16.0.0").To4(), Mask: net.CIDRMask(12, 32)},
+	{IP: net.ParseIP("192.168.0.0").To4(), Mask: net.CIDRMask(16, 32)},
+	{IP: net.ParseIP("169.254.0.0").To4(), Mask: net.CIDRMask(16, 32)},
+	{IP: net.ParseIP("224.0.0.0").To4(), Mask: net.CIDRMask(4, 32)},
+	{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},
+	{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},
+	{IP: net.ParseIP("ff00::"), Mask: net.CIDRMask(8, 128)},
+}
+
 func isPrivateIP(ip net.IP) bool {
-	// Normalize IPv4-mapped IPv6 addresses (e.g. ::ffff:10.0.0.1) to their
-	// IPv4 representation so the 32-bit private ranges below match them.
 	if ip4 := ip.To4(); ip4 != nil {
 		ip = ip4
-	}
-	private := []net.IPNet{
-		{IP: net.ParseIP("0.0.0.0").To4(), Mask: net.CIDRMask(8, 32)},     // this host network (RFC 1122)
-		{IP: net.ParseIP("10.0.0.0").To4(), Mask: net.CIDRMask(8, 32)},
-		{IP: net.ParseIP("172.16.0.0").To4(), Mask: net.CIDRMask(12, 32)},
-		{IP: net.ParseIP("192.168.0.0").To4(), Mask: net.CIDRMask(16, 32)},
-		{IP: net.ParseIP("169.254.0.0").To4(), Mask: net.CIDRMask(16, 32)}, // link-local
-		{IP: net.ParseIP("224.0.0.0").To4(), Mask: net.CIDRMask(4, 32)},   // IPv4 multicast
-		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},      // ULA
-		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},     // link-local IPv6
-		{IP: net.ParseIP("ff00::"), Mask: net.CIDRMask(8, 128)},      // IPv6 multicast
 	}
 	if ip.IsLoopback() {
 		return true
 	}
-	for _, block := range private {
+	for _, block := range privateNets {
 		if block.Contains(ip) {
 			return true
 		}
@@ -1764,21 +1764,7 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSessionCookie(w, username, role)
 
-	// Resolve timezone for flash time formatting
-	flashTZ := "UTC"
-	if c, err := r.Cookie("pam_tz"); err == nil && c.Value != "" {
-		if _, err2 := time.LoadLocation(c.Value); err2 == nil {
-			flashTZ = c.Value
-		}
-	}
-	flashLoc, _ := time.LoadLocation(flashTZ)
-	formatFlashTime := func(unixStr string) string {
-		unix, err := strconv.ParseInt(unixStr, 10, 64)
-		if err != nil {
-			return ""
-		}
-		return time.Unix(unix, 0).In(flashLoc).Format("Jan 2, 3:04 PM")
-	}
+	flashLoc := flashTimezone(r)
 
 	// Parse flash messages from cookie
 	var flashes []string
@@ -1791,13 +1777,13 @@ func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 			switch parts[0] {
 			case "elevated":
 				if len(parts) == 4 {
-					flashes = append(flashes, t("elevated_session_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3]))
+					flashes = append(flashes, t("elevated_session_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3], flashLoc))
 				} else {
 					flashes = append(flashes, t("elevated_session_on")+" "+parts[1])
 				}
 			case "extended":
 				if len(parts) == 4 {
-					flashes = append(flashes, t("extended_session_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3]))
+					flashes = append(flashes, t("extended_session_on")+" "+parts[1]+" ("+parts[2]+") "+t("until")+" "+formatFlashTime(parts[3], flashLoc))
 				} else {
 					flashes = append(flashes, t("extended_session_on")+" "+parts[1])
 				}

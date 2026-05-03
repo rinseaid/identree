@@ -144,7 +144,9 @@ func (s *Server) handleSSEEvents(w http.ResponseWriter, r *http.Request) {
 	// Clear the server-level WriteTimeout for this streaming connection so it
 	// can remain open indefinitely. All other handlers retain the 60s deadline.
 	rc := http.NewResponseController(w)
-	_ = rc.SetWriteDeadline(time.Time{})
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		slog.Warn("SSE: failed to clear write deadline, stream may time out", "err", err)
+	}
 
 	sseKey := username
 	if s.getSessionRole(r) == "admin" {

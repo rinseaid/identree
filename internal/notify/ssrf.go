@@ -12,14 +12,18 @@ var ssrfDeniedNets []*net.IPNet
 
 func init() {
 	for _, cidr := range []string{
+		"0.0.0.0/8",      // this host (RFC 1122)
 		"127.0.0.0/8",    // loopback
 		"10.0.0.0/8",     // RFC1918
+		"100.64.0.0/10",  // CGNAT (RFC 6598)
 		"172.16.0.0/12",  // RFC1918
 		"192.168.0.0/16", // RFC1918
 		"169.254.0.0/16", // link-local / cloud metadata
+		"224.0.0.0/4",    // multicast
 		"::1/128",        // IPv6 loopback
 		"fe80::/10",      // IPv6 link-local
 		"fc00::/7",       // IPv6 ULA
+		"ff00::/8",       // IPv6 multicast
 	} {
 		_, n, err := net.ParseCIDR(cidr)
 		if err != nil {

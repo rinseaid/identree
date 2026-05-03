@@ -361,14 +361,16 @@ func (s *SQLStore) SaveState() {
 	s.dirty.Store(false)
 }
 
-// Stop signals background goroutines to exit and waits for them.
-// The caller is responsible for closing s.db afterwards (it's owned
-// outside the store so Open() callers can choose to share the pool).
+// Stop signals background goroutines to exit, waits for them, and closes the
+// underlying database connection pool.
 func (s *SQLStore) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stopCh)
 	})
 	s.stopWg.Wait()
+	if err := s.db.Close(); err != nil {
+		slog.Error("database close error", "err", err)
+	}
 }
 
 // HealthCheck pings the underlying database.
