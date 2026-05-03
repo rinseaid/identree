@@ -46,19 +46,19 @@ const sharedCSS = `
       --surface-2: #efecf8;
       --text: #100f18;
       --text-2: #635e80;
-      --text-3: #736e91;
+      --text-3: #655e84;
       --border: #e2dff2;
       --primary: #7c3aed;
       --primary-h: #6d28d9;
       --primary-fg: #ffffff;
       --primary-sub: #f2eefe;
-      --success: #059669;
+      --success: #047857;
       --success-bg: #ecfdf5;
       --success-border: #a7f3d0;
-      --danger: #dc2626;
+      --danger: #d32222;
       --danger-bg: #fef2f2;
       --danger-border: #fecaca;
-      --warning: #c2810a;
+      --warning: #92610a;
       --warning-bg: #fffbeb;
       --warning-border: #fde68a;
       --code-bg: #f0edfb;
@@ -112,12 +112,12 @@ const sharedCSS = `
     }
     .theme-light {
       --bg: #f4f2fb; --surface: #ffffff; --surface-2: #ebe8f8;
-      --text: #0e0d1a; --text-2: #5a5578; --text-3: #736e91;
+      --text: #0e0d1a; --text-2: #5a5578; --text-3: #655e84;
       --border: #dbd8f0; --primary: #7c3aed; --primary-h: #6d28d9;
       --primary-fg: #ffffff; --primary-sub: #ede9fd;
-      --success: #059669; --success-bg: #ecfdf5; --success-border: #a7f3d0;
-      --danger: #dc2626; --danger-bg: #fef2f2; --danger-border: #fecaca;
-      --warning: #c2810a; --warning-bg: #fffbeb; --warning-border: #fde68a;
+      --success: #047857; --success-bg: #ecfdf5; --success-border: #a7f3d0;
+      --danger: #d32222; --danger-bg: #fef2f2; --danger-border: #fecaca;
+      --warning: #92610a; --warning-bg: #fffbeb; --warning-border: #fde68a;
       --code-bg: #f0edfb; --code-border: #ddd8f5;
       --focus-ring: 0 0 0 3px rgba(124,58,237,0.28);
       --chip-cmd-bg: rgba(124,58,237,0.08); --chip-cmd-border: rgba(124,58,237,0.20);
@@ -938,20 +938,18 @@ const pendingBarHTML = `{{if .Pending}}
   </div>
 </div>
 <script nonce="{{.CSPNonce}}">
-var _pendingModalPrevFocus=null;
+var _pendingRelease=null;
 function openPendingModal(){
-  _pendingModalPrevFocus=document.activeElement;
   var m=document.getElementById('pending-modal');
   if(m){
     m.classList.add('open');
-    var focusable=Array.from(m.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
-    if(focusable.length)setTimeout(function(){focusable[0].focus();},50);
+    _pendingRelease=trapFocus(m,closePendingModal);
   }
 }
 function closePendingModal(){
   var m=document.getElementById('pending-modal');
   if(m)m.classList.remove('open');
-  if(_pendingModalPrevFocus)_pendingModalPrevFocus.focus();
+  if(_pendingRelease){var r=_pendingRelease;_pendingRelease=null;r();}
 }
 (function(){
   var openBtn=document.getElementById('pending-modal-open-btn');
@@ -959,7 +957,7 @@ function closePendingModal(){
   var overlay=document.getElementById('pending-modal');
   if(overlay)overlay.addEventListener('click',function(e){if(e.target===overlay)closePendingModal();});
 })();
-document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('pending-modal');if(m&&m.classList.contains('open'))closePendingModal();document.querySelectorAll('.reject-inline-form,.reject-inline-row').forEach(function(f){f.style.display='none';var tb=f.closest('.reject-inline').querySelector('.reject-toggle-btn');if(tb)tb.style.display='';});}});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){document.querySelectorAll('.reject-inline-form,.reject-inline-row').forEach(function(f){f.style.display='none';var tb=f.closest('.reject-inline').querySelector('.reject-toggle-btn');if(tb)tb.style.display='';});}});
 // Reject-with-reason inline toggle: clicking the reject button reveals an input + confirm button.
 (function(){
   function closeAllRejectInlines(){
@@ -980,7 +978,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=docum
 })();
 // Wire confirmation dialogs for ALL saction-confirm buttons (including single-challenge reject).
 document.querySelectorAll('.saction-confirm').forEach(function(btn){
-  btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+  btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});
 });
 // Justification picker: sync hidden value on select change, reveal custom input.
 (function(){
@@ -1291,6 +1289,80 @@ const infiniteScrollJS = `
     };
     </script>`
 
+// sharedA11yJS provides reusable accessibility utilities injected into every page template.
+// - trapFocus: traps Tab/Shift-Tab cycling inside a modal and handles Escape to close
+// - showConfirm: Promise-based replacement for window.confirm() using a custom dialog
+// - Auto-derives aria-labels for .gtcol-filter-input elements from column headers
+const sharedA11yJS = `
+    <script nonce="{{.CSPNonce}}">
+    function trapFocus(modal,onClose){
+      var focusable=modal.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])');
+      if(!focusable.length)return null;
+      var first=focusable[0],last=focusable[focusable.length-1];
+      var previousFocus=document.activeElement;
+      first.focus();
+      function handler(e){
+        if(e.key==='Escape'){if(onClose){onClose();}else{modal.style.display='none';modal.classList.remove('open');if(previousFocus)previousFocus.focus();modal.removeEventListener('keydown',handler);}return;}
+        if(e.key!=='Tab')return;
+        if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+        else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+      }
+      modal.addEventListener('keydown',handler);
+      return function release(){modal.removeEventListener('keydown',handler);if(previousFocus)previousFocus.focus();};
+    }
+    function showConfirm(message){
+      return new Promise(function(resolve){
+        var dlg=document.getElementById('confirm-dialog');
+        document.getElementById('confirm-msg').textContent=message;
+        dlg.style.display='';
+        dlg.classList.add('open');
+        var release=trapFocus(dlg);
+        function cleanup(result){
+          dlg.style.display='none';
+          dlg.classList.remove('open');
+          if(release)release();
+          resolve(result);
+        }
+        document.getElementById('confirm-ok').onclick=function(){cleanup(true);};
+        document.getElementById('confirm-cancel').onclick=function(){cleanup(false);};
+      });
+    }
+    document.addEventListener('DOMContentLoaded',function(){
+      document.querySelectorAll('.gtcol-filter-input').forEach(function(inp){
+        var col=inp.dataset.col;
+        if(!col)return;
+        var table=inp.closest('[role="table"]');
+        if(!table)return;
+        var headerRow=table.querySelector('[role="row"]');
+        if(!headerRow)return;
+        var headers=headerRow.querySelectorAll('[role="columnheader"]');
+        var filterRow=inp.closest('[class*="filter"]');
+        if(!filterRow)return;
+        var filterCells=filterRow.children;
+        var idx=-1;
+        for(var i=0;i<filterCells.length;i++){
+          if(filterCells[i].contains(inp)){idx=i;break;}
+        }
+        if(idx>=0&&idx<headers.length){
+          var headerText=(headers[idx].querySelector('.col-sort-link')||headers[idx]).textContent.replace(/[↑↓]/g,'').trim();
+          if(headerText)inp.setAttribute('aria-label','Filter by '+headerText);
+        }
+      });
+    });
+    </script>`
+
+// confirmDialogHTML is the shared custom confirmation dialog injected before </body> in every page.
+const confirmDialogHTML = `
+  <div id="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-msg" style="display:none" class="modal-overlay">
+    <div class="modal-box" style="max-width:420px;text-align:center;padding:28px 24px">
+      <p id="confirm-msg" style="font-size:0.9375rem;color:var(--text);margin-bottom:20px;white-space:pre-line"></p>
+      <div class="modal-actions" style="justify-content:center">
+        <button type="button" id="confirm-cancel" class="btn">Cancel</button>
+        <button type="button" id="confirm-ok" class="btn btn-danger">Confirm</button>
+      </div>
+    </div>
+  </div>`
+
 const dashboardHTML = `<!DOCTYPE html>
 <html lang="{{.Lang}}" class="{{if eq .Theme "dark"}}theme-dark{{else if eq .Theme "light"}}theme-light{{end}}">
 <head>
@@ -1400,14 +1472,13 @@ const dashboardHTML = `<!DOCTYPE html>
   window.addEventListener('beforeunload', function() { _dashSSECleanup(); });
   document.querySelectorAll('.saction-btn[type=submit]').forEach(function(btn){
     btn.addEventListener('click',function(e){
-      if(btn.dataset.confirm){if(!confirm(btn.dataset.confirm)){return;}}
       e.preventDefault();
-      btn.disabled=true;
-      btn.style.opacity='0.6';
-      btn.closest('form').submit();
+      function doSubmit(){btn.disabled=true;btn.style.opacity='0.6';btn.closest('form').submit();}
+      if(btn.dataset.confirm){showConfirm(btn.dataset.confirm).then(function(ok){if(ok)doSubmit();});}
+      else{doSubmit();}
     });
   });
-  </script>` + infiniteScrollJS + `
+  </script>` + infiniteScrollJS + sharedA11yJS + `
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
   <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
@@ -1545,7 +1616,7 @@ const dashboardHTML = `<!DOCTYPE html>
         jmt.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleJM();}});
       }
       document.querySelectorAll('.saction-confirm').forEach(function(btn){
-        btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+        btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});
       });
       var sac=document.getElementById('sessions-admin-clear');
       if(sac)sac.addEventListener('click',function(){document.querySelectorAll('#sessions-table .gtcol-filter-input').forEach(function(i){i.value='';});sessionsAdminCtl.reset();});
@@ -1644,7 +1715,7 @@ const dashboardHTML = `<!DOCTYPE html>
         aot.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleAO();}});
       }
       document.querySelectorAll('#user-sessions-table .saction-confirm').forEach(function(btn){
-        btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+        btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});
       });
       document.querySelectorAll('.elevate-toggle').forEach(function(btn){
         btn.addEventListener('click',function(e){e.stopPropagation();var m=btn.parentElement.querySelector('.elevate-menu');var open=m.classList.contains('open');document.querySelectorAll('.elevate-menu.open').forEach(function(x){x.classList.remove('open');});if(!open){var r=btn.getBoundingClientRect();m.style.top=(r.bottom+4)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';m.classList.add('open');}});
@@ -1656,10 +1727,10 @@ const dashboardHTML = `<!DOCTYPE html>
       var btn=f.querySelector('button[type=submit]');
       if(!btn)return;
       btn.addEventListener('click',function(e){
-        if(btn.dataset.confirm){if(!confirm(btn.dataset.confirm)){return;}}
         e.preventDefault();
-        btn.disabled=true;
-        f.submit();
+        function doSubmit(){btn.disabled=true;f.submit();}
+        if(btn.dataset.confirm){showConfirm(btn.dataset.confirm).then(function(ok){if(ok)doSubmit();});}
+        else{doSubmit();}
       });
     });
     </script>
@@ -1670,7 +1741,7 @@ const dashboardHTML = `<!DOCTYPE html>
     </script>
     {{end}}
 
-  </main>
+  </main>` + confirmDialogHTML + `
 </body>
 </html>`
 
@@ -1983,7 +2054,7 @@ const historyPageHTML = `<!DOCTYPE html>
       });
     },30000);
   })();
-  </script>` + infiniteScrollJS + `
+  </script>` + infiniteScrollJS + sharedA11yJS + `
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
   <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
@@ -2074,7 +2145,7 @@ const historyPageHTML = `<!DOCTYPE html>
     </div>
     <div id="filter-empty-msg" style="display:none" class="empty-state">No results match your filter</div>
     <div id="history-loadbar" class="loadbar"></div>
-  </main>
+  </main>` + confirmDialogHTML + `
 </body>
 </html>`
 
@@ -2300,9 +2371,8 @@ const adminPageHTML = `<!DOCTYPE html>
       });
     }
 
-    var _deployPrevFocus=null;
+    var _deployRelease=null;
     function openDeployModal(){
-      _deployPrevFocus=document.activeElement;
       deployModal.classList.add('open');
       document.getElementById('deploy-form-area').style.display='';
       document.getElementById('deploy-log-area').style.display='none';
@@ -2311,8 +2381,7 @@ const adminPageHTML = `<!DOCTYPE html>
       document.getElementById('deploy-status').textContent='';
       document.getElementById('deploy-status').className='deploy-status';
       deployResetKey();
-      // Focus first field
-      setTimeout(function(){var h=document.getElementById('deploy-host');if(h)h.focus();},50);
+      _deployRelease=trapFocus(deployModal,closeDeployModal);
       // Load identity provider users with SSH keys
       var _deployUsers=[];
       var sel=document.getElementById('deploy-pocketid-user');
@@ -2354,7 +2423,7 @@ const adminPageHTML = `<!DOCTYPE html>
     var deployDone=false;
     function closeDeployModal(){
       deployModal.classList.remove('open');
-      if(_deployPrevFocus)_deployPrevFocus.focus();
+      if(_deployRelease){var r=_deployRelease;_deployRelease=null;r();}
     }
     if(deployOpenBtn){
       deployOpenBtn.addEventListener('click',openDeployModal);
@@ -2364,7 +2433,6 @@ const adminPageHTML = `<!DOCTYPE html>
         else closeDeployModal();
       });
       deployModal.addEventListener('click',function(e){if(e.target===deployModal)closeDeployModal();});
-      document.addEventListener('keydown',function(e){if(e.key==='Escape'&&deployModal.classList.contains('open'))closeDeployModal();});
       document.getElementById('deploy-host').addEventListener('input',deployCheckReady);
       // Paste key from clipboard
       document.getElementById('deploy-key-paste-btn').addEventListener('click',function(){
@@ -2474,14 +2542,13 @@ const adminPageHTML = `<!DOCTYPE html>
   });
   document.querySelectorAll('.saction-btn[type=submit]:not(.config-save-btn)').forEach(function(btn){
     btn.addEventListener('click',function(e){
-      if(btn.dataset.confirm){if(!confirm(btn.dataset.confirm)){return;}}
       e.preventDefault();
-      btn.disabled=true;
-      btn.style.opacity='0.6';
-      btn.closest('form').submit();
+      function doSubmit(){btn.disabled=true;btn.style.opacity='0.6';btn.closest('form').submit();}
+      if(btn.dataset.confirm){showConfirm(btn.dataset.confirm).then(function(ok){if(ok)doSubmit();});}
+      else{doSubmit();}
     });
   });
-  </script>` + infiniteScrollJS + `
+  </script>` + infiniteScrollJS + sharedA11yJS + `
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
   <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
@@ -2783,10 +2850,9 @@ const adminPageHTML = `<!DOCTYPE html>
           e.preventDefault();
           var href=link.href;
           var names=dirtyNames();
-          if(window.confirm('You have unsaved changes in:\n  • '+names.join('\n  • ')+'\n\nLeave without saving?')){
-            submitted=true;
-            window.location.href=href;
-          }
+          showConfirm('You have unsaved changes in:\n  • '+names.join('\n  • ')+'\n\nLeave without saving?').then(function(ok){
+            if(ok){submitted=true;window.location.href=href;}
+          });
         });
       });
       window.addEventListener('beforeunload',function(e){
@@ -2816,18 +2882,20 @@ const adminPageHTML = `<!DOCTYPE html>
       var restartBtn=document.getElementById('restart-server-btn');
       if(restartBtn){
         restartBtn.addEventListener('click',function(){
-          if(!window.confirm('Restart the server now? You will be briefly disconnected.'))return;
-          restartBtn.disabled=true;restartBtn.textContent='Restarting…';
-          var form=document.querySelector('form[action="/admin/config"]');
-          var body=new URLSearchParams();
-          if(form){
-            var u=form.querySelector('[name=username]'),ct=form.querySelector('[name=csrf_token]'),ts=form.querySelector('[name=csrf_ts]');
-            if(u)body.set('username',u.value);
-            if(ct)body.set('csrf_token',ct.value);
-            if(ts)body.set('csrf_ts',ts.value);
-          }
-          fetch('/api/admin/restart',{method:'POST',body:body,headers:{'Content-Type':'application/x-www-form-urlencoded'}}).catch(function(){});
-          setTimeout(function(){window.location.reload();},3000);
+          showConfirm('Restart the server now? You will be briefly disconnected.').then(function(ok){
+            if(!ok)return;
+            restartBtn.disabled=true;restartBtn.textContent='Restarting…';
+            var form=document.querySelector('form[action="/admin/config"]');
+            var body=new URLSearchParams();
+            if(form){
+              var u=form.querySelector('[name=username]'),ct=form.querySelector('[name=csrf_token]'),ts=form.querySelector('[name=csrf_ts]');
+              if(u)body.set('username',u.value);
+              if(ct)body.set('csrf_token',ct.value);
+              if(ts)body.set('csrf_ts',ts.value);
+            }
+            fetch('/api/admin/restart',{method:'POST',body:body,headers:{'Content-Type':'application/x-www-form-urlencoded'}}).catch(function(){});
+            setTimeout(function(){window.location.reload();},3000);
+          });
         });
       }
     })();
@@ -2930,7 +2998,7 @@ const adminPageHTML = `<!DOCTYPE html>
       if(uc)uc.addEventListener('click',function(){document.querySelectorAll('#users-table .gtcol-filter-input').forEach(function(i){i.value='';});usersCtl.reset();});
       (function(){var ftb=document.getElementById('users-filter-toggle');var ftr=document.getElementById('users-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       document.querySelectorAll('.confirm-submit').forEach(function(btn){
-        btn.addEventListener('click',function(e){ if(!confirm(btn.dataset.confirm)){ e.preventDefault(); } });
+        btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});
       });
       // SSH Keys panel toggle
       document.querySelectorAll('.ssh-keys-toggle').forEach(function(btn){
@@ -3265,7 +3333,7 @@ const adminPageHTML = `<!DOCTYPE html>
       if(hc)hc.addEventListener('click',function(){document.querySelectorAll('#hosts-table .gtcol-filter-input').forEach(function(i){i.value='';});hostsCtl.reset();});
       (function(){var ftb=document.getElementById('hosts-filter-toggle');var ftr=document.getElementById('hosts-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       document.querySelectorAll('.saction-rotate,.saction-rotate-all').forEach(function(btn){
-        btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+        btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});
       });
       document.querySelectorAll('.reveal-password-btn').forEach(function(btn){
         btn.addEventListener('click',function(){
@@ -3307,6 +3375,7 @@ const adminPageHTML = `<!DOCTYPE html>
                 }
               };
               modal.classList.add('open');
+              window._revealRelease=trapFocus(modal,function(){closeRevealModal();});
             })
             .catch(function(err){alert('Reveal failed: '+err.message);})
             .finally(function(){btn.disabled=false;});
@@ -3315,26 +3384,14 @@ const adminPageHTML = `<!DOCTYPE html>
       document.addEventListener('DOMContentLoaded',function(){
         var revealModal=document.getElementById('reveal-modal');
         if(!revealModal)return;
-        revealModal.addEventListener('click',function(e){if(e.target===revealModal)revealModal.classList.remove('open');});
+        window.closeRevealModal=function(){
+          revealModal.classList.remove('open');
+          if(window._revealRelease){var r=window._revealRelease;window._revealRelease=null;r();}
+        };
+        revealModal.addEventListener('click',function(e){if(e.target===revealModal)closeRevealModal();});
         ['reveal-modal-x','reveal-modal-close'].forEach(function(id){
           var btn=document.getElementById(id);
-          if(btn)btn.addEventListener('click',function(){revealModal.classList.remove('open');});
-        });
-        // Focus trap for reveal modal (L8)
-        revealModal.addEventListener('keydown',function(e){
-          if(e.key!=='Tab')return;
-          var focusable=Array.from(revealModal.querySelectorAll('button,input,[tabindex="0"]')).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
-          if(!focusable.length){e.preventDefault();return;}
-          var first=focusable[0],last=focusable[focusable.length-1];
-          if(e.shiftKey){if(document.activeElement===first){e.preventDefault();last.focus();}}
-          else{if(document.activeElement===last){e.preventDefault();first.focus();}}
-        });
-        document.addEventListener('keydown',function(e){
-          if(e.key==='Escape'){
-            if(revealModal.style.display!=='none')revealModal.style.display='none';
-            var rm=document.getElementById('remove-modal');
-            if(rm&&rm.classList.contains('open'))rm.classList.remove('open');
-          }
+          if(btn)btn.addEventListener('click',function(){closeRevealModal();});
         });
         // L13: associate config inputs with their label text via aria-label
         document.querySelectorAll('.config-table-row').forEach(function(row){
@@ -3506,7 +3563,7 @@ const adminPageHTML = `<!DOCTYPE html>
       document.getElementById('sudo-add-btn').style.display = '';
     }
     document.querySelectorAll('.confirm-submit').forEach(function(btn){
-      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+      btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});
     });
     </script>
 
@@ -3551,7 +3608,7 @@ const adminPageHTML = `<!DOCTYPE html>
 
     <script nonce="{{.CSPNonce}}">
     document.querySelectorAll('.confirm-submit').forEach(function(btn){
-      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+      btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});
     });
     </script>
 
@@ -3700,7 +3757,7 @@ const adminPageHTML = `<!DOCTYPE html>
 
     <script nonce="{{.CSPNonce}}">
     document.querySelectorAll('.confirm-submit').forEach(function(btn){
-      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+      btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});
     });
     document.querySelectorAll('.banner-success').forEach(function(el){
       setTimeout(function(){el.style.transition='opacity 0.4s';el.style.opacity='0';setTimeout(function(){el.remove()},500)},5000);
@@ -3818,7 +3875,7 @@ const adminPageHTML = `<!DOCTYPE html>
 
     <script nonce="{{.CSPNonce}}">
     document.querySelectorAll('.confirm-submit').forEach(function(btn){
-      btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});
+      btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});
     });
     document.querySelectorAll('.banner-success').forEach(function(el){
       setTimeout(function(){el.style.transition='opacity 0.4s';el.style.opacity='0';setTimeout(function(){el.remove()},500)},5000);
@@ -3985,9 +4042,14 @@ const adminPageHTML = `<!DOCTYPE html>
       if(removeScriptPreview) removeScriptPreview.classList.remove('open');
       if(removeScriptEl) removeScriptEl.textContent='Loading...';
       removeModal.classList.add('open');
+      window._removeRelease=trapFocus(removeModal,function(){closeRemoveModal();});
     });
   });
-  if(removeCancelBtn) removeCancelBtn.addEventListener('click',function(){removeModal.classList.remove('open');});
+  function closeRemoveModal(){
+    removeModal.classList.remove('open');
+    if(window._removeRelease){var r=window._removeRelease;window._removeRelease=null;r();}
+  }
+  if(removeCancelBtn) removeCancelBtn.addEventListener('click',function(){closeRemoveModal();});
   var removePasteBtn=document.getElementById('remove-key-paste-btn');
   if(removePasteBtn){
     removePasteBtn.addEventListener('click',function(){
@@ -4108,31 +4170,8 @@ const adminPageHTML = `<!DOCTYPE html>
   }
   if(removeCloseBtn){
     removeCloseBtn.addEventListener('click',function(){
-      removeModal.classList.remove('open');
+      closeRemoveModal();
       if(removeCloseBtn.getAttribute('data-reload')==='1') location.reload();
-    });
-  }
-  // Focus trap for remove modal (L9)
-  if(removeModal){
-    removeModal.addEventListener('keydown',function(e){
-      if(e.key!=='Tab')return;
-      var focusable=Array.from(removeModal.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
-      if(!focusable.length){e.preventDefault();return;}
-      var first=focusable[0],last=focusable[focusable.length-1];
-      if(e.shiftKey){if(document.activeElement===first){e.preventDefault();last.focus();}}
-      else{if(document.activeElement===last){e.preventDefault();first.focus();}}
-    });
-  }
-  // Focus trap for deploy modal (L9)
-  var deployModalEl=document.getElementById('deploy-modal');
-  if(deployModalEl){
-    deployModalEl.addEventListener('keydown',function(e){
-      if(e.key!=='Tab')return;
-      var focusable=Array.from(deployModalEl.querySelectorAll('button,input,select,textarea,[tabindex="0"]')).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
-      if(!focusable.length){e.preventDefault();return;}
-      var first=focusable[0],last=focusable[focusable.length-1];
-      if(e.shiftKey){if(document.activeElement===first){e.preventDefault();last.focus();}}
-      else{if(document.activeElement===last){e.preventDefault();first.focus();}}
     });
   }
   })();
@@ -4228,7 +4267,7 @@ const adminPageHTML = `<!DOCTYPE html>
       </div>
     </div>
   </div>
-  {{end}}
+  {{end}}` + confirmDialogHTML + `
 </body>
 </html>`
 
@@ -4383,14 +4422,14 @@ const accessPageHTML = `<!DOCTYPE html>
       (function(){var ftb=document.getElementById('access-admin-filter-toggle');var ftr=document.getElementById('access-admin-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       (function(){var ftb=document.getElementById('access-user-filter-toggle');var ftr=document.getElementById('access-user-filter-row');if(ftb&&ftr)ftb.addEventListener('click',function(){var shown=ftr.style.display!=='none';ftr.style.display=shown?'none':'';ftb.classList.toggle('active',!shown);if(!shown){var fi=ftr.querySelector('.gtcol-filter-input');if(fi)fi.focus();}});})();
       accessCtl.rerender();
-      document.querySelectorAll('.access-saction-confirm').forEach(function(btn){btn.addEventListener('click',function(e){if(!confirm(btn.dataset.confirm)){e.preventDefault();}});});
+      document.querySelectorAll('.access-saction-confirm').forEach(function(btn){btn.addEventListener('click',function(e){e.preventDefault();showConfirm(btn.dataset.confirm).then(function(ok){if(ok)btn.closest('form').submit();});});});
       document.querySelectorAll('.elevate-toggle').forEach(function(btn){
         btn.addEventListener('click',function(e){e.stopPropagation();var m=btn.parentElement.querySelector('.elevate-menu');var open=m.classList.contains('open');document.querySelectorAll('.elevate-menu.open').forEach(function(x){x.classList.remove('open');});if(!open){var r=btn.getBoundingClientRect();m.style.top=(r.bottom+4)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';m.classList.add('open');}});
       });
     })();
     document.addEventListener('click',function(){document.querySelectorAll('.elevate-menu.open').forEach(function(m){m.classList.remove('open');});});
   });
-  </script>` + infiniteScrollJS + `
+  </script>` + infiniteScrollJS + sharedA11yJS + `
 </head>
 <body class="app{{if .Pending}} has-pending{{end}}">
   <a href="#main-content" class="skip-link">{{call .T "skip_to_content"}}</a>` + pendingBarHTML + `
@@ -4590,7 +4629,7 @@ const accessPageHTML = `<!DOCTYPE html>
       {{end}}
     </div>
     {{end}}
-  </main>
+  </main>` + confirmDialogHTML + `
 </body>
 </html>`
 
