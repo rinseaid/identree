@@ -62,8 +62,7 @@ plain `INSERT/UPDATE/DELETE/SELECT` is enough.
 ## Schema
 
 The schema is applied at startup with `CREATE TABLE IF NOT EXISTS`. There
-is no migration framework yet. identree is greenfield, so v1 starts with
-a clean schema and any future evolution will introduce a versioned
+is no migration framework yet; future releases will introduce a versioned
 migrator. The current tables:
 
 - `challenges`: every sudo elevation request and its lifecycle
