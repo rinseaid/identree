@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/rinseaid/identree/internal/breakglass"
 	"github.com/rinseaid/identree/internal/config"
 )
 
@@ -791,3 +794,693 @@ var _ http.Handler = (&fakeServerOpts{}).handler()
 
 // unused import guard for fmt when some tests get commented out.
 var _ = fmt.Sprintf
+
+// ── Breakglass fallback path helpers ──────────────────────────────────────────
+
+// withFakeTTYPam overrides breakglass.OpenTTY and breakglass.ReadPasswordFn
+// for the duration of the test so AuthenticateBreakglass can run without a
+// real terminal.
+func withFakeTTYPam(t *testing.T, password string) {
+	t.Helper()
+	origOpen := breakglass.OpenTTY
+	origRead := breakglass.ReadPasswordFn
+	t.Cleanup(func() {
+		breakglass.OpenTTY = origOpen
+		breakglass.ReadPasswordFn = origRead
+	})
+	dir := t.TempDir()
+	breakglass.OpenTTY = func() (*os.File, error) {
+		return os.OpenFile(filepath.Join(dir, "fake-tty"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	}
+	breakglass.ReadPasswordFn = func(fd int) ([]byte, error) {
+		return []byte(password), nil
+	}
+}
+
+// overrideFileOwnerUIDPam stubs config.FileOwnerUID so tests running as
+// non-root can pass the root-ownership check on breakglass hash files.
+func overrideFileOwnerUIDPam(t *testing.T) {
+	t.Helper()
+	prev := config.FileOwnerUID
+	config.FileOwnerUID = func(info os.FileInfo) (uint32, bool) { return 0, true }
+	t.Cleanup(func() { config.FileOwnerUID = prev })
+}
+
+// seedBreakglassHashFile writes a valid bcrypt hash file at path for the given
+// password, using cost 4 for speed. Includes the metadata header that
+// ReadBreakglassHash expects.
+func seedBreakglassHashFile(t *testing.T, path, password string) {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 4)
+	if err != nil {
+		t.Fatalf("bcrypt hash: %v", err)
+	}
+	content := fmt.Sprintf("# identree breakglass host=testhost type=random created=%s\n%s\n",
+		time.Now().UTC().Format(time.RFC3339), string(hash))
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("write hash file: %v", err)
+	}
+}
+
+// ── Breakglass fallback: server unreachable on createChallenge ──────────────
+
+func TestAuthenticate_BreakglassFallback_ServerUnreachable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("breakglass retry loop takes ~10s")
+	}
+
+	overrideFileOwnerUIDPam(t)
+	usagePath := withBreakglassUsagePath(t)
+	withFakeTTYPam(t, "bg-password-123")
+
+	hashDir := t.TempDir()
+	hashFile := filepath.Join(hashDir, "breakglass.hash")
+	seedBreakglassHashFile(t, hashFile, "bg-password-123")
+
+	// Start a TLS server and immediately close it so all connections fail
+	// with a dial error (server unreachable).
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	serverURL := srv.URL
+	srvClient := srv.Client()
+	srv.Close()
+
+	cfg := &config.ClientConfig{
+		ServerURL:         serverURL,
+		SharedSecret:      "test-secret-32-bytes-long-xxxxxxxxx",
+		PollInterval:      10 * time.Millisecond,
+		Timeout:           2 * time.Second,
+		BreakglassEnabled: true,
+		BreakglassFile:    hashFile,
+	}
+	p, err := NewPAMClient(cfg, nil, "testhost")
+	if err != nil {
+		t.Fatalf("NewPAMClient: %v", err)
+	}
+	p.client = srvClient
+
+	buf := &bytes.Buffer{}
+	prev := MessageWriter
+	MessageWriter = buf
+	t.Cleanup(func() { MessageWriter = prev })
+
+	// Authenticate should succeed via breakglass fallback.
+	if err := p.Authenticate("alice"); err != nil {
+		t.Fatalf("expected breakglass success, got error: %v", err)
+	}
+
+	// Verify usage was recorded for phone-home.
+	if _, err := os.Stat(usagePath); os.IsNotExist(err) {
+		t.Errorf("expected breakglass usage file to be created at %s", usagePath)
+	}
+}
+
+func TestAuthenticate_BreakglassFallback_WrongPassword(t *testing.T) {
+	if testing.Short() {
+		t.Skip("breakglass retry loop takes ~10s")
+	}
+
+	overrideFileOwnerUIDPam(t)
+	_ = withBreakglassUsagePath(t)
+	withFakeTTYPam(t, "wrong-password")
+
+	hashDir := t.TempDir()
+	hashFile := filepath.Join(hashDir, "breakglass.hash")
+	seedBreakglassHashFile(t, hashFile, "correct-password")
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	serverURL := srv.URL
+	srvClient := srv.Client()
+	srv.Close()
+
+	cfg := &config.ClientConfig{
+		ServerURL:         serverURL,
+		SharedSecret:      "test-secret-32-bytes-long-xxxxxxxxx",
+		PollInterval:      10 * time.Millisecond,
+		Timeout:           2 * time.Second,
+		BreakglassEnabled: true,
+		BreakglassFile:    hashFile,
+	}
+	p, err := NewPAMClient(cfg, nil, "testhost")
+	if err != nil {
+		t.Fatalf("NewPAMClient: %v", err)
+	}
+	p.client = srvClient
+
+	buf := &bytes.Buffer{}
+	prev := MessageWriter
+	MessageWriter = buf
+	t.Cleanup(func() { MessageWriter = prev })
+
+	err = p.Authenticate("alice")
+	if err == nil {
+		t.Fatal("expected error for wrong breakglass password")
+	}
+	if !strings.Contains(err.Error(), "break-glass authentication failed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAuthenticate_BreakglassFallback_Disabled(t *testing.T) {
+	// Server unreachable but breakglass disabled: should return the
+	// connection error without falling back.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	serverURL := srv.URL
+	srvClient := srv.Client()
+	srv.Close()
+
+	cfg := &config.ClientConfig{
+		ServerURL:         serverURL,
+		SharedSecret:      "test-secret-32-bytes-long-xxxxxxxxx",
+		PollInterval:      10 * time.Millisecond,
+		Timeout:           time.Second,
+		BreakglassEnabled: false,
+	}
+	p, err := NewPAMClient(cfg, nil, "testhost")
+	if err != nil {
+		t.Fatalf("NewPAMClient: %v", err)
+	}
+	p.client = srvClient
+
+	buf := &bytes.Buffer{}
+	prev := MessageWriter
+	MessageWriter = buf
+	t.Cleanup(func() { MessageWriter = prev })
+
+	err = p.Authenticate("alice")
+	if err == nil {
+		t.Fatal("expected error when server unreachable and breakglass disabled")
+	}
+	// Should be a connection error, not breakglass-related.
+	if strings.Contains(err.Error(), "break-glass") {
+		t.Errorf("should not attempt breakglass when disabled: %v", err)
+	}
+}
+
+func TestAuthenticate_BreakglassFallback_NoHashFile(t *testing.T) {
+	// Server unreachable, breakglass enabled, but no hash file: should not
+	// attempt breakglass fallback.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	serverURL := srv.URL
+	srvClient := srv.Client()
+	srv.Close()
+
+	cfg := &config.ClientConfig{
+		ServerURL:         serverURL,
+		SharedSecret:      "test-secret-32-bytes-long-xxxxxxxxx",
+		PollInterval:      10 * time.Millisecond,
+		Timeout:           time.Second,
+		BreakglassEnabled: true,
+		BreakglassFile:    filepath.Join(t.TempDir(), "nonexistent.hash"),
+	}
+	p, err := NewPAMClient(cfg, nil, "testhost")
+	if err != nil {
+		t.Fatalf("NewPAMClient: %v", err)
+	}
+	p.client = srvClient
+
+	buf := &bytes.Buffer{}
+	prev := MessageWriter
+	MessageWriter = buf
+	t.Cleanup(func() { MessageWriter = prev })
+
+	err = p.Authenticate("alice")
+	if err == nil {
+		t.Fatal("expected error when server unreachable and no hash file")
+	}
+	if strings.Contains(err.Error(), "break-glass") {
+		t.Errorf("should not attempt breakglass without hash file: %v", err)
+	}
+}
+
+func TestAuthenticate_BreakglassFallback_ServerRecoversDuringRetry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("breakglass retry loop takes ~5s")
+	}
+
+	// Server starts unreachable then recovers. The retry loop should detect
+	// recovery and continue with the normal challenge flow (goto challengeOK).
+	const secret = "test-secret-32-bytes-long-xxxxxxxxx"
+	challengeID := strings.Repeat("a", 32)
+	approvalToken := computeVerifyToken(secret, challengeID, "alice", "approved", "", "")
+
+	// Start unreachable: first createChallenge call uses the closed server.
+	closedSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	closedURL := closedSrv.URL
+	closedClient := closedSrv.Client()
+	closedSrv.Close()
+
+	// Running server that will handle the retry call.
+	liveSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/challenge":
+			// Auto-approve on create so we don't need polling.
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"challenge_id":     challengeID,
+				"user_code":        "ABCD-1234",
+				"verification_url": "https://example/approve",
+				"expires_in":       120,
+				"status":           "approved",
+				"approval_token":   approvalToken,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer liveSrv.Close()
+
+	hashDir := t.TempDir()
+	hashFile := filepath.Join(hashDir, "breakglass.hash")
+	seedBreakglassHashFile(t, hashFile, "bg-pw")
+	overrideFileOwnerUIDPam(t)
+	withFakeTTYPam(t, "bg-pw")
+
+	cfg := &config.ClientConfig{
+		ServerURL:         closedURL, // initially points at dead server
+		SharedSecret:      secret,
+		PollInterval:      10 * time.Millisecond,
+		Timeout:           30 * time.Second,
+		BreakglassEnabled: true,
+		BreakglassFile:    hashFile,
+	}
+	p, err := NewPAMClient(cfg, nil, "testhost")
+	if err != nil {
+		t.Fatalf("NewPAMClient: %v", err)
+	}
+	p.client = closedClient
+
+	buf := &bytes.Buffer{}
+	prev := MessageWriter
+	MessageWriter = buf
+	t.Cleanup(func() { MessageWriter = prev })
+
+	// After the first createChallenge fails, the retry loop sleeps 5s then
+	// retries. We swap the server URL before the retry fires by using a
+	// goroutine that switches cfg.ServerURL after a short delay.
+	go func() {
+		time.Sleep(2 * time.Second) // before the first retry wakes up (5s)
+		p.cfg.ServerURL = liveSrv.URL
+		p.client = liveSrv.Client()
+	}()
+
+	err = p.Authenticate("alice")
+	if err != nil {
+		t.Fatalf("expected success after server recovery, got: %v", err)
+	}
+}
+
+func TestAuthenticate_BreakglassReport_PhoneHomeBeforeChallenge(t *testing.T) {
+	// When a breakglass usage record file exists from a previous offline auth,
+	// the next Authenticate call should report it to the server before creating
+	// a new challenge.
+	usagePath := withBreakglassUsagePath(t)
+	recordBreakglassUsage("host1", "alice")
+
+	const secret = "test-secret-32-bytes-long-xxxxxxxxx"
+	challengeID := strings.Repeat("1", 32)
+	approvalToken := computeVerifyToken(secret, challengeID, "alice", "approved", "", "")
+
+	var reported atomic.Int32
+	f := &fakeServerOpts{
+		challengeID: challengeID,
+		createHandler: func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"challenge_id":     challengeID,
+				"user_code":        "XXXX-1234",
+				"verification_url": "https://example/approve",
+				"expires_in":       120,
+				"status":           "approved",
+				"approval_token":   approvalToken,
+			})
+		},
+		reportHandler: func(w http.ResponseWriter, r *http.Request) {
+			reported.Add(1)
+			var rec struct {
+				Hostname  string `json:"hostname"`
+				Username  string `json:"username"`
+				Timestamp int64  `json:"timestamp"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
+				t.Errorf("decode report: %v", err)
+			}
+			if rec.Username != "alice" || rec.Hostname != "host1" {
+				t.Errorf("unexpected report: %+v", rec)
+			}
+			w.WriteHeader(http.StatusOK)
+		},
+	}
+	srv := httptest.NewTLSServer(f.handler())
+	defer srv.Close()
+
+	p, buf := newTestClient(t, srv, secret)
+	p.cfg.BreakglassEnabled = false
+
+	if err := p.Authenticate("alice"); err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	if reported.Load() != 1 {
+		t.Errorf("expected 1 breakglass report, got %d", reported.Load())
+	}
+	// Usage file should be deleted after successful report.
+	if _, err := os.Stat(usagePath); !os.IsNotExist(err) {
+		t.Errorf("usage file should be deleted after report")
+	}
+	_ = buf
+}
+
+func TestAuthenticate_BreakglassReport_MultipleRecords(t *testing.T) {
+	// Multiple breakglass usage records should all be reported.
+	_ = withBreakglassUsagePath(t)
+	recordBreakglassUsage("host1", "alice")
+	recordBreakglassUsage("host2", "bob")
+
+	const secret = "test-secret-32-bytes-long-xxxxxxxxx"
+	challengeID := strings.Repeat("2", 32)
+	approvalToken := computeVerifyToken(secret, challengeID, "alice", "approved", "", "")
+
+	var reported atomic.Int32
+	f := &fakeServerOpts{
+		challengeID: challengeID,
+		createHandler: func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"challenge_id":     challengeID,
+				"user_code":        "XXXX-1234",
+				"verification_url": "https://example/approve",
+				"expires_in":       120,
+				"status":           "approved",
+				"approval_token":   approvalToken,
+			})
+		},
+		reportHandler: func(w http.ResponseWriter, r *http.Request) {
+			reported.Add(1)
+			w.WriteHeader(http.StatusOK)
+		},
+	}
+	srv := httptest.NewTLSServer(f.handler())
+	defer srv.Close()
+
+	p, _ := newTestClient(t, srv, secret)
+	p.cfg.BreakglassEnabled = false
+
+	if err := p.Authenticate("alice"); err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	if reported.Load() != 2 {
+		t.Errorf("expected 2 breakglass reports, got %d", reported.Load())
+	}
+}
+
+func TestAuthenticate_BreakglassRotateBeforeOnAutoApproval(t *testing.T) {
+	// When the server returns rotate_breakglass_before in an auto-approved
+	// challenge, Authenticate should parse it and pass it to MaybeRotateBreakglass.
+	// We verify the field is present in the challenge response.
+	const secret = "test-secret-32-bytes-long-xxxxxxxxx"
+	challengeID := strings.Repeat("3", 32)
+	rotateBefore := "2025-01-01T00:00:00Z"
+	approvalToken := computeVerifyToken(secret, challengeID, "alice", "approved", rotateBefore, "")
+
+	f := &fakeServerOpts{
+		challengeID: challengeID,
+		createHandler: func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"challenge_id":             challengeID,
+				"user_code":                "XXXX-1234",
+				"verification_url":         "https://example/approve",
+				"expires_in":               120,
+				"status":                   "approved",
+				"approval_token":           approvalToken,
+				"rotate_breakglass_before": rotateBefore,
+			})
+		},
+	}
+	srv := httptest.NewTLSServer(f.handler())
+	defer srv.Close()
+
+	p, buf := newTestClient(t, srv, secret)
+	// Disable breakglass so MaybeRotateBreakglass is a no-op
+	// (avoids file system side effects). The test validates the
+	// rotateBefore field flows through without error.
+	p.cfg.BreakglassEnabled = false
+
+	if err := p.Authenticate("alice"); err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	_ = buf
+}
+
+func TestAuthenticate_BreakglassRevokeTokensBeforeOnAutoApproval(t *testing.T) {
+	// When the server returns revoke_tokens_before in an auto-approved
+	// challenge, Authenticate should handle cache invalidation.
+	const secret = "test-secret-32-bytes-long-xxxxxxxxx"
+	challengeID := strings.Repeat("4", 32)
+	revokeBefore := "2099-01-01T00:00:00Z"
+	approvalToken := computeVerifyToken(secret, challengeID, "alice", "approved", "", revokeBefore)
+
+	f := &fakeServerOpts{
+		challengeID: challengeID,
+		createHandler: func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"challenge_id":         challengeID,
+				"user_code":            "XXXX-1234",
+				"verification_url":     "https://example/approve",
+				"expires_in":           120,
+				"status":               "approved",
+				"approval_token":       approvalToken,
+				"revoke_tokens_before": revokeBefore,
+			})
+		},
+	}
+	srv := httptest.NewTLSServer(f.handler())
+	defer srv.Close()
+
+	// Set up a token cache that will be invalidated.
+	dir := t.TempDir()
+	tc := &TokenCache{CacheDir: dir, Issuer: "https://idp", ClientID: "c", hostname: "testhost"}
+	jwt := makeJWT(t, map[string]any{
+		"exp":                time.Now().Add(time.Hour).Unix(),
+		"preferred_username": "alice",
+	})
+	if err := tc.Write("alice", jwt); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	p, buf := newTestClient(t, srv, secret)
+	p.tokenCache = tc
+
+	if err := p.Authenticate("alice"); err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	// Token cache should have been deleted because revoke_tokens_before is in the future.
+	if _, err := tc.ModTime("alice"); err == nil {
+		t.Errorf("expected cache to be invalidated by revoke_tokens_before")
+	}
+	_ = buf
+}
+
+func TestAuthenticate_BreakglassClientConfigOverrides(t *testing.T) {
+	// Verify that client_config overrides from the server are applied during
+	// auto-approval, but that breakglass_enabled is preserved for rotation.
+	const secret = "test-secret-32-bytes-long-xxxxxxxxx"
+	challengeID := strings.Repeat("5", 32)
+	approvalToken := computeVerifyToken(secret, challengeID, "alice", "approved", "", "")
+
+	f := &fakeServerOpts{
+		challengeID: challengeID,
+		createHandler: func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"challenge_id":     challengeID,
+				"user_code":        "XXXX-1234",
+				"verification_url": "https://example/approve",
+				"expires_in":       120,
+				"status":           "approved",
+				"approval_token":   approvalToken,
+				"grace_remaining":  600,
+				"client_config": map[string]any{
+					"breakglass_password_type": "passphrase",
+					"breakglass_rotation_days": 14,
+				},
+			})
+		},
+	}
+	srv := httptest.NewTLSServer(f.handler())
+	defer srv.Close()
+
+	p, buf := newTestClient(t, srv, secret)
+	p.cfg.BreakglassEnabled = true
+	p.cfg.BreakglassPasswordType = "random"
+	p.cfg.BreakglassRotationDays = 30
+
+	if err := p.Authenticate("alice"); err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	// Verify client_config was applied.
+	if p.cfg.BreakglassPasswordType != "passphrase" {
+		t.Errorf("BreakglassPasswordType = %q; want passphrase", p.cfg.BreakglassPasswordType)
+	}
+	if p.cfg.BreakglassRotationDays != 14 {
+		t.Errorf("BreakglassRotationDays = %d; want 14", p.cfg.BreakglassRotationDays)
+	}
+	// Grace remaining should be shown.
+	if !strings.Contains(buf.String(), "10m") {
+		t.Errorf("expected grace duration in output: %q", buf.String())
+	}
+}
+
+func TestAuthenticate_BreakglassNotTriggeredFor403(t *testing.T) {
+	// A 403 from the server indicates the server is reachable but rejecting
+	// the request. Breakglass must NOT be triggered.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/challenge" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	hashDir := t.TempDir()
+	hashFile := filepath.Join(hashDir, "breakglass.hash")
+	seedBreakglassHashFile(t, hashFile, "bg-pw")
+	overrideFileOwnerUIDPam(t)
+	withFakeTTYPam(t, "bg-pw")
+
+	cfg := &config.ClientConfig{
+		ServerURL:         srv.URL,
+		SharedSecret:      "test-secret-32-bytes-long-xxxxxxxxx",
+		PollInterval:      10 * time.Millisecond,
+		Timeout:           time.Second,
+		BreakglassEnabled: true,
+		BreakglassFile:    hashFile,
+	}
+	p, err := NewPAMClient(cfg, nil, "testhost")
+	if err != nil {
+		t.Fatalf("NewPAMClient: %v", err)
+	}
+	p.client = srv.Client()
+
+	buf := &bytes.Buffer{}
+	prev := MessageWriter
+	MessageWriter = buf
+	t.Cleanup(func() { MessageWriter = prev })
+
+	err = p.Authenticate("alice")
+	if err == nil {
+		t.Fatal("expected error for 403")
+	}
+	// Should be "authentication failed", not "break-glass".
+	if strings.Contains(err.Error(), "break-glass") {
+		t.Errorf("breakglass should not trigger for reachable server (403): %v", err)
+	}
+	if !strings.Contains(err.Error(), "authentication failed") {
+		t.Errorf("expected 'authentication failed' error, got: %v", err)
+	}
+}
+
+func TestAuthenticate_BreakglassNotTriggeredFor502WhenDisabled(t *testing.T) {
+	// A 502 is treated as "server unreachable" by IsServerUnreachable, but if
+	// breakglass is disabled, the fallback must NOT be attempted.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/challenge" {
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	cfg := &config.ClientConfig{
+		ServerURL:         srv.URL,
+		SharedSecret:      "test-secret-32-bytes-long-xxxxxxxxx",
+		PollInterval:      10 * time.Millisecond,
+		Timeout:           time.Second,
+		BreakglassEnabled: false,
+	}
+	p, err := NewPAMClient(cfg, nil, "testhost")
+	if err != nil {
+		t.Fatalf("NewPAMClient: %v", err)
+	}
+	p.client = srv.Client()
+
+	buf := &bytes.Buffer{}
+	prev := MessageWriter
+	MessageWriter = buf
+	t.Cleanup(func() { MessageWriter = prev })
+
+	err = p.Authenticate("alice")
+	if err == nil {
+		t.Fatal("expected error for 502 with breakglass disabled")
+	}
+	if strings.Contains(err.Error(), "break-glass") {
+		t.Errorf("breakglass should not trigger when disabled: %v", err)
+	}
+}
+
+func TestAuthenticate_ServerError_Timeout(t *testing.T) {
+	// When polling times out (no approval within cfg.Timeout), the function
+	// should return a timeout error.
+	const secret = "test-secret-32-bytes-long-xxxxxxxxx"
+	challengeID := strings.Repeat("6", 32)
+
+	f := &fakeServerOpts{
+		challengeID: challengeID,
+		pollSequence: []func(http.ResponseWriter, *http.Request){
+			// Always pending.
+			func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "pending", "expires_in": 60})
+			},
+		},
+	}
+	srv := httptest.NewTLSServer(f.handler())
+	defer srv.Close()
+
+	p, _ := newTestClient(t, srv, secret)
+	p.cfg.Timeout = 200 * time.Millisecond
+	p.cfg.PollInterval = 20 * time.Millisecond
+	p.cfg.BreakglassEnabled = false
+
+	err := p.Authenticate("alice")
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected timeout error, got: %v", err)
+	}
+}
+
+func TestAuthenticate_ServerExpiry_IgnoredWithHMAC(t *testing.T) {
+	// When the server reports expired (404/410) but HMAC is configured, the
+	// client should ignore the unverified expiry and keep polling until its
+	// own timeout. This prevents a MITM from injecting fake expiry responses.
+	const secret = "test-secret-32-bytes-long-xxxxxxxxx"
+	challengeID := strings.Repeat("7", 32)
+
+	f := &fakeServerOpts{
+		challengeID: challengeID,
+		pollSequence: []func(http.ResponseWriter, *http.Request){
+			// Return 404 (server expired) on every poll.
+			func(w http.ResponseWriter, r *http.Request) {
+				http.NotFound(w, r)
+			},
+		},
+	}
+	srv := httptest.NewTLSServer(f.handler())
+	defer srv.Close()
+
+	p, _ := newTestClient(t, srv, secret)
+	p.cfg.Timeout = 300 * time.Millisecond
+	p.cfg.PollInterval = 20 * time.Millisecond
+	p.cfg.BreakglassEnabled = false
+
+	err := p.Authenticate("alice")
+	// Should timeout, NOT report "expired".
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected timeout (ignoring unverified expiry), got: %v", err)
+	}
+}
