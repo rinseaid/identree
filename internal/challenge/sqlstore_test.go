@@ -444,3 +444,104 @@ func TestSQLStore_RevokeTokensBefore(t *testing.T) {
 		t.Errorf("RevokeTokensBefore: got %v, want %v", got.Unix(), now)
 	}
 }
+
+// ── RevokeSession tests ─────────────────────────────────────────────────────
+
+func TestRevokeSession_ExistingSession(t *testing.T) {
+	s := newTestSQLStore(t)
+
+	s.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
+
+	// Verify the session exists.
+	if rem := s.GraceRemaining(context.Background(), "alice", "web01"); rem <= 0 {
+		t.Fatal("expected positive GraceRemaining before revoke")
+	}
+
+	s.RevokeSession(context.Background(), "alice", "web01")
+
+	// After revocation, GraceRemaining should be 0.
+	if rem := s.GraceRemaining(context.Background(), "alice", "web01"); rem != 0 {
+		t.Errorf("expected GraceRemaining==0 after revoke, got %v", rem)
+	}
+}
+
+func TestRevokeSession_NonExistent(t *testing.T) {
+	s := newTestSQLStore(t)
+
+	// Revoking a session that was never created should not panic or error.
+	s.RevokeSession(context.Background(), "nobody", "nohost")
+
+	// Verify the store is still functional after the no-op revoke.
+	if err := s.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("HealthCheck after revoking non-existent session: %v", err)
+	}
+}
+
+func TestRevokeSession_VerifyNotInActiveSessions(t *testing.T) {
+	s := newTestSQLStore(t)
+
+	s.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
+
+	// Confirm it appears in ActiveSessions before revoke.
+	before := s.ActiveSessions(context.Background(), "alice")
+	if len(before) != 1 {
+		t.Fatalf("expected 1 active session before revoke, got %d", len(before))
+	}
+
+	s.RevokeSession(context.Background(), "alice", "web01")
+
+	// Should no longer appear in ActiveSessions.
+	after := s.ActiveSessions(context.Background(), "alice")
+	if len(after) != 0 {
+		t.Errorf("expected 0 active sessions after revoke, got %d", len(after))
+	}
+
+	// Also should not appear in AllActiveSessions.
+	all := s.AllActiveSessions(context.Background())
+	for _, sess := range all {
+		if sess.Username == "alice" && sess.Hostname == "web01" {
+			t.Error("revoked session still appears in AllActiveSessions")
+		}
+	}
+}
+
+func TestRevokeSession_OtherSessionsUnaffected(t *testing.T) {
+	s := newTestSQLStore(t)
+
+	s.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
+	s.CreateGraceSession(context.Background(), "alice", "db01", 10*time.Minute)
+	s.CreateGraceSession(context.Background(), "bob", "web01", 10*time.Minute)
+
+	// Revoke only alice@web01.
+	s.RevokeSession(context.Background(), "alice", "web01")
+
+	// alice@db01 should still be active.
+	if rem := s.GraceRemaining(context.Background(), "alice", "db01"); rem <= 0 {
+		t.Error("alice@db01 should still have grace remaining")
+	}
+
+	// bob@web01 should still be active.
+	if rem := s.GraceRemaining(context.Background(), "bob", "web01"); rem <= 0 {
+		t.Error("bob@web01 should still have grace remaining")
+	}
+
+	// alice@web01 should be gone.
+	if rem := s.GraceRemaining(context.Background(), "alice", "web01"); rem != 0 {
+		t.Errorf("alice@web01 should have 0 grace remaining, got %v", rem)
+	}
+
+	// alice should have exactly 1 active session left.
+	aliceSessions := s.ActiveSessions(context.Background(), "alice")
+	if len(aliceSessions) != 1 {
+		t.Errorf("expected 1 active session for alice, got %d", len(aliceSessions))
+	}
+	if len(aliceSessions) == 1 && aliceSessions[0].Hostname != "db01" {
+		t.Errorf("expected remaining session to be db01, got %q", aliceSessions[0].Hostname)
+	}
+
+	// Total active sessions should be 2 (alice@db01 + bob@web01).
+	allSessions := s.AllActiveSessions(context.Background())
+	if len(allSessions) != 2 {
+		t.Errorf("expected 2 total active sessions, got %d", len(allSessions))
+	}
+}

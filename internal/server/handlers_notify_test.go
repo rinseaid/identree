@@ -701,3 +701,324 @@ func TestHandleAdminTestNotifyChannel_UnknownChannel(t *testing.T) {
 		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
 	}
 }
+
+// ── handleNotifyRouteDelete — success ────────────────────────────────────────
+
+func TestHandleNotifyRouteDelete_Success(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	// Pre-populate a route.
+	s.notifyCfgMu.Lock()
+	s.notifyCfg.Routes = append(s.notifyCfg.Routes, notify.Route{
+		Channels: []string{"alerts"},
+		Events:   []string{"*"},
+		Hosts:    []string{"*"},
+	})
+	s.notifyCfgMu.Unlock()
+
+	form := url.Values{
+		"index": {"0"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/routes/delete", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteDelete(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the route was removed.
+	s.notifyCfgMu.RLock()
+	routeCount := len(s.notifyCfg.Routes)
+	s.notifyCfgMu.RUnlock()
+	if routeCount != 0 {
+		t.Errorf("expected 0 routes after delete, got %d", routeCount)
+	}
+}
+
+// ── handleNotifyRouteDelete — invalid (non-numeric) index ────────────────────
+
+func TestHandleNotifyRouteDelete_InvalidIndex(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"index": {"abc"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/routes/delete", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteDelete(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleNotifyRouteDelete — negative index ─────────────────────────────────
+
+func TestHandleNotifyRouteDelete_NegativeIndex(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"index": {"-1"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/routes/delete", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteDelete(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleNotifyRouteAdd — missing channels ──────────────────────────────────
+
+func TestHandleNotifyRouteAdd_MissingChannels(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"channels": {""},
+		"events":   {"*"},
+		"hosts":    {"*"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/routes/add", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteAdd(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleNotifyRouteAdd — missing events ────────────────────────────────────
+
+func TestHandleNotifyRouteAdd_MissingEvents(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"channels": {"alerts"},
+		"events":   {""},
+		"hosts":    {"*"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/routes/add", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteAdd(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleNotifyChannelAdd — invalid backend ─────────────────────────────────
+
+func TestHandleNotifyChannelAdd_InvalidBackend(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"name":    {"my-channel"},
+		"backend": {"invalid_backend"},
+		"url":     {"https://example.com"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/notification/channels/add", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelAdd(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleNotifyChannelAdd — method not allowed ──────────────────────────────
+
+func TestHandleNotifyChannelAdd_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/notification/channels/add", nil)
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelAdd(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ── handleNotifyChannelDelete — method not allowed ───────────────────────────
+
+func TestHandleNotifyChannelDelete_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/notification/channels/delete", nil)
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelDelete(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ── handleAdminNotifyPrefSave — method not allowed ───────────────────────────
+
+func TestHandleAdminNotifyPrefSave_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s, _ := newNotifyTestServerWithPrefs(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/notification-preferences", nil)
+	w := httptest.NewRecorder()
+	s.handleAdminNotifyPrefSave(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ── handleAdminNotifyPrefSave — non-admin rejected ───────────────────────────
+
+func TestHandleAdminNotifyPrefSave_NonAdmin(t *testing.T) {
+	const secret = "test-secret"
+	s, _ := newNotifyTestServerWithPrefs(t, secret)
+
+	form := url.Values{
+		"channels": {"alerts"},
+		"events":   {"*"},
+		"enabled":  {"true"},
+	}
+	r := buildFormRequest(secret, "bob", "user", "/api/admin/notification-preferences", form)
+	w := httptest.NewRecorder()
+	s.handleAdminNotifyPrefSave(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleAdminNotifyPrefSave — profile redirect ─────────────────────────────
+
+func TestHandleAdminNotifyPrefSave_ProfileRedirect(t *testing.T) {
+	const secret = "test-secret"
+	s, _ := newNotifyTestServerWithPrefs(t, secret)
+
+	form := url.Values{
+		"channels":    {"alerts"},
+		"events":      {"*"},
+		"enabled":     {"true"},
+		"redirect_to": {"/profile/notifications"},
+	}
+	r := buildAdminFormRequest(secret, "admin-user", "/api/admin/notification-preferences", form)
+	w := httptest.NewRecorder()
+	s.handleAdminNotifyPrefSave(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303, got %d; body: %s", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if !strings.Contains(loc, "/profile/notifications") {
+		t.Errorf("expected redirect to /profile/notifications, got %q", loc)
+	}
+}
+
+// ── handleNotifyRouteAdd — method not allowed ────────────────────────────────
+
+func TestHandleNotifyRouteAdd_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/notification/routes/add", nil)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteAdd(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ── handleNotifyRouteDelete — method not allowed ─────────────────────────────
+
+func TestHandleNotifyRouteDelete_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/notification/routes/delete", nil)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteDelete(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ── handleNotifyRouteAdd — no auth ───────────────────────────────────────────
+
+func TestHandleNotifyRouteAdd_NoAuth(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/notification/routes/add", nil)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteAdd(w, r)
+
+	// verifyFormAuth returns 400 when form fields (username, csrf_token, csrf_ts) are missing.
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+// ── handleNotifyChannelAdd — non-admin rejected ──────────────────────────────
+
+func TestHandleNotifyChannelAdd_NonAdmin(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"name":    {"my-channel"},
+		"backend": {"ntfy"},
+		"url":     {"https://ntfy.example.com/test"},
+	}
+	r := buildFormRequest(secret, "bob", "user", "/api/notification/channels/add", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyChannelAdd(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleNotifyRouteDelete — non-admin rejected ─────────────────────────────
+
+func TestHandleNotifyRouteDelete_NonAdmin(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	form := url.Values{
+		"index": {"0"},
+	}
+	r := buildFormRequest(secret, "bob", "user", "/api/notification/routes/delete", form)
+	w := httptest.NewRecorder()
+	s.handleNotifyRouteDelete(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── handleAdminTestNotifyChannel — method not allowed ────────────────────────
+
+func TestHandleAdminTestNotifyChannel_MethodNotAllowed(t *testing.T) {
+	const secret = "test-secret"
+	s := newNotifyTestServer(t, secret)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/test-channel", nil)
+	w := httptest.NewRecorder()
+	s.handleAdminTestNotifyChannel(w, r)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}

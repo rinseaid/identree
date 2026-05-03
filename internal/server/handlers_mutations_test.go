@@ -563,3 +563,79 @@ func TestHandleBreakglassOverride_NonAdmin(t *testing.T) {
 		t.Errorf("expected 403, got %d; body: %s", w.Code, w.Body.String())
 	}
 }
+
+// ── Disabled user approval check tests ──────────────────────────────────────
+
+func TestHandleBulkApprove_DisabledCheck_BridgeMode(t *testing.T) {
+	const secret = "test-secret"
+	s := newMutationTestServer(t, secret)
+	// Bridge mode: cfg.APIKey is empty (default from newMutationTestServer).
+	// isUserDisabled always returns false in bridge mode, so approval proceeds.
+
+	c := createPendingChallenge(t, s, "alice", "web01")
+
+	form := url.Values{
+		"challenge_id": {c.ID},
+	}
+	r := buildFormRequest(secret, "alice", "user", "/api/challenges/approve", form)
+	w := httptest.NewRecorder()
+	s.handleBulkApprove(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 (approval success), got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the challenge was approved.
+	ch, ok := s.store.Get(context.Background(), c.ID)
+	if !ok {
+		t.Fatal("challenge not found after approval")
+	}
+	if ch.Status != challpkg.StatusApproved {
+		t.Errorf("expected approved, got %q", ch.Status)
+	}
+}
+
+func TestHandleBulkApprove_NoPocketIDClient(t *testing.T) {
+	const secret = "test-secret"
+	store := newTestStore(t, 5*time.Minute, 10*time.Minute)
+	s := &Server{
+		cfg: &config.ServerConfig{
+			SharedSecret:  secret,
+			SessionSecret: secret,
+			ChallengeTTL:  5 * time.Minute,
+			APIKey:        "some-api-key", // non-bridge mode
+		},
+		store:          store,
+		hostRegistry:   NewHostRegistry(""),
+		authFailRL:     newAuthFailTracker(),
+		mutationRL:     newMutationRateLimiter(),
+		sseBroadcaster: noopBroadcaster{},
+		policyEngine:   policy.NewEngine(nil),
+		notifyCfg:      &notify.NotificationConfig{},
+		revokedNonces:  make(map[string]time.Time),
+		removedUsers:   make(map[string]time.Time),
+		pocketIDClient: nil, // no PocketID client: isUserDisabled fails open
+	}
+
+	c := createPendingChallenge(t, s, "alice", "web01")
+
+	form := url.Values{
+		"challenge_id": {c.ID},
+	}
+	r := buildFormRequest(secret, "alice", "user", "/api/challenges/approve", form)
+	w := httptest.NewRecorder()
+	s.handleBulkApprove(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 (approval success with nil pocketIDClient), got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the challenge was approved (fail-open behavior).
+	ch, ok := s.store.Get(context.Background(), c.ID)
+	if !ok {
+		t.Fatal("challenge not found after approval")
+	}
+	if ch.Status != challpkg.StatusApproved {
+		t.Errorf("expected approved, got %q", ch.Status)
+	}
+}

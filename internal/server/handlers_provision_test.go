@@ -379,3 +379,212 @@ func TestLDAPProvisionURL_Empty(t *testing.T) {
 		t.Errorf("ldapProvisionURL: got %q, want empty string", got)
 	}
 }
+
+// TestHandleClientProvision_MethodNotAllowed verifies that the endpoint returns 405
+// for non-GET methods.
+func TestHandleClientProvision_MethodNotAllowed(t *testing.T) {
+	const secret = "good-secret"
+	s := newProvisionServer(&config.ServerConfig{
+		SharedSecret:         secret,
+		LDAPProvisionEnabled: true,
+		LDAPBaseDN:           "dc=example,dc=com",
+		LDAPExternalURL:      "ldap://ldap.example.com:389",
+	})
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		t.Run(method, func(t *testing.T) {
+			r := httptest.NewRequest(method, "/api/client/provision", nil)
+			r.Header.Set("X-Shared-Secret", secret)
+			r.Header.Set("X-Hostname", "myhost")
+			w := httptest.NewRecorder()
+			s.handleClientProvision(w, r)
+
+			if w.Code != http.StatusMethodNotAllowed {
+				t.Errorf("method %s: expected 405, got %d", method, w.Code)
+			}
+		})
+	}
+}
+
+// TestHandleClientProvision_WrongSecret verifies that the endpoint returns 401
+// when the X-Shared-Secret header does not match.
+func TestHandleClientProvision_WrongSecret(t *testing.T) {
+	const secret = "good-secret"
+	s := newProvisionServer(&config.ServerConfig{
+		SharedSecret:         secret,
+		LDAPProvisionEnabled: true,
+		LDAPBaseDN:           "dc=example,dc=com",
+		LDAPExternalURL:      "ldap://ldap.example.com:389",
+	})
+
+	w := httptest.NewRecorder()
+	r := makeProvisionRequest("wrong-secret", "myhost")
+	s.handleClientProvision(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+// TestHandleClientProvision_HostnameRegistration verifies that the host registry
+// is not consulted when it is disabled (empty file path). Any hostname should
+// succeed when the registry is not enabled.
+func TestHandleClientProvision_HostnameRegistration(t *testing.T) {
+	const secret = "good-secret"
+	const hostname = "provisioned-host"
+	s := newProvisionServer(&config.ServerConfig{
+		SharedSecret:         secret,
+		LDAPProvisionEnabled: true,
+		LDAPBaseDN:           "dc=example,dc=com",
+		LDAPExternalURL:      "ldap://ldap.example.com:389",
+	})
+
+	w := httptest.NewRecorder()
+	r := makeProvisionRequest(secret, hostname)
+	s.handleClientProvision(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the response contains the expected bind_dn for this hostname.
+	var resp provisionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	wantBindDN := "uid=" + hostname + ",ou=identree-hosts,dc=example,dc=com"
+	if resp.BindDN != wantBindDN {
+		t.Errorf("bind_dn: got %q, want %q", resp.BindDN, wantBindDN)
+	}
+}
+
+// TestHandleClientProvision_BindPasswordDeterministic verifies that the same
+// hostname always yields the same bind_password (HMAC determinism).
+func TestHandleClientProvision_BindPasswordDeterministic(t *testing.T) {
+	const secret = "good-secret"
+	const hostname = "deterministic-host"
+	s := newProvisionServer(&config.ServerConfig{
+		SharedSecret:         secret,
+		LDAPProvisionEnabled: true,
+		LDAPBaseDN:           "dc=example,dc=com",
+		LDAPExternalURL:      "ldap://ldap.example.com:389",
+	})
+
+	// First request.
+	w1 := httptest.NewRecorder()
+	s.handleClientProvision(w1, makeProvisionRequest(secret, hostname))
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d", w1.Code)
+	}
+	var resp1 provisionResponse
+	if err := json.NewDecoder(w1.Body).Decode(&resp1); err != nil {
+		t.Fatalf("first decode: %v", err)
+	}
+
+	// Second request.
+	w2 := httptest.NewRecorder()
+	s.handleClientProvision(w2, makeProvisionRequest(secret, hostname))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second request: expected 200, got %d", w2.Code)
+	}
+	var resp2 provisionResponse
+	if err := json.NewDecoder(w2.Body).Decode(&resp2); err != nil {
+		t.Fatalf("second decode: %v", err)
+	}
+
+	if resp1.BindPassword != resp2.BindPassword {
+		t.Errorf("bind_password should be deterministic: first=%q, second=%q", resp1.BindPassword, resp2.BindPassword)
+	}
+	if resp1.BindPassword == "" {
+		t.Error("bind_password should not be empty")
+	}
+}
+
+// TestHandleClientProvision_DifferentHostnamesDifferentPasswords verifies that
+// different hostnames produce different bind_password values.
+func TestHandleClientProvision_DifferentHostnamesDifferentPasswords(t *testing.T) {
+	const secret = "good-secret"
+	s := newProvisionServer(&config.ServerConfig{
+		SharedSecret:         secret,
+		LDAPProvisionEnabled: true,
+		LDAPBaseDN:           "dc=example,dc=com",
+		LDAPExternalURL:      "ldap://ldap.example.com:389",
+	})
+
+	w1 := httptest.NewRecorder()
+	s.handleClientProvision(w1, makeProvisionRequest(secret, "host-alpha"))
+	if w1.Code != http.StatusOK {
+		t.Fatalf("host-alpha: expected 200, got %d", w1.Code)
+	}
+	var resp1 provisionResponse
+	json.NewDecoder(w1.Body).Decode(&resp1) //nolint:errcheck
+
+	w2 := httptest.NewRecorder()
+	s.handleClientProvision(w2, makeProvisionRequest(secret, "host-beta"))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("host-beta: expected 200, got %d", w2.Code)
+	}
+	var resp2 provisionResponse
+	json.NewDecoder(w2.Body).Decode(&resp2) //nolint:errcheck
+
+	if resp1.BindPassword == resp2.BindPassword {
+		t.Errorf("different hostnames should produce different bind_passwords, both got %q", resp1.BindPassword)
+	}
+}
+
+// TestHandleClientProvision_MissingLDAPURL verifies that the endpoint returns 500
+// when neither LDAPExternalURL nor ExternalURL is configured (cannot derive URL).
+func TestHandleClientProvision_MissingLDAPURL(t *testing.T) {
+	const secret = "good-secret"
+	s := newProvisionServer(&config.ServerConfig{
+		SharedSecret:         secret,
+		LDAPProvisionEnabled: true,
+		LDAPBaseDN:           "dc=example,dc=com",
+		LDAPExternalURL:      "",  // not set
+		ExternalURL:          "",  // not set either
+	})
+
+	w := httptest.NewRecorder()
+	r := makeProvisionRequest(secret, "myhost")
+	s.handleClientProvision(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
+	}
+}
+
+// TestHandleClientProvision_LDAPDNInjection verifies that hostnames containing
+// LDAP DN special characters (+, <, >, #, ;, \, ") are rejected.
+func TestHandleClientProvision_LDAPDNInjection(t *testing.T) {
+	const secret = "good-secret"
+	s := newProvisionServer(&config.ServerConfig{
+		SharedSecret:         secret,
+		LDAPProvisionEnabled: true,
+		LDAPBaseDN:           "dc=example,dc=com",
+		LDAPExternalURL:      "ldap://ldap.example.com:389",
+	})
+
+	badHostnames := []struct {
+		name     string
+		hostname string
+	}{
+		{"plus sign", "host+name"},
+		{"angle bracket", "host<name"},
+		{"hash", "#hostname"},
+		{"semicolon", "host;name"},
+		{"backslash", "host\\name"},
+		{"quote", "host\"name"},
+	}
+
+	for _, tc := range badHostnames {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := makeProvisionRequest(secret, tc.hostname)
+			s.handleClientProvision(w, r)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("hostname %q: expected 400, got %d", tc.hostname, w.Code)
+			}
+		})
+	}
+}

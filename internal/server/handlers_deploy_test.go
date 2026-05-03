@@ -3,9 +3,13 @@ package server
 import (
 	"context"
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +20,7 @@ import (
 	"github.com/rinseaid/identree/internal/config"
 	"github.com/rinseaid/identree/internal/notify"
 	"github.com/rinseaid/identree/internal/policy"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 // ── deployJob tests ──────────────────────────────────────────────────────────
@@ -582,5 +587,284 @@ func TestHandleRemoveDeploy_InvalidPrivateKey(t *testing.T) {
 	s.handleRemoveDeploy(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+// generateTestSSHKey returns a PEM-encoded ed25519 private key for test use.
+func generateTestSSHKey(t *testing.T) string {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate ed25519 key: %v", err)
+	}
+	pemBlock, err := gossh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatalf("failed to marshal private key: %v", err)
+	}
+	return string(pem.EncodeToMemory(pemBlock))
+}
+
+// ── handleDeploy — non-admin rejected ───────────────────────────────────────
+
+func TestHandleDeploy_NonAdminRejected(t *testing.T) {
+	const secret = "test-secret-abcdef"
+	s := newDeployTestServer(t, secret)
+
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, "bob", csrfTs)
+	sessionCookie := makeCookie(secret, "bob", "user", ts)
+
+	body, _ := json.Marshal(map[string]any{
+		"hostname":    "web01.example.com",
+		"private_key": generateTestSSHKey(t),
+	})
+
+	r := httptest.NewRequest(http.MethodPost, "/api/deploy", bytes.NewBuffer(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-CSRF-Token", csrfToken)
+	r.Header.Set("X-CSRF-Ts", csrfTs)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	r.RemoteAddr = "10.0.0.5:33333"
+
+	w := httptest.NewRecorder()
+	s.handleDeploy(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for non-admin, got %d", w.Code)
+	}
+}
+
+// ── handleRemoveDeploy — non-admin rejected ─────────────────────────────────
+
+func TestHandleRemoveDeploy_NonAdminRejected(t *testing.T) {
+	const secret = "test-secret-abcdef"
+	s := newDeployTestServer(t, secret)
+
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, "bob", csrfTs)
+	sessionCookie := makeCookie(secret, "bob", "user", ts)
+
+	body, _ := json.Marshal(map[string]any{
+		"hostname":    "web01.example.com",
+		"private_key": generateTestSSHKey(t),
+	})
+
+	r := httptest.NewRequest(http.MethodPost, "/api/deploy/remove", bytes.NewBuffer(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-CSRF-Token", csrfToken)
+	r.Header.Set("X-CSRF-Ts", csrfTs)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	r.RemoteAddr = "10.0.0.5:33333"
+
+	w := httptest.NewRecorder()
+	s.handleRemoveDeploy(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for non-admin, got %d", w.Code)
+	}
+}
+
+// ── handleRemoveDeploy — missing private key ────────────────────────────────
+
+func TestHandleRemoveDeploy_MissingPrivateKey(t *testing.T) {
+	const secret = "test-secret-abcdef"
+	s := newDeployTestServer(t, secret)
+	r := buildDeployAdminReq(t, secret, "/api/deploy/remove", map[string]any{
+		"hostname": "web01.example.com",
+	})
+	w := httptest.NewRecorder()
+	s.handleRemoveDeploy(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "private_key") {
+		t.Errorf("expected error mentioning private_key, got %q", w.Body.String())
+	}
+}
+
+// ── handleDeployStream — unknown job ID ─────────────────────────────────────
+
+func TestHandleDeployStream_UnknownJob(t *testing.T) {
+	const secret = "test-secret-abcdef"
+	s := newDeployTestServer(t, secret)
+
+	ts := time.Now().Unix()
+	sessionCookie := makeCookie(secret, "deployadmin", "admin", ts)
+	r := httptest.NewRequest(http.MethodGet, "/api/deploy/stream/deadbeef01234567deadbeef01234567", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	w := httptest.NewRecorder()
+	s.handleDeployStream(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for unknown job, got %d", w.Code)
+	}
+}
+
+// ── handleDeployStream — invalid (non-hex) job ID ───────────────────────────
+
+func TestHandleDeployStream_InvalidJobID(t *testing.T) {
+	const secret = "test-secret-abcdef"
+	s := newDeployTestServer(t, secret)
+
+	ts := time.Now().Unix()
+	sessionCookie := makeCookie(secret, "deployadmin", "admin", ts)
+	r := httptest.NewRequest(http.MethodGet, "/api/deploy/stream/not-hex-value!", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	w := httptest.NewRecorder()
+	s.handleDeployStream(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-hex job ID, got %d", w.Code)
+	}
+}
+
+// ── handleDeployPubkey — success with valid key ─────────────────────────────
+
+func TestHandleDeployPubkey_Success(t *testing.T) {
+	const secret = "test-secret-abcdef"
+	s := newDeployTestServer(t, secret)
+
+	keyPEM := generateTestSSHKey(t)
+	r := buildDeployAdminReq(t, secret, "/api/deploy/pubkey", map[string]any{
+		"private_key": keyPEM,
+	})
+	w := httptest.NewRecorder()
+	s.handleDeployPubkey(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["type"] == "" {
+		t.Error("expected non-empty key type in response")
+	}
+	if resp["fingerprint"] == "" {
+		t.Error("expected non-empty fingerprint in response")
+	}
+	// ed25519 key type should be "ssh-ed25519"
+	if resp["type"] != "ssh-ed25519" {
+		t.Errorf("expected type ssh-ed25519, got %q", resp["type"])
+	}
+	// Fingerprint should start with "SHA256:"
+	if !strings.HasPrefix(resp["fingerprint"], "SHA256:") {
+		t.Errorf("expected fingerprint starting with SHA256:, got %q", resp["fingerprint"])
+	}
+}
+
+// ── handleDeployPubkey — invalid key body ───────────────────────────────────
+
+func TestHandleDeployPubkey_InvalidKey(t *testing.T) {
+	const secret = "test-secret-abcdef"
+	s := newDeployTestServer(t, secret)
+
+	r := buildDeployAdminReq(t, secret, "/api/deploy/pubkey", map[string]any{
+		"private_key": "this is not a real key",
+	})
+	w := httptest.NewRecorder()
+	s.handleDeployPubkey(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+// ── privateIP unit tests ────────────────────────────────────────────────────
+
+func TestPrivateIP(t *testing.T) {
+	cases := []struct {
+		ip   string
+		want bool
+	}{
+		{"127.0.0.1", true},
+		{"::1", true},
+		{"10.0.0.1", true},
+		{"172.16.0.1", true},
+		{"192.168.1.1", true},
+		{"100.64.0.1", true},     // CGN range
+		{"169.254.1.1", false},   // link-local is not in the explicit CIDR list (only IsLoopback)
+		{"8.8.8.8", false},       // public IP
+		{"1.1.1.1", false},       // public IP
+		{"fc00::1", true},        // ULA IPv6
+	}
+	for _, tc := range cases {
+		t.Run(tc.ip, func(t *testing.T) {
+			got := privateIP(net.ParseIP(tc.ip))
+			if got != tc.want {
+				t.Errorf("privateIP(%q) = %v, want %v", tc.ip, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrivateIP_Nil(t *testing.T) {
+	if privateIP(nil) {
+		t.Error("privateIP(nil) should return false")
+	}
+}
+
+// ── handleRemoveHost — non-admin rejected ───────────────────────────────────
+
+func TestHandleRemoveHost_NonAdminRejected(t *testing.T) {
+	const secret = "test-secret-abcdef"
+	s := newDeployTestServer(t, secret)
+
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, "bob", csrfTs)
+	sessionCookie := makeCookie(secret, "bob", "user", ts)
+
+	body, _ := json.Marshal(map[string]any{
+		"hostname": "web01.example.com",
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/hosts/remove-host", bytes.NewBuffer(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-CSRF-Token", csrfToken)
+	r.Header.Set("X-CSRF-Ts", csrfTs)
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	r.RemoteAddr = "10.0.0.5:33333"
+
+	w := httptest.NewRecorder()
+	s.handleRemoveHost(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for non-admin, got %d", w.Code)
+	}
+}
+
+// ── clientIP tests ──────────────────────────────────────────────────────────
+
+func TestClientIP_DirectPublicIP(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "203.0.113.50:12345"
+	got := clientIP(r)
+	if got != "203.0.113.50" {
+		t.Errorf("expected 203.0.113.50, got %q", got)
+	}
+}
+
+func TestClientIP_ProxiedPrivateIP(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "127.0.0.1:12345"
+	r.Header.Set("X-Forwarded-For", "1.2.3.4, 10.0.0.1")
+	// Rightmost entry is taken when RemoteAddr is private.
+	got := clientIP(r)
+	if got != "10.0.0.1" {
+		t.Errorf("expected rightmost XFF entry 10.0.0.1, got %q", got)
+	}
+}
+
+func TestClientIP_NoXFF(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:12345"
+	// No XFF header; should return the RemoteAddr host portion.
+	got := clientIP(r)
+	if got != "10.0.0.1" {
+		t.Errorf("expected 10.0.0.1, got %q", got)
 	}
 }

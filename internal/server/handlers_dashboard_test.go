@@ -358,6 +358,169 @@ func TestHandleSignOut_POST_InvalidCSRF(t *testing.T) {
 	}
 }
 
+func TestHandleSignOut_RevokesNonce(t *testing.T) {
+	const secret = "test-secret"
+	s := newDashboardFullServer(t, secret)
+
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, "alice", csrfTs)
+	cookieVal := makeCookie(secret, "alice", "admin", ts)
+
+	form := "csrf_token=" + csrfToken + "&csrf_ts=" + csrfTs
+	r := httptest.NewRequest(http.MethodPost, "/signout", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleSignOut(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", w.Code)
+	}
+
+	// The fixed test nonce from makeCookie should be in the revoked map.
+	const expectedNonce = "abcdef1234567890abcdef1234567890"
+	s.revokedNoncesMu.Lock()
+	_, found := s.revokedNonces[expectedNonce]
+	s.revokedNoncesMu.Unlock()
+	if !found {
+		t.Error("expected nonce to be present in revokedNonces after signout")
+	}
+}
+
+func TestHandleSignOut_PersistsRevokedNonce(t *testing.T) {
+	const secret = "test-secret"
+	s := newDashboardFullServer(t, secret)
+
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, "alice", csrfTs)
+	cookieVal := makeCookie(secret, "alice", "admin", ts)
+
+	form := "csrf_token=" + csrfToken + "&csrf_ts=" + csrfTs
+	r := httptest.NewRequest(http.MethodPost, "/signout", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleSignOut(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", w.Code)
+	}
+
+	// Verify the nonce was persisted to the store.
+	const expectedNonce = "abcdef1234567890abcdef1234567890"
+	loaded := s.store.LoadRevokedNonces(context.Background())
+	if _, ok := loaded[expectedNonce]; !ok {
+		t.Errorf("expected nonce %q in persisted revoked nonces, got %v", expectedNonce, loaded)
+	}
+}
+
+func TestHandleSignOut_RevokesGraceSessions(t *testing.T) {
+	const secret = "test-secret"
+	s := newDashboardFullServer(t, secret)
+
+	// Create grace sessions for the user who will sign out.
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
+	s.store.CreateGraceSession(context.Background(), "alice", "db01", 10*time.Minute)
+
+	// Verify sessions exist before signout.
+	before := s.store.ActiveSessions(context.Background(), "alice")
+	if len(before) != 2 {
+		t.Fatalf("expected 2 active sessions before signout, got %d", len(before))
+	}
+
+	ts := time.Now().Unix()
+	csrfTs := fmt.Sprintf("%d", ts)
+	csrfToken := computeCSRFToken(secret, "alice", csrfTs)
+	cookieVal := makeCookie(secret, "alice", "admin", ts)
+
+	form := "csrf_token=" + csrfToken + "&csrf_ts=" + csrfTs
+	r := httptest.NewRequest(http.MethodPost, "/signout", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleSignOut(w, r)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", w.Code)
+	}
+
+	// All grace sessions for alice should be revoked.
+	after := s.store.ActiveSessions(context.Background(), "alice")
+	if len(after) != 0 {
+		t.Errorf("expected 0 active sessions after signout, got %d", len(after))
+	}
+}
+
+func TestHandleSignOut_InvalidCSRF_NoRevocation(t *testing.T) {
+	const secret = "test-secret"
+	s := newDashboardFullServer(t, secret)
+
+	// Create a grace session that should NOT be revoked.
+	s.store.CreateGraceSession(context.Background(), "alice", "web01", 10*time.Minute)
+
+	ts := time.Now().Unix()
+	cookieVal := makeCookie(secret, "alice", "admin", ts)
+
+	form := "csrf_token=badtoken&csrf_ts=" + fmt.Sprintf("%d", ts)
+	r := httptest.NewRequest(http.MethodPost, "/signout", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookieVal})
+	w := httptest.NewRecorder()
+	s.handleSignOut(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+
+	// Nonce should NOT be in the revoked map.
+	const expectedNonce = "abcdef1234567890abcdef1234567890"
+	s.revokedNoncesMu.Lock()
+	_, found := s.revokedNonces[expectedNonce]
+	s.revokedNoncesMu.Unlock()
+	if found {
+		t.Error("nonce should not be revoked after invalid CSRF")
+	}
+
+	// Grace session should still be active.
+	sessions := s.store.ActiveSessions(context.Background(), "alice")
+	if len(sessions) != 1 {
+		t.Errorf("expected 1 active session (not revoked), got %d", len(sessions))
+	}
+}
+
+func TestHandleSignOut_NoSession_NoRevocation(t *testing.T) {
+	const secret = "test-secret"
+	s := newDashboardFullServer(t, secret)
+
+	// POST without a session cookie.
+	form := "csrf_token=anything&csrf_ts=12345"
+	r := httptest.NewRequest(http.MethodPost, "/signout", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.handleSignOut(w, r)
+
+	// Should redirect to login (cookie clearing + redirect still happens).
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", w.Code)
+	}
+
+	// No nonces should be revoked.
+	s.revokedNoncesMu.Lock()
+	count := len(s.revokedNonces)
+	s.revokedNoncesMu.Unlock()
+	if count != 0 {
+		t.Errorf("expected 0 revoked nonces, got %d", count)
+	}
+
+	// Persisted nonces should also be empty.
+	loaded := s.store.LoadRevokedNonces(context.Background())
+	if len(loaded) != 0 {
+		t.Errorf("expected 0 persisted revoked nonces, got %d", len(loaded))
+	}
+}
+
 // ── handleThemeToggle tests ──────────────────────────────────────────────────
 
 func TestHandleThemeToggle_SetDark(t *testing.T) {
