@@ -376,6 +376,11 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		signer = nil
 		// Schedule job cleanup after TTL to prevent unbounded map growth.
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("deploy cleanup panic", "job", jobID, "panic", r)
+				}
+			}()
 			s.deployJobCleanup(job, jobID)
 		}()
 	}()
@@ -586,7 +591,7 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize*64)
+	r.Body = http.MaxBytesReader(w, r.Body, deployRequestMaxBody)
 	var req struct {
 		Hostname       string `json:"hostname"`
 		Port           int    `json:"port"`
@@ -683,6 +688,11 @@ func (s *Server) handleRemoveDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 		// Schedule job cleanup after TTL to prevent unbounded map growth.
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("deploy cleanup panic", "job", jobID, "panic", r)
+				}
+			}()
 			s.deployJobCleanup(job, jobID)
 		}()
 	}()
@@ -810,8 +820,15 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// privateIP reports whether ip is a loopback or RFC1918 address (i.e. from a
-// reverse proxy rather than a real client).
+var privateCIDRs []*net.IPNet
+
+func init() {
+	for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"} {
+		_, network, _ := net.ParseCIDR(cidr)
+		privateCIDRs = append(privateCIDRs, network)
+	}
+}
+
 func privateIP(ip net.IP) bool {
 	if ip == nil {
 		return false
@@ -819,10 +836,8 @@ func privateIP(ip net.IP) bool {
 	if ip.IsLoopback() {
 		return true
 	}
-	private := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"}
-	for _, cidr := range private {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network != nil && network.Contains(ip) {
+	for _, network := range privateCIDRs {
+		if network.Contains(ip) {
 			return true
 		}
 	}

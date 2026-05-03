@@ -166,6 +166,7 @@ func (s *SQLStore) reapOnce(ctx context.Context) {
 		}
 		return
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var e expiredEntry
 		if err := rows.Scan(&e.username, &e.hostname, &e.code); err == nil {
@@ -175,7 +176,6 @@ func (s *SQLStore) reapOnce(ctx context.Context) {
 	if err := rows.Err(); err != nil {
 		logErr("reap.rows", err)
 	}
-	rows.Close()
 
 	if len(expired) > 0 {
 		if _, err := s.exec(ctx,

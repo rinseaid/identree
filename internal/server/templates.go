@@ -786,7 +786,7 @@ const sharedCSS = `
 // pending sudo challenges: inline approve/reject for a single challenge,
 // or a "Review" button opening a modal table for multiple.
 const pendingBarHTML = `{{if .Pending}}
-<div class="pending-bar" aria-live="polite" aria-atomic="false">
+<div class="pending-bar" aria-live="polite" aria-atomic="true">
   <span class="pbar-icon">&#x26A0;</span>
   {{if eq (len .Pending) 1}}{{with index .Pending 0}}
   <span class="pbar-main">
@@ -2548,7 +2548,7 @@ const adminPageHTML = `<!DOCTYPE html>
         <span class="config-section-title" style="margin-left:4px">{{call .T "config"}}</span>
       </div>
       <div class="config-filter-row" id="config-filter-row" style="display:none">
-        <input type="text" id="config-filter-input" placeholder="Search settings…" autocomplete="off">
+        <input type="text" id="config-filter-input" placeholder="Search settings…" autocomplete="off" aria-label="Search settings">
         <button type="button" class="filter-clear-btn" id="config-filter-clear">{{call .T "clear_filter"}}</button>
       </div>
     <!-- TODO: i18n — config help descriptions below are English-only. -->
@@ -3719,15 +3719,15 @@ const adminPageHTML = `<!DOCTYPE html>
       <table class="info-table" style="width:100%;font-size:0.8125rem">
         <thead>
           <tr>
-            <th>{{call .T "policy_name"}}</th>
-            <th>{{call .T "policy_match_hosts"}}</th>
-            <th>{{call .T "policy_match_groups"}}</th>
-            <th>{{call .T "policy_match_users"}}</th>
-            <th>{{call .T "policy_require_admin"}}</th>
-            <th>{{call .T "policy_grace"}}</th>
-            <th>{{call .T "policy_break_glass"}}</th>
-            <th>{{call .T "policy_time_window"}}</th>
-            <th></th>
+            <th scope="col">{{call .T "policy_name"}}</th>
+            <th scope="col">{{call .T "policy_match_hosts"}}</th>
+            <th scope="col">{{call .T "policy_match_groups"}}</th>
+            <th scope="col">{{call .T "policy_match_users"}}</th>
+            <th scope="col">{{call .T "policy_require_admin"}}</th>
+            <th scope="col">{{call .T "policy_grace"}}</th>
+            <th scope="col">{{call .T "policy_break_glass"}}</th>
+            <th scope="col">{{call .T "policy_time_window"}}</th>
+            <th scope="col"></th>
           </tr>
         </thead>
         <tbody>
@@ -3898,7 +3898,7 @@ const adminPageHTML = `<!DOCTYPE html>
         </div>
       </div>
       <div id="remove-log-area" style="display:none">
-        <div id="remove-log" class="deploy-log visible" role="log" aria-live="polite"></div>
+        <div id="remove-log" class="deploy-log visible" role="log" aria-live="polite" aria-label="Removal log"></div>
         <div id="remove-status" class="deploy-status"></div>
         <div class="modal-actions" style="margin-top:8px">
           <button type="button" class="btn" id="remove-close-btn">{{call .T "close"}}</button>
